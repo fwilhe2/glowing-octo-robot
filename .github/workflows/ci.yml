@@ -5,9 +5,19 @@ on:
 
 jobs:
 
+  base:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v5
+
+    - run: |
+        ./build.sh
+
   build:
     runs-on: ubuntu-24.04
     continue-on-error: true
+    needs:
+      - base
 
     strategy:
       fail-fast: false
@@ -19,4 +29,10 @@ jobs:
     - uses: actions/checkout@v5
 
     - run: |
-        sudo ./build-${{ matrix.package }}.sh
+        ./build-${{ matrix.package }}.sh
+
+    - name: Upload Package
+      uses: actions/upload-artifact@v4.3.3
+      with:
+        name: package-${{ matrix.package }}
+        path: rootfs
