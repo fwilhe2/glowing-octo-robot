@@ -5,7 +5,8 @@
 podman build -t localhost/coreutils-lfs-builder coreutils
 
 VERSION="9.8"
-TARBALL="coreutils-${VERSION}.tar.gz"
+PACKAGE="coreutils-${VERSION}"
+TARBALL="$PACKAGE.tar.gz"
 URL="https://ftp.fau.de/gnu/coreutils/${TARBALL}"
 DIR="coreutils"
 
@@ -18,11 +19,11 @@ fi
 
 mkdir -p "${DIR}"
 
-if [ ! -d "${DIR}/coreutils-${VERSION}" ]; then
+if [ ! -d "${DIR}/$PACKAGE" ]; then
     echo "Extracting ${TARBALL}..."
     tar -xf "${TARBALL}" -C "${DIR}"
 else
-    echo "Directory ${DIR}/coreutils-${VERSION} already exists, skipping extraction."
+    echo "Directory ${DIR}/$PACKAGE already exists, skipping extraction."
 fi
 
-podman run --volume "$PWD"/coreutils/coreutils-${VERSION}:/usr/local/src --volume "$PWD"/rootfs:/usr/local/rootfs localhost/coreutils-lfs-builder /build.sh
+podman run --volume "$PWD/$DIR/$PACKAGE":/usr/local/src --volume "$PWD"/rootfs:/usr/local/rootfs localhost/coreutils-lfs-builder /build.sh
