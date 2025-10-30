@@ -24,6 +24,7 @@ jobs:
       matrix:
         package:
           - bash
+          - glibc
 
     steps:
     - uses: actions/checkout@v5
