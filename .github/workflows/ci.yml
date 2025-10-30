@@ -1,0 +1,22 @@
+name: CI
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+
+  build:
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - bash
+
+    steps:
+    - uses: actions/checkout@v5
+
+    - run: |
+        sudo ./build-${{ matrix.package }}.sh
