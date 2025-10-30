@@ -4,25 +4,26 @@
 
 podman build -t localhost/bash-lfs-builder bash
 
-BASH_VERSION="5.3"
-BASH_TARBALL="bash-${BASH_VERSION}.tar.gz"
-BASH_URL="https://ftp.fau.de/gnu/bash/${BASH_TARBALL}"
-BASH_DIR="bash"
+VERSION="5.3"
+PACKAGE="bash-${VERSION}"
+TARBALL="$PACKAGE.tar.gz"
+URL="https://ftp.fau.de/gnu/bash/${TARBALL}"
+DIR="bash"
 
-if [ ! -f "${BASH_TARBALL}" ]; then
-    echo "Downloading ${BASH_TARBALL}..."
-    wget -q "${BASH_URL}"
+if [ ! -f "${TARBALL}" ]; then
+    echo "Downloading ${TARBALL}..."
+    wget -q "${URL}"
 else
-    echo "${BASH_TARBALL} already exists, skipping download."
+    echo "${TARBALL} already exists, skipping download."
 fi
 
-mkdir -p "${BASH_DIR}"
+mkdir -p "${DIR}"
 
-if [ ! -d "${BASH_DIR}/bash-${BASH_VERSION}" ]; then
-    echo "Extracting ${BASH_TARBALL}..."
-    tar -xf "${BASH_TARBALL}" -C "${BASH_DIR}"
+if [ ! -d "${DIR}/$PACKAGE" ]; then
+    echo "Extracting ${TARBALL}..."
+    tar -xf "${TARBALL}" -C "${DIR}"
 else
-    echo "Directory ${BASH_DIR}/bash-${BASH_VERSION} already exists, skipping extraction."
+    echo "Directory ${DIR}/$PACKAGE already exists, skipping extraction."
 fi
 
-podman run --volume "$PWD"/bash/bash-5.3:/usr/local/src --volume "$PWD"/rootfs:/usr/local/rootfs localhost/bash-lfs-builder /build.sh
+podman run --volume "$PWD/$DIR/$PACKAGE":/usr/local/src --volume "$PWD"/rootfs:/usr/local/rootfs localhost/bash-lfs-builder /build.sh
