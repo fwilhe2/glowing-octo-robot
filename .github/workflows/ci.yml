@@ -4,14 +4,13 @@ on:
   workflow_dispatch:
 
 jobs:
-
   base:
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-    - run: |
-        echo todo
+      - run: |
+          echo todo
     #     ./build.sh
     #     podman save --quiet -o ${{ runner.temp }}/myimage.tar localhost/abstract-lfs-builder
 
@@ -36,24 +35,45 @@ jobs:
           - glibc
 
     steps:
-    - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-    # - name: Download artifact
-    #   uses: actions/download-artifact@v5
-    #   with:
-    #     name: myimage
-    #     path: ${{ runner.temp }}
+      # - name: Download artifact
+      #   uses: actions/download-artifact@v5
+      #   with:
+      #     name: myimage
+      #     path: ${{ runner.temp }}
 
-    # - name: Load image
-    #   run: |
-    #     podman load --input ${{ runner.temp }}/myimage.tar
-    #     podman image ls -a
+      # - name: Load image
+      #   run: |
+      #     podman load --input ${{ runner.temp }}/myimage.tar
+      #     podman image ls -a
 
-    - run: |
-        ./build-${{ matrix.package }}.sh
+      - run: |
+          ./build-${{ matrix.package }}.sh
 
-    - name: Upload Package
-      uses: actions/upload-artifact@v5
-      with:
-        name: package-${{ matrix.package }}
-        path: rootfs
+      - name: Upload Package
+        uses: actions/upload-artifact@v5
+        with:
+          name: package-${{ matrix.package }}
+          path: rootfs
+
+  rootfs:
+    runs-on: ubuntu-24.04
+    needs:
+      - build
+      - build-tools
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v5
+        with:
+          path: rootfs
+          merge-multiple: true
+
+      - name: Display structure of downloaded files
+        run: ls -R rootfs
+
+      - name: Upload Package
+        uses: actions/upload-artifact@v5
+        with:
+          name: rootfs
+          path: rootfs
