@@ -1,4 +1,4 @@
-FROM localhost/abstract-lfs-builder
+FROM localhost/abstract-lfs-builder:latest
 
 RUN sed -i 's/^Types: .*/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources
 
