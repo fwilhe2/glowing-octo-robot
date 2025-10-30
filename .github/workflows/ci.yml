@@ -71,8 +71,11 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R rootfs
 
+      - name: Create disk image
+        run: sudo /sbin/mkfs.ext4 -L root -d ./rootfs/ rootfs.ext4 1G
+
       - name: Upload Package
         uses: actions/upload-artifact@v5
         with:
           name: rootfs
-          path: rootfs
+          path: rootfs.ext4
