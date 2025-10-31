@@ -1,5 +1,5 @@
 #!/bin/bash
 
-./configure --prefix=/usr/local/rootfs
+./configure --disable-asciidoc --prefix=/usr/local/rootfs
 make
 make install
