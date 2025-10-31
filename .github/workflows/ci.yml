@@ -53,14 +53,15 @@ jobs:
         id: get_key
         run: |
           source env-${{ matrix.package }}.sh
-          echo "key=$PACKAGE" >> $GITHUB_OUTPUT
+          echo "package=$PACKAGE" >> $GITHUB_OUTPUT
+          echo "build_script_sum=$(md5sum build-${{ matrix.package }}.sh)" >> $GITHUB_OUTPUT
 
       - name: Cache
         id: cache-build
         uses: actions/cache@v4
         with:
           path: rootfs
-          key: ${{ steps.get_key.outputs.key }}-${{ hashFiles("build-${{ matrix.package }}.sh", "env-${{ matrix.package }}.sh") }}
+          key: ${{ steps.get_key.outputs.package }}-${{ steps.get_key.outputs.build_script_sum }}
 
       - name: Build
         if: steps.cache-build.outputs.cache-hit != 'true'
