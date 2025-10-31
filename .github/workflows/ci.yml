@@ -49,13 +49,19 @@ jobs:
       #     podman load --input ${{ runner.temp }}/myimage.tar
       #     podman image ls -a
 
+      - name: Get Cache key
+        id: get_key
+        run: |
+          source env-${{ matrix.package }}.sh
+          echo "package=$PACKAGE" >> $GITHUB_OUTPUT
+          echo "build_script_sum=$(md5sum build-${{ matrix.package }}.sh | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+
       - name: Cache
         id: cache-build
         uses: actions/cache@v4
         with:
           path: rootfs
-          # todo: add version number or hash to cache
-          key: ${{ matrix.package }}
+          key: ${{ steps.get_key.outputs.package }}-${{ steps.get_key.outputs.build_script_sum }}
 
       - name: Build
         if: steps.cache-build.outputs.cache-hit != 'true'

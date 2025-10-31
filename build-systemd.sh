@@ -1,15 +1,10 @@
 #!/bin/bash
 
+source env-systemd.sh
+
 ./build.sh
 
 podman build -t localhost/systemd-lfs-builder systemd
-
-VERSION="258.1"
-VVERSION="v$VERSION"
-PACKAGE="systemd-${VERSION}"
-TARBALL="$VVERSION.tar.gz"
-URL="https://github.com/systemd/systemd/archive/refs/tags/${TARBALL}"
-DIR="systemd"
 
 if [ ! -f "${TARBALL}" ]; then
     echo "Downloading ${TARBALL}..."

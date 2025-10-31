@@ -1,0 +1,6 @@
+VERSION="258.1"
+VVERSION="v$VERSION"
+PACKAGE="systemd-${VERSION}"
+TARBALL="$VVERSION.tar.gz"
+URL="https://github.com/systemd/systemd/archive/refs/tags/${TARBALL}"
+DIR="systemd"
