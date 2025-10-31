@@ -1,6 +1,9 @@
 #!/bin/bash
 
 mkdir {build,testdir}
-meson build
-make
-make install DESTDIR=/usr/local/rootfs
+pushd build
+meson setup build
+meson compile
+meson install --destdir /usr/local/rootfs/
+
+popd
