@@ -1,6 +1,6 @@
 #!/bin/bash
 
-source env-bash.sh
+source bash/env.sh
 
 ./build.sh
 

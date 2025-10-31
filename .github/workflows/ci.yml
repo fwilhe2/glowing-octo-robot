@@ -52,7 +52,7 @@ jobs:
       - name: Get Cache key
         id: get_key
         run: |
-          source env-${{ matrix.package }}.sh
+          source ${{ matrix.package }}/env.sh
           echo "package=$PACKAGE" >> $GITHUB_OUTPUT
           echo "build_script_sum=$(md5sum build-${{ matrix.package }}.sh | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
 

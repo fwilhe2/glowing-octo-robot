@@ -1,6 +1,6 @@
 #!/bin/bash
 
-source env-glibc.sh
+source glibc/env.sh
 
 ./build.sh
 

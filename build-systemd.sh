@@ -1,6 +1,6 @@
 #!/bin/bash
 
-source env-systemd.sh
+source systemd/env.sh
 
 ./build.sh
 

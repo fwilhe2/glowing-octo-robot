@@ -1,6 +1,6 @@
 #!/bin/bash
 
-source env-coreutils.sh
+source coreutils/env.sh
 
 ./build.sh
 
