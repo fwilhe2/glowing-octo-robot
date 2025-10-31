@@ -71,9 +71,7 @@ jobs:
         with:
           path: packages
 
-      - run: mkdir rootfs
-
-      - run: find packages -name '*.tar' -exec tar xf {} -C rootfs \;
+      - run: find packages -name '*.tar' -exec tar xf {} \;
 
       - name: Display structure of downloaded files
         run: find rootfs
