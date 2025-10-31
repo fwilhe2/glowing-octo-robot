@@ -32,7 +32,7 @@ jobs:
         package:
           - bash
           - coreutils
-          - glibc
+          # - glibc
           - systemd
 
     steps:
@@ -52,11 +52,14 @@ jobs:
       - run: |
           ./build-${{ matrix.package }}.sh
 
+      - name: Tar files to preserve permissions
+        run: tar cvf rootfs ${{ matrix.package }}.tar
+
       - name: Upload Package
         uses: actions/upload-artifact@v5
         with:
           name: package-${{ matrix.package }}
-          path: rootfs
+          path: ${{ matrix.package }}.tar
 
   rootfs:
     runs-on: ubuntu-24.04
