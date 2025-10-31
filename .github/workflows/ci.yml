@@ -60,7 +60,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: rootfs
-          key: ${{ steps.get_key.outputs.key }}
+          key: ${{ steps.get_key.outputs.key }}-${{ hashFiles('build-${{ matrix.package }}.sh', 'env-${{ matrix.package }}.sh') }}
 
       - name: Build
         if: steps.cache-build.outputs.cache-hit != 'true'
