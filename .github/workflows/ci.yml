@@ -73,7 +73,7 @@ jobs:
 
       - run: mkdir rootfs
 
-      - run: tar xf packages/*.tar -C rootfs
+      - run: find packages -name '*.tar' -exec tar xf {} -C rootfs \;
 
       - name: Display structure of downloaded files
         run: find rootfs
