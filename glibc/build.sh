@@ -4,5 +4,5 @@ mkdir build
 pushd build
 ../configure --prefix=/usr/local/rootfs
 make
-make install DESTDIR=/usr/local/rootfs
+make install
 popd
