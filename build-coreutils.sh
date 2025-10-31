@@ -1,14 +1,11 @@
 #!/bin/bash
 
+source env-coreutils.sh
+
 ./build.sh
 
 podman build -t localhost/coreutils-lfs-builder coreutils
 
-VERSION="9.8"
-PACKAGE="coreutils-${VERSION}"
-TARBALL="$PACKAGE.tar.gz"
-URL="https://ftp.fau.de/gnu/coreutils/${TARBALL}"
-DIR="coreutils"
 
 if [ ! -f "${TARBALL}" ]; then
     echo "Downloading ${TARBALL}..."

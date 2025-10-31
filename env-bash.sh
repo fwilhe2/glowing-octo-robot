@@ -1,0 +1,5 @@
+VERSION="5.3"
+PACKAGE="bash-${VERSION}"
+TARBALL="$PACKAGE.tar.gz"
+URL="https://ftp.fau.de/gnu/bash/${TARBALL}"
+DIR="bash"

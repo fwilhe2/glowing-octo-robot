@@ -1,0 +1,5 @@
+VERSION="2.42"
+PACKAGE="glibc-$VERSION"
+TARBALL="$PACKAGE.tar.gz"
+URL="https://ftp.fau.de/gnu/glibc/${TARBALL}"
+DIR="glibc"

@@ -49,13 +49,18 @@ jobs:
       #     podman load --input ${{ runner.temp }}/myimage.tar
       #     podman image ls -a
 
+      - name: Get Cache key
+        id: get_key
+        run: |
+          source env-${{ matrix.package }}.sh
+          echo "key=$PACKAGE" >> $GITHUB_OUTPUT
+
       - name: Cache
         id: cache-build
         uses: actions/cache@v4
         with:
           path: rootfs
-          # todo: add version number or hash to cache
-          key: ${{ matrix.package }}
+          key: ${{ steps.get_key.outputs.key }}
 
       - name: Build
         if: steps.cache-build.outputs.cache-hit != 'true'
