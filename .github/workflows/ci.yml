@@ -31,6 +31,7 @@ jobs:
       matrix:
         package:
           - acl
+          - attr
           - bash
           - coreutils
           - glibc
