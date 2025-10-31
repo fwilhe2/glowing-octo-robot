@@ -75,8 +75,14 @@ jobs:
       - name: Create disk image
         run: sudo /sbin/mkfs.ext4 -L root -d ./rootfs/ rootfs.ext4 1G
 
-      - name: Upload Package
+      - name: Upload rootfs
         uses: actions/upload-artifact@v5
         with:
-          name: rootfs
+          name: rootfs-dir
+          path: rootfs
+
+      - name: Upload rootfs.ext4
+        uses: actions/upload-artifact@v5
+        with:
+          name: rootfs.ext4
           path: rootfs.ext4
