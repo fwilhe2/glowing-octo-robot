@@ -54,7 +54,7 @@ jobs:
         run: |
           source env-${{ matrix.package }}.sh
           echo "package=$PACKAGE" >> $GITHUB_OUTPUT
-          echo "build_script_sum=$(md5sum build-${{ matrix.package }}.sh)" >> $GITHUB_OUTPUT
+          echo "build_script_sum=$(md5sum build-${{ matrix.package }}.sh | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
 
       - name: Cache
         id: cache-build
