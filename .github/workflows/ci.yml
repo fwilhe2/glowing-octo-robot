@@ -53,7 +53,7 @@ jobs:
           ./build-${{ matrix.package }}.sh
 
       - name: Tar files to preserve permissions
-        run: tar cvf ${{ matrix.package }}.tar rootfs
+        run: tar cvf ${{ matrix.package }}.tar rootfs/*
 
       - name: Upload Package
         uses: actions/upload-artifact@v5
@@ -70,6 +70,8 @@ jobs:
       - uses: actions/download-artifact@v6
         with:
           path: packages
+
+      - run: mkdir rootfs
 
       - run: tar xf -C rootfs packages/*.tar
 
