@@ -33,6 +33,7 @@ jobs:
           - bash
           - coreutils
           - glibc
+          - systemd
 
     steps:
       - uses: actions/checkout@v5
