@@ -1,0 +1,5 @@
+VERSION="2.41"
+PACKAGE="util-linux-${VERSION}"
+TARBALL="$PACKAGE.tar.gz"
+URL="https://www.kernel.org/pub/linux/utils/util-linux/v${VERSION}/${TARBALL}"
+DIR="coreutils"
