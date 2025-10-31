@@ -4,9 +4,10 @@
 
 podman build -t localhost/systemd-lfs-builder systemd
 
-VERSION="v258.1"
+VERSION="258.1"
+VVERSION="v$VERSION"
 PACKAGE="systemd-${VERSION}"
-TARBALL="$VERSION.tar.gz"
+TARBALL="$VVERSION.tar.gz"
 URL="https://github.com/systemd/systemd/archive/refs/tags/${TARBALL}"
 DIR="systemd"
 
