@@ -72,8 +72,12 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R rootfs
 
+      - run: mkdir -p output
+
       - name: Create disk image
-        run: sudo /sbin/mkfs.ext4 -L root -d ./rootfs/ rootfs.ext4 1G
+        run: |
+            podman build -t rootfs-builder -f rootfs.Containerfile .
+            podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh
 
       - name: Upload rootfs
         uses: actions/upload-artifact@v5
@@ -85,4 +89,4 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: rootfs.ext4
-          path: rootfs.ext4
+          path: output/rootfs.ext4
