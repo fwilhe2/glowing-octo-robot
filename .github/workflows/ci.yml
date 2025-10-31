@@ -49,7 +49,17 @@ jobs:
       #     podman load --input ${{ runner.temp }}/myimage.tar
       #     podman image ls -a
 
-      - run: |
+      - name: Cache
+        id: cache-build
+        uses: actions/cache@v4
+        with:
+          path: rootfs
+          # todo: add version number or hash to cache
+          key: ${{ matrix.package }}
+
+      - name: Build
+        if: steps.cache-build.outputs.cache-hit != 'true'
+        run: |
           ./build-${{ matrix.package }}.sh
 
       - name: Tar files to preserve permissions
