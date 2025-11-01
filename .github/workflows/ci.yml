@@ -34,7 +34,9 @@ jobs:
           - attr
           - bash
           - coreutils
+          - e2fsprogs
           - glibc
+          - kmod
           - systemd
           - util-linux
 
