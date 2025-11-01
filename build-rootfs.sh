@@ -4,7 +4,7 @@ set -euo pipefail
 set -x
 
 mkdir -p usr/{sbin,bin} bin sbin boot
-mkdir -p {dev,etc,home,lib}
+mkdir -p {dev,etc/{systemd/system},home,lib}
 mkdir -p {mnt,opt,proc,srv,sys}
 mkdir -p var/{lib,lock,log,run,spool}
 install -d -m 0750 root
