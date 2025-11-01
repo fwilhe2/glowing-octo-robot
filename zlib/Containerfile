@@ -1,0 +1,8 @@
+FROM localhost/abstract-lfs-builder:latest
+
+RUN sed -i 's/^Types: .*/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources
+
+RUN apt-get update && apt-get build-dep -y zlib
+
+COPY build.sh /
+RUN chmod +x /build.sh
