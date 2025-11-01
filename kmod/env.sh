@@ -1,0 +1,5 @@
+VERSION="34"
+PACKAGE="v${VERSION}"
+TARBALL="$PACKAGE.tar.gz"
+URL="https://github.com/kmod-project/kmod/archive/refs/tags/{$TARBALL}"
+DIR="kmod"
