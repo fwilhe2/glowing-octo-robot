@@ -39,6 +39,7 @@ jobs:
           - kmod
           - systemd
           - util-linux
+          - xz
 
     steps:
       - uses: actions/checkout@v5
