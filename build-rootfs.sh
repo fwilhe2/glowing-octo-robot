@@ -1,4 +1,7 @@
 #!/bin/bash
+set -euo pipefail
+
+set -x
 
 mkdir -p usr/{sbin,bin} bin sbin boot
 mkdir -p {dev,etc,home,lib}
@@ -8,7 +11,7 @@ install -d -m 0750 root
 install -d -m 1777 tmp
 mkdir -p usr/{include,lib,share,src}
 
-cp -r /files/* etc/
+cp -r /files/* .
 
 chown root:root etc/passwd etc/group etc/fstab etc/os-release
 chown root:root etc/systemd/system/default.target
