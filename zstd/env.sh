@@ -1,0 +1,5 @@
+VERSION="1.5.7"
+PACKAGE="zstd-${VERSION}"
+TARBALL="$PACKAGE.tar.gz"
+URL="https://github.com/facebook/zstd/releases/download/v$VERSION/$TARBALL"
+DIR="zstd"

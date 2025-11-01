@@ -41,6 +41,7 @@ jobs:
           - util-linux
           - xz
           - zlib
+          - zstd
 
     steps:
       - uses: actions/checkout@v5
