@@ -1,0 +1,5 @@
+VERSION="1.3.1"
+PACKAGE="zlib-${VERSION}"
+TARBALL="$PACKAGE.tar.gz"
+URL="https://github.com/madler/zlib/releases/download/v$VERSION/$TARBALL"
+DIR="zlib"
