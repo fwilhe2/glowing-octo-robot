@@ -12,6 +12,7 @@ install -d -m 1777 tmp
 mkdir -p usr/{include,lib,share,src}
 
 cp -r /files/* .
+ln -sf usr/lib/systemd/system/multi-user.target etc/systemd/system/default.target
 
 chown root:root etc/passwd etc/group etc/fstab etc/os-release
 chown root:root etc/systemd/system/default.target
