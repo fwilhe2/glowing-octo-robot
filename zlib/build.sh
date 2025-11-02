@@ -1,4 +1,8 @@
 #!/bin/bash
+set -euo pipefail
+
+set -x
+
 
 export CC="gcc -nostdinc -I/usr/local/libs/include"
 export LD_LIBRARY_PATH="/usr/local/libs/lib"

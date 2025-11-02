@@ -102,6 +102,8 @@ jobs:
       - run: find packages -name '*.tar' -exec tar xf {} \;
       - run: mv rootfs libs
 
+      - run: find libs
+
       - name: Get Cache key
         id: get_key
         run: |
