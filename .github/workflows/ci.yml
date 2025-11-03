@@ -106,6 +106,7 @@ jobs:
           # wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.17.7.tar.xz
           # tar xf linux-6.17.7.tar.xz
 
+          sudo apt-get -y install linux-headers-$(uname -r) build-essential
           cp -r /usr/include/linux libs/include
           cp -r /usr/include/asm /libs/include
 
