@@ -15,7 +15,7 @@ jobs:
     #     podman save --quiet -o ${{ runner.temp }}/myimage.tar localhost/abstract-lfs-builder
 
     # - name: Upload artifact
-    #   uses: actions/upload-artifact@v5
+    #   uses: actions/upload-artifact@v6
     #   with:
     #     name: myimage
     #     path: ${{ runner.temp }}/myimage.tar
@@ -80,7 +80,7 @@ jobs:
         run: tar cvf ${{ matrix.package }}.tar rootfs/*
 
       - name: Upload Package
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: package-${{ matrix.package }}
           path: ${{ matrix.package }}.tar
@@ -108,13 +108,13 @@ jobs:
             podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh
 
       - name: Upload rootfs
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: rootfs-dir
           path: rootfs
 
       - name: Upload rootfs.ext4
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: rootfs.ext4
           path: output/rootfs.ext4
