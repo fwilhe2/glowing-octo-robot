@@ -118,3 +118,5 @@ jobs:
         with:
           name: rootfs.ext4
           path: output/rootfs.ext4
+
+      - run: find rootfs
