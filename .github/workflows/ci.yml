@@ -20,11 +20,46 @@ jobs:
     #     name: myimage
     #     path: ${{ runner.temp }}/myimage.tar
 
+  glibc:
+    runs-on: ubuntu-24.04
+    needs:
+      - base
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Get Cache key
+        id: get_key
+        run: |
+          source glibc/env.sh
+          echo "package=$PACKAGE" >> $GITHUB_OUTPUT
+          echo "build_script_sum=$(md5sum build-glibc.sh | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+
+      - name: Cache
+        id: cache-build
+        uses: actions/cache@v4
+        with:
+          path: rootfs
+          key: ${{ steps.get_key.outputs.package }}-${{ steps.get_key.outputs.build_script_sum }}
+
+      - name: Build
+        if: steps.cache-build.outputs.cache-hit != 'true'
+        run: |
+          ./build-glibc.sh
+
+      - name: Tar files to preserve permissions
+        run: tar cvf glibc.tar rootfs/*
+
+      - name: Upload Package
+        uses: actions/upload-artifact@v5
+        with:
+          name: package-glibc
+          path: glibc.tar
+
   build:
     runs-on: ubuntu-24.04
     continue-on-error: true
     needs:
-      - base
+      - glibc
 
     strategy:
       fail-fast: false
@@ -35,7 +70,6 @@ jobs:
           - bash
           - coreutils
           - e2fsprogs
-          - glibc
           - kmod
           - systemd
           - util-linux
@@ -56,6 +90,30 @@ jobs:
       #   run: |
       #     podman load --input ${{ runner.temp }}/myimage.tar
       #     podman image ls -a
+
+      - name: Download glibc
+        uses: actions/download-artifact@v6
+        with:
+          name: package-glibc
+          path: packages
+
+      - run: find packages -name '*.tar'
+
+      - run: find packages -name '*.tar' -exec tar xf {} \;
+      - run: mv rootfs libs
+
+      - run: |
+          # wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.17.7.tar.xz
+          # tar xf linux-6.17.7.tar.xz
+
+          sudo apt-get -y install linux-headers-$(uname -r) build-essential
+          cp -r /usr/include/linux libs/include
+          cp -r /usr/include/asm /libs/include
+
+          GCC_INCLUDE=$(gcc -print-file-name=include)
+          cp -r $GCC_INCLUDE/* /usr/local/libs/include
+
+      - run: find libs
 
       - name: Get Cache key
         id: get_key
@@ -94,6 +152,8 @@ jobs:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           path: packages
+
+      - run: find packages -name '*.tar'
 
       - run: find packages -name '*.tar' -exec tar xf {} \;
 

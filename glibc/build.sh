@@ -1,4 +1,8 @@
 #!/bin/bash
+set -euo pipefail
+
+set -x
+
 
 mkdir build
 pushd build
