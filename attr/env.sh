@@ -1,5 +1,5 @@
 VERSION="2.5.2"
 PACKAGE="attr-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"
-URL="https://cgit.git.savannah.gnu.org/cgit/attr.git/snapshot/${TARBALL}"
 DIR="attr"
+URL="https://download.savannah.nongnu.org/releases/${DIR}/${TARBALL}"

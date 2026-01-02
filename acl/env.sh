@@ -1,5 +1,5 @@
 VERSION="2.3.2"
 PACKAGE="acl-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"
-URL="https://cgit.git.savannah.gnu.org/cgit/acl.git/snapshot/${TARBALL}"
 DIR="acl"
+URL="https://download.savannah.nongnu.org/releases/${DIR}/${TARBALL}"
