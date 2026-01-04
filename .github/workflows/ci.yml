@@ -107,16 +107,14 @@ jobs:
             podman build -t rootfs-builder -f rootfs.Containerfile .
             podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh
 
-      - name: Upload rootfs
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: rootfs-dir
-          path: rootfs
+      - run: find rootfs | cpio --create --verbose -H newc > rootfs.cpio
 
-      - name: Upload rootfs.ext4
+      - name: Upload disk image
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: rootfs.ext4
-          path: output/rootfs.ext4
+          path: |
+            output/rootfs.ext4
+            rootfs.cpio
 
       - run: find rootfs
