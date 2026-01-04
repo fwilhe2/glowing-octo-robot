@@ -27,7 +27,8 @@ chmod 644 etc/passwd etc/group etc/fstab etc/os-release
 chmod 755 etc/systemd/system
 
 
-wget -O bin/sh https://landley.net/bin/toybox/latest/toybox-x86_64
-chmod +x bin/sh
+wget -O bin/toybox https://landley.net/bin/toybox/latest/toybox-x86_64
+ln -s bin/toybox bin/sh
+chmod +x bin/toybox
 
 /sbin/mkfs.ext4 -L root -d /usr/local/src /usr/local/output/rootfs.ext4 1G
