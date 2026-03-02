@@ -80,7 +80,7 @@ jobs:
         run: tar cvf ${{ matrix.package }}.tar rootfs/*
 
       - name: Upload Package
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: package-${{ matrix.package }}
           path: ${{ matrix.package }}.tar
@@ -108,13 +108,13 @@ jobs:
             podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh
 
       - name: Upload rootfs
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: rootfs-dir
           path: rootfs
 
       - name: Upload rootfs.ext4
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: rootfs.ext4
           path: output/rootfs.ext4
