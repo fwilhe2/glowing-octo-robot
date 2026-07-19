@@ -12,7 +12,31 @@ install -d -m 1777 tmp
 mkdir -p usr/{include,lib,share,src}
 
 cp -r /files/* .
-ln -sf usr/lib/systemd/system/multi-user.target etc/systemd/system/default.target
+
+mkdir -p etc/systemd/system
+ln -sf /usr/lib/systemd/system/multi-user.target etc/systemd/system/default.target
+
+# The kernel execs /sbin/init; point it at systemd.
+ln -sf /usr/lib/systemd/systemd sbin/init
+
+# Binaries carry the ELF interpreter path /lib64/ld-linux-x86-64.so.2 (baked in by
+# the toolchain). With merged-/usr, lib64 -> usr/lib already makes this resolve; only
+# add a symlink if it doesn't (e.g. glibc landed the loader somewhere unexpected).
+if [ ! -e lib64/ld-linux-x86-64.so.2 ]; then
+    loader=$(find . -name 'ld-linux-x86-64.so.2' -not -path './lib64/*' | head -n1)
+    if [ -n "$loader" ]; then
+        mkdir -p lib64
+        ln -sf "/${loader#./}" lib64/ld-linux-x86-64.so.2
+    fi
+fi
+
+# Build the shared-library search path and cache so the loader finds our libs.
+cat > etc/ld.so.conf <<'EOF'
+/usr/lib
+/usr/local/lib
+/lib64
+EOF
+ldconfig -r /usr/local/src || true
 
 chown root:root etc/passwd etc/group etc/fstab etc/os-release
 # chown root:root etc/systemd/system/default.target
