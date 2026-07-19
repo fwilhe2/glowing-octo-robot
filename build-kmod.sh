@@ -22,4 +22,4 @@ else
     echo "Directory ${DIR}/${DIR}-${VERSION} already exists, skipping extraction."
 fi
 
-podman run --volume "$PWD/$DIR/${DIR}-${VERSION}":/usr/local/src --volume "$PWD"/rootfs:/usr/local/rootfs localhost/kmod-lfs-builder /build.sh
+podman run --volume "$PWD/$DIR/${DIR}-${VERSION}":/usr/local/src --volume "$PWD"/libs:/usr/local/libs --volume "$PWD"/rootfs:/usr/local/rootfs localhost/kmod-lfs-builder /build.sh

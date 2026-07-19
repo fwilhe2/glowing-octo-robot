@@ -22,4 +22,4 @@ else
     echo "Directory ${DIR}/$PACKAGE already exists, skipping extraction."
 fi
 
-podman run --volume "$PWD/$DIR/$PACKAGE":/usr/local/src --volume "$PWD"/rootfs:/usr/local/rootfs localhost/systemd-lfs-builder /build.sh
+podman run --volume "$PWD/$DIR/$PACKAGE":/usr/local/src --volume "$PWD"/libs:/usr/local/libs --volume "$PWD"/rootfs:/usr/local/rootfs localhost/systemd-lfs-builder /build.sh
