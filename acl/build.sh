@@ -8,7 +8,6 @@ ln -sfn usr/sbin /usr/local/rootfs/sbin
 ln -sfn usr/lib  /usr/local/rootfs/lib
 ln -sfn usr/lib  /usr/local/rootfs/lib64
 
-./autogen.sh
 ./configure --prefix=/usr
 make
 make install DESTDIR=/usr/local/rootfs
