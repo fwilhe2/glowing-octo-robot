@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # merged-/usr staging: /bin /sbin /lib /lib64 become symlinks into /usr
 install -d /usr/local/rootfs/usr/{bin,sbin,lib}

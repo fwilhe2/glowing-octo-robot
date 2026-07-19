@@ -22,7 +22,6 @@ jobs:
 
   build:
     runs-on: ubuntu-24.04
-    continue-on-error: true
     needs:
       - base
 
@@ -62,7 +61,7 @@ jobs:
         run: |
           source ${{ matrix.package }}/env.sh
           echo "package=$PACKAGE" >> $GITHUB_OUTPUT
-          echo "build_script_sum=$(md5sum build-${{ matrix.package }}.sh | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+          echo "build_script_sum=$(cat build-${{ matrix.package }}.sh ${{ matrix.package }}/build.sh ${{ matrix.package }}/Containerfile ${{ matrix.package }}/env.sh | md5sum | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
 
       - name: Cache
         id: cache-build

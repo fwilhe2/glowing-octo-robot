@@ -2,7 +2,8 @@ FROM localhost/abstract-lfs-builder:latest
 
 RUN sed -i 's/^Types: .*/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources
 
-RUN apt-get update && apt-get build-dep -y systemd
+# build-dep doesn't pull libcap-dev, which systemd's meson requires (sys/capability.h).
+RUN apt-get update && apt-get build-dep -y systemd && apt-get install -y libcap-dev
 
 COPY build.sh /
 RUN chmod +x /build.sh
