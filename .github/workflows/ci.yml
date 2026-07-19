@@ -36,6 +36,8 @@ jobs:
           - e2fsprogs
           - glibc
           - kmod
+          - libcap
+          - libxcrypt
           - systemd
           - util-linux
           - xz

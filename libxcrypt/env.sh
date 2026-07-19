@@ -1,0 +1,5 @@
+VERSION="4.5.2"
+PACKAGE="libxcrypt-${VERSION}"
+TARBALL="$PACKAGE.tar.xz"
+URL="https://github.com/besser82/libxcrypt/releases/download/v${VERSION}/${TARBALL}"
+DIR="libxcrypt"

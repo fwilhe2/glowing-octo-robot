@@ -1,0 +1,5 @@
+VERSION="2.78"
+PACKAGE="libcap-${VERSION}"
+TARBALL="$PACKAGE.tar.xz"
+URL="https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/${TARBALL}"
+DIR="libcap"
