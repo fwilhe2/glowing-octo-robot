@@ -38,6 +38,7 @@ jobs:
           - kmod
           - libcap
           - libxcrypt
+          - pam
           - systemd
           - util-linux
           - xz

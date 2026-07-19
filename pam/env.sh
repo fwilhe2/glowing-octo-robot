@@ -1,0 +1,5 @@
+VERSION="1.7.2"
+PACKAGE="Linux-PAM-${VERSION}"
+TARBALL="$PACKAGE.tar.xz"
+URL="https://github.com/linux-pam/linux-pam/releases/download/v${VERSION}/${TARBALL}"
+DIR="pam"

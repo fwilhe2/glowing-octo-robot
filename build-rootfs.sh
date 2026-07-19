@@ -19,6 +19,10 @@ ln -sf /usr/lib/systemd/system/multi-user.target etc/systemd/system/default.targ
 # The kernel execs /sbin/init; point it at systemd.
 ln -sf /usr/lib/systemd/systemd sbin/init
 
+# We ship a preconfigured /etc (hostname, root password, locale-less defaults), so the
+# interactive first-boot wizard would just block the console waiting for a keypress.
+ln -sf /dev/null etc/systemd/system/systemd-firstboot.service
+
 # Binaries carry the ELF interpreter path /lib64/ld-linux-x86-64.so.2 (baked in by
 # the toolchain). With merged-/usr, lib64 -> usr/lib already makes this resolve; only
 # add a symlink if it doesn't (e.g. glibc landed the loader somewhere unexpected).
@@ -38,11 +42,12 @@ cat > etc/ld.so.conf <<'EOF'
 EOF
 ldconfig -r /usr/local/src || true
 
-chown root:root etc/passwd etc/group etc/fstab etc/os-release
-# chown root:root etc/systemd/system/default.target
-chown root:root etc/systemd/system
+chown -R root:root etc
 
-chmod 644 etc/passwd etc/group etc/fstab etc/os-release
-chmod 755 etc/systemd/system
+chmod 755 etc/systemd/system etc/pam.d
+chmod 644 etc/passwd etc/group etc/fstab etc/os-release \
+          etc/nsswitch.conf etc/hostname etc/ld.so.conf etc/pam.d/*
+# Password hashes must not be world-readable.
+chmod 600 etc/shadow
 
 /sbin/mkfs.ext4 -L root -d /usr/local/src /usr/local/output/rootfs.ext4 1G
