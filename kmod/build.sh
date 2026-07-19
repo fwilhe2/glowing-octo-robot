@@ -8,6 +8,7 @@ ln -sfn usr/sbin /usr/local/rootfs/sbin
 ln -sfn usr/lib  /usr/local/rootfs/lib
 ln -sfn usr/lib  /usr/local/rootfs/lib64
 
-meson setup --prefix /usr builddir/
+# -Dlibdir=lib: meson otherwise defaults to the Debian multiarch path.
+meson setup --prefix /usr -Dlibdir=lib builddir/
 meson compile -C builddir/
 meson install -C builddir/ --destdir /usr/local/rootfs

@@ -39,6 +39,7 @@ cat > etc/ld.so.conf <<'EOF'
 /usr/lib
 /usr/local/lib
 /lib64
+/usr/lib/x86_64-linux-gnu
 EOF
 ldconfig -r /usr/local/src || true
 
