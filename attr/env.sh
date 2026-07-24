@@ -1,5 +1,4 @@
 VERSION="2.5.2"
 PACKAGE="attr-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"
-DIR="attr"
-URL="https://download.savannah.nongnu.org/releases/${DIR}/${TARBALL}"
+URL="https://download.savannah.nongnu.org/releases/${PKG}/${TARBALL}"

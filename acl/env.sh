@@ -1,5 +1,4 @@
 VERSION="2.3.2"
 PACKAGE="acl-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"
-DIR="acl"
-URL="https://download.savannah.nongnu.org/releases/${DIR}/${TARBALL}"
+URL="https://download.savannah.nongnu.org/releases/${PKG}/${TARBALL}"

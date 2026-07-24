@@ -1,0 +1,8 @@
+# Only these paths are ever COPYied into an image (package.Containerfile and
+# rootfs.Containerfile); everything else — unpacked source trees, the rootfs staging
+# dir, tarballs, .git — would just bloat the build context. Add an entry here when a
+# Containerfile starts copying something new.
+*
+!lib
+!_files
+!build-rootfs.sh
