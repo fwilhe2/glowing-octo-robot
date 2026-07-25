@@ -1,6 +1,6 @@
 VERSION="258.1"
-VVERSION="v$VERSION"
 PACKAGE="systemd-${VERSION}"
-TARBALL="$VVERSION.tar.gz"
+TARBALL="v${VERSION}.tar.gz"
 URL="https://github.com/systemd/systemd/archive/refs/tags/${TARBALL}"
-DIR="systemd"
+# build-dep doesn't pull libcap-dev, which systemd's meson requires (sys/capability.h).
+EXTRA_DEPS="libcap-dev"

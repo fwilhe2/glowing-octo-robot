@@ -1,5 +1,5 @@
 VERSION="34"
-PACKAGE="v${VERSION}"
-TARBALL="$PACKAGE.tar.gz"
+PACKAGE="kmod-${VERSION}"
+TARBALL="v${VERSION}.tar.gz"
 URL="https://github.com/kmod-project/kmod/archive/refs/tags/$TARBALL"
-DIR="kmod"
+EXTRA_DEPS="zlib1g-dev"
