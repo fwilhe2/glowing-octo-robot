@@ -1,4 +1,4 @@
-VERSION="6.12.96"
+VERSION="7.1.5"
 PACKAGE="linux-${VERSION}"
 TARBALL="$PACKAGE.tar.xz"
 URL="https://cdn.kernel.org/pub/linux/kernel/v${VERSION%%.*}.x/${TARBALL}"
