@@ -50,6 +50,11 @@ if [ -n "${SYSROOT:-}" ]; then
         sysroot_ldflags+=" -B$SYSROOT$dir -L$SYSROOT$dir -Wl,-rpath-link,$SYSROOT$dir"
     done
     sysroot_ldflags+=" -L/usr/lib/$multiarch -L/usr/lib"
+    # ...and -rpath-link for them as well, not just -L. A -L only resolves libraries the
+    # link names itself; the libraries those in turn need — libpam.so needing
+    # libaudit.so.1 — are looked up in the linker's default directories, which --sysroot
+    # has just moved into our tree, where Debian's dependencies aren't.
+    sysroot_ldflags+=" -Wl,-rpath-link,/usr/lib/$multiarch -Wl,-rpath-link,/usr/lib"
 
     export CPPFLAGS="$sysroot_cppflags${CPPFLAGS:+ $CPPFLAGS}"
     export CFLAGS="$sysroot_cppflags${CFLAGS:+ $CFLAGS}"
