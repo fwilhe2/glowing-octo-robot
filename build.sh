@@ -7,11 +7,19 @@
 #
 #   <package>/env.sh     version, tarball URL, and optionally BUILD_DEP (the Debian
 #                        source package to take build-dependencies from, defaults to
-#                        the package directory name) and EXTRA_DEPS (extra apt
-#                        packages build-dep doesn't cover).
+#                        the package directory name), EXTRA_DEPS (extra apt packages
+#                        build-dep doesn't cover) and NO_SYSROOT.
 #   <package>/build.sh   the configure/compile/install commands, sourced inside the
 #                        container by lib/build-package.sh with the unpacked source
 #                        tree as the working directory.
+#
+# Packages compile against our own glibc, not the builder image's: a tree that already
+# has glibc staged in it is bind-mounted read-only and passed to gcc as --sysroot (see
+# lib/build-package.sh). That tree defaults to rootfs/ — where ./build.sh glibc puts it
+# — and can be pointed elsewhere with SYSROOT_DIR, which CI uses to keep each package's
+# artifact free of glibc's files. So glibc has to be built before anything else:
+#
+#     ./build.sh glibc && ./build.sh coreutils
 set -euo pipefail
 
 PKG="${1:-}"
@@ -36,6 +44,26 @@ source "$PKG/env.sh"
 # source package to take build-dependencies from", so keep the two apart.
 BUILD_DEP="${BUILD_DEP-$PKG}"
 EXTRA_DEPS="${EXTRA_DEPS:-}"
+NO_SYSROOT="${NO_SYSROOT:-}"
+SYSROOT_DIR="${SYSROOT_DIR:-rootfs}"
+
+# glibc itself is what fills the sysroot, and the kernel is freestanding — neither has
+# one to build against.
+sysroot_mount=()
+if [ -z "$NO_SYSROOT" ]; then
+    if [ ! -e "$SYSROOT_DIR/usr/lib/libc.so.6" ]; then
+        echo "error: no glibc in the sysroot ($SYSROOT_DIR/usr/lib/libc.so.6 is missing)" >&2
+        echo "       packages are compiled against our own glibc, so build it first:" >&2
+        echo "           ./build.sh glibc" >&2
+        echo "       (or set NO_SYSROOT=1 to compile against the builder image's glibc)" >&2
+        exit 1
+    fi
+    # Read-only: the sysroot is an input. It is usually the same tree as the DESTDIR
+    # mount below, which stays writable.
+    sysroot_abs=$(realpath "$SYSROOT_DIR")
+    sysroot_mount=(--volume "$sysroot_abs":/usr/local/sysroot:ro
+                   --env SYSROOT=/usr/local/sysroot)
+fi
 
 ./build-base.sh
 
@@ -43,6 +71,30 @@ podman build -t "localhost/$PKG-lfs-builder" \
     --build-arg "BUILD_DEP=$BUILD_DEP" \
     --build-arg "EXTRA_DEPS=$EXTRA_DEPS" \
     -f package.Containerfile .
+
+# The builder also has to *run* what it compiles: help2man asks a freshly built ptx for
+# its --help, ncurses runs its own tic. Those binaries are linked against our glibc, and
+# sid's loader is older than that — ptx calls memset_explicit, new in 2.43, so it dies
+# with "version `GLIBC_2.43' not found" and the build stops. So the container gets our
+# glibc as its own libc, not just as a sysroot to compile against: each file the image's
+# libc6 owns is bind-mounted over with ours. glibc stays backwards compatible, so the
+# Debian binaries in there (gcc, make, perl) keep working on it.
+#
+# Bind mounts rather than swapping the files from inside the container: they are all in
+# place before the first process starts, so nothing ever runs against a half-swapped
+# glibc — replacing the loader and libc.so.6 one at a time would kill the very shell
+# doing the replacing.
+if [ -z "$NO_SYSROOT" ]; then
+    while read -r path; do
+        ours="$sysroot_abs/usr/lib/$(basename "$path")"
+        [ -f "$ours" ] && sysroot_mount+=(--volume "$ours:$path:ro")
+        # iconv() dlopens its character-set modules, and they are part of glibc too.
+        if [ "$(basename "$path")" = "libc.so.6" ] && [ -d "$sysroot_abs/usr/lib/gconv" ]; then
+            sysroot_mount+=(--volume "$sysroot_abs/usr/lib/gconv:$(dirname "$path")/gconv:ro")
+        fi
+    done < <(podman run --rm "localhost/$PKG-lfs-builder" \
+        sh -c 'dpkg -L libc6 | while read -r p; do [ -f "$p" ] && printf "%s\n" "$p"; done')
+fi
 
 if [ ! -f "$TARBALL" ]; then
     echo "Downloading ${TARBALL}..."
@@ -62,4 +114,5 @@ podman run --rm \
     --volume "$PWD/$PKG/$PACKAGE":/usr/local/src \
     --volume "$PWD/$PKG/build.sh":/package-build.sh:ro \
     --volume "$PWD/rootfs":/usr/local/rootfs \
+    "${sysroot_mount[@]}" \
     "localhost/$PKG-lfs-builder" /build.sh

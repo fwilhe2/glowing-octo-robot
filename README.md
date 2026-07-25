@@ -7,8 +7,27 @@ Each package is built in a throwaway podman container and installed into the sha
 `rootfs/` staging tree:
 
 ```sh
+./build.sh glibc
 ./build.sh coreutils
 ```
+
+glibc comes first because everything else is compiled against it: `rootfs/` is
+bind-mounted into the builder read-only and handed to gcc as `--sysroot`, so the
+binaries we ship require the symbol versions *our* glibc defines rather than whatever
+the Debian builder image happens to have installed. `SYSROOT_DIR` points that mount at
+another tree — CI stages a glibc-only one, which keeps each package's artifact to its
+own files. Packages that have no libc to build against (`glibc`, `kernel`) set
+`NO_SYSROOT=1` in their `env.sh`.
+
+The container also *runs* on our glibc: every file its own `libc6` owns is bind-mounted
+over with ours. Builds run what they just compiled — `help2man` asks a fresh `ptx` for
+its `--help`, ncurses runs its own `tic` — and sid's older loader can't start a binary
+linked against a newer glibc. glibc stays backwards compatible, so the image's Debian
+binaries keep working on ours.
+
+Everything else a package links against still comes from the builder image, so this is
+not the staged LFS toolchain — it is the one library where a version skew silently
+produces binaries that can't start.
 
 `rootfs.Containerfile` / `build-rootfs.sh` then turn `rootfs/` into `output/rootfs.ext4`
 (see the `rootfs` job in `.github/workflows/ci.yml`), which `./boot-qemu.sh` boots.
@@ -28,6 +47,7 @@ matrix in `.github/workflows/ci.yml`:
   | `URL` | where to download it (may use `$PKG`, the package directory name) |
   | `BUILD_DEP` | Debian source package to take build-dependencies from (default: `$PKG`; empty to skip `build-dep` entirely) |
   | `EXTRA_DEPS` | extra apt packages `build-dep` doesn't cover |
+  | `NO_SYSROOT` | set to `1` for packages that aren't compiled against our glibc |
   | `UPSTREAM_*` | where to look for new releases, when the directory `URL` points into isn't it — see `lib/upstream.sh` |
 
   Everything is derived from `VERSION`, so bumping that one line is a complete update —
@@ -59,6 +79,19 @@ each one and how to resolve it.
 
 When a package pulls in something unwanted, prefer configuring it out (e.g.
 `--without-selinux`) over adding a package to satisfy the reference.
+
+A library that *is* present can still be the wrong one — a binary compiled against a
+newer glibc than the image ships links fine in the builder and then dies at exec time
+with ``version `GLIBC_2.44' not found``. So:
+
+```sh
+./check-symbol-versions.sh rootfs
+```
+
+compares every versioned symbol the tree's binaries ask for against what the tree's own
+libraries define, and also runs in the `rootfs` CI job. It is what keeps the sysroot
+above honest: a package whose build system quietly drops the exported `CFLAGS`/`LDFLAGS`
+shows up here.
 
 ## Booting
 
