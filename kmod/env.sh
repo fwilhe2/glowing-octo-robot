@@ -1,4 +1,4 @@
-VERSION="34"
+VERSION="34.2"
 PACKAGE="kmod-${VERSION}"
 TARBALL="v${VERSION}.tar.gz"
 URL="https://github.com/kmod-project/kmod/archive/refs/tags/$TARBALL"
