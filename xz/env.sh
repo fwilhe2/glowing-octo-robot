@@ -1,4 +1,4 @@
-VERSION="5.8.1"
+VERSION="5.8.3"
 PACKAGE="xz-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"
 URL="https://github.com/tukaani-project/xz/releases/download/v$VERSION/$TARBALL"
