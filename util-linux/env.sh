@@ -1,4 +1,4 @@
-VERSION="2.41"
+VERSION="2.42.2"
 PACKAGE="util-linux-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"
 # kernel.org files tarballs by major.minor series, so 2.42.2 lives in v2.42/.
