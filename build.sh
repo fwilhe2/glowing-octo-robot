@@ -32,7 +32,9 @@ fi
 # env.sh may refer to $PKG when composing its download URL.
 source "$PKG/env.sh"
 
-BUILD_DEP="${BUILD_DEP:-$PKG}"
+# Unset means "same name as the package directory"; explicitly empty means "no Debian
+# source package to take build-dependencies from", so keep the two apart.
+BUILD_DEP="${BUILD_DEP-$PKG}"
 EXTRA_DEPS="${EXTRA_DEPS:-}"
 
 ./build-base.sh

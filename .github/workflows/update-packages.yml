@@ -1,0 +1,125 @@
+name: Package updates
+
+# Opens one pull request per package whose upstream has released a newer version, so
+# CI answers "does it still build, and does the image still boot" before the bump is
+# on main. Closing a pull request without merging it keeps that exact version from
+# being proposed again; a later release still gets its own.
+on:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays, 05:17 UTC
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Packages to check, space separated (empty = all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      updates: ${{ steps.check.outputs.updates }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check upstreams
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }} # lifts the GitHub API rate limit
+          PACKAGES: ${{ inputs.packages }}
+        run: |
+          # An upstream that can't be reached shouldn't stop the packages that can, so
+          # the failures are reported at the end rather than aborting the run.
+          ./check-updates.sh --json $PACKAGES > updates.json || failed=1
+          [ -s updates.json ] || echo '[]' > updates.json
+          echo "updates=$(cat updates.json)" >> "$GITHUB_OUTPUT"
+          jq -r '.[] | "\(.package): \(.current) -> \(.latest)"' updates.json
+          if [ -n "${failed:-}" ]; then
+            echo "::warning::some upstream checks failed, see the log above"
+          fi
+
+  pull-request:
+    runs-on: ubuntu-24.04
+    needs: check
+    if: needs.check.outputs.updates != '[]'
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write # to dispatch the CI run for the branch
+    strategy:
+      fail-fast: false
+      max-parallel: 1 # they all push to the same repository
+      matrix:
+        update: ${{ fromJson(needs.check.outputs.updates) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PKG: ${{ matrix.update.package }}
+          CURRENT: ${{ matrix.update.current }}
+          LATEST: ${{ matrix.update.latest }}
+          URL: ${{ matrix.update.url }}
+        run: |
+          set -euo pipefail
+          BRANCH="update/$PKG-$LATEST"
+
+          # --state all: a pull request that was closed unmerged is a decision to skip
+          # this version, so don't reopen the argument every Monday.
+          if [ -n "$(gh pr list --state all --head "$BRANCH" --json number --jq '.[].number')" ]; then
+            echo "$BRANCH already has a pull request, nothing to do"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+
+          # env.sh derives PACKAGE, TARBALL and URL from VERSION, so this one line is
+          # the whole update. Anything else the new version needs — a configure flag,
+          # a patch — is for the human reviewing the failing build to add.
+          sed -i -E "s|^VERSION=.*|VERSION=\"$LATEST\"|" "$PKG/env.sh"
+          git diff --exit-code "$PKG/env.sh" && { echo "error: nothing changed in $PKG/env.sh" >&2; exit 1; }
+
+          git commit -am "Update $PKG to $LATEST"
+          git push origin "$BRANCH"
+
+          PR_URL=$(gh pr create \
+            --head "$BRANCH" \
+            --title "Update $PKG to $LATEST" \
+            --body "$(cat <<EOF
+          \`$PKG\` $CURRENT -> $LATEST.
+
+          Source: $URL
+
+          Opened automatically by \`.github/workflows/update-packages.yml\`. CI builds
+          the package and boots the resulting image; if either fails, this version
+          needs work in \`$PKG/build.sh\` before it can be merged. Closing this pull
+          request stops $LATEST from being proposed again.
+          EOF
+          )")
+          echo "opened $PR_URL"
+
+          # GitHub starts no workflow run for a push made with GITHUB_TOKEN, so ask for
+          # one: workflow_dispatch is the event the token is allowed to trigger. The run
+          # belongs to the branch rather than to the pull request, so it does not appear
+          # in the checks list — hence the comment linking to it.
+          gh workflow run ci.yml --ref "$BRANCH"
+
+          RUN_URL=""
+          for _ in $(seq 12); do
+            sleep 5
+            RUN_URL=$(gh run list --workflow ci.yml --branch "$BRANCH" --event workflow_dispatch \
+              --limit 1 --json url --jq '.[0].url' || true)
+            if [ -n "$RUN_URL" ]; then break; fi
+          done
+
+          if [ -n "$RUN_URL" ]; then
+            gh pr comment "$PR_URL" --body "CI: $RUN_URL (dispatched separately, so it is not listed under the checks above)"
+          else
+            echo "::warning::dispatched ci.yml for $BRANCH but no run showed up within a minute"
+          fi
