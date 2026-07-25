@@ -38,6 +38,7 @@ jobs:
           - kmod
           - libcap
           - libxcrypt
+          - ncurses
           - pam
           - systemd
           - util-linux
@@ -102,6 +103,11 @@ jobs:
 
       - name: Display structure of downloaded files
         run: find rootfs
+
+      # Packages are compiled against the Debian builder's libraries, so a missing
+      # runtime dependency is invisible until the binary is exec'd in qemu.
+      - name: Check for unresolved library dependencies
+        run: ./check-rootfs-deps.sh rootfs
 
       - run: mkdir -p output
 
