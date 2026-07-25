@@ -1,6 +1,9 @@
 *.tar.gz
 *.tar.xz
 rootfs
+# a glibc-only staging tree to compile against, when it isn't rootfs/ itself
+sysroot
+glibc-package
 output
 boot-image/
 boot-test.log

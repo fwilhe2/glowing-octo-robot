@@ -20,10 +20,37 @@ jobs:
     #     name: myimage
     #     path: ${{ runner.temp }}/myimage.tar
 
-  build:
+  # Everything else is compiled against this glibc rather than the Debian builder's, so
+  # it has to be staged before the matrix below can start. The kernel is the exception:
+  # it links no libc at all, so it runs alongside instead of queueing behind.
+  glibc:
     runs-on: ubuntu-24.04
     needs:
       - base
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/build-package
+        with:
+          package: glibc
+          sysroot: 'false'
+
+  kernel:
+    runs-on: ubuntu-24.04
+    needs:
+      - base
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/build-package
+        with:
+          package: kernel
+          sysroot: 'false'
+
+  build:
+    runs-on: ubuntu-24.04
+    needs:
+      - glibc
 
     strategy:
       fail-fast: false
@@ -34,8 +61,6 @@ jobs:
           - bash
           - coreutils
           - e2fsprogs
-          - glibc
-          - kernel
           - kmod
           - libcap
           - libxcrypt
@@ -61,39 +86,15 @@ jobs:
       #     podman load --input ${{ runner.temp }}/myimage.tar
       #     podman image ls -a
 
-      - name: Get Cache key
-        id: get_key
-        run: |
-          PKG="${{ matrix.package }}"
-          source $PKG/env.sh
-          echo "package=$PACKAGE" >> $GITHUB_OUTPUT
-          echo "build_script_sum=$(cat build.sh build-base.sh Containerfile package.Containerfile lib/build-package.sh $PKG/build.sh $PKG/env.sh | md5sum | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
-
-      - name: Cache
-        id: cache-build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/build-package
         with:
-          path: rootfs
-          key: ${{ steps.get_key.outputs.package }}-${{ steps.get_key.outputs.build_script_sum }}
-
-      - name: Build
-        if: steps.cache-build.outputs.cache-hit != 'true'
-        run: |
-          ./build.sh ${{ matrix.package }}
-
-      - name: Tar files to preserve permissions
-        run: tar cvf ${{ matrix.package }}.tar rootfs/*
-
-      - name: Upload Package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: package-${{ matrix.package }}
-          path: ${{ matrix.package }}.tar
+          package: ${{ matrix.package }}
 
   rootfs:
     runs-on: ubuntu-24.04
     needs:
       - build
+      - kernel
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -109,6 +110,11 @@ jobs:
       # runtime dependency is invisible until the binary is exec'd in qemu.
       - name: Check for unresolved library dependencies
         run: ./check-rootfs-deps.sh rootfs
+
+      # And a library that is present can still be the wrong one: this is what proves
+      # the packages were built against our glibc and not the builder image's.
+      - name: Check for unsatisfied symbol versions
+        run: ./check-symbol-versions.sh rootfs
 
       - run: mkdir -p output
 
