@@ -1,4 +1,4 @@
-VERSION="258.1"
+VERSION="261.2"
 PACKAGE="systemd-${VERSION}"
 TARBALL="v${VERSION}.tar.gz"
 URL="https://github.com/systemd/systemd/archive/refs/tags/${TARBALL}"
