@@ -1,4 +1,4 @@
-VERSION="1.47.3"
+VERSION="1.47.4"
 PACKAGE="e2fsprogs-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"
 URL="https://mirrors.edge.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v$VERSION/$TARBALL"
