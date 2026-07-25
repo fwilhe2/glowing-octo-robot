@@ -36,3 +36,22 @@ matrix in `.github/workflows/ci.yml`:
 Everything else — the base image (`Containerfile`), the per-package builder image
 (`package.Containerfile`), the download/unpack/run dance (`build.sh`) and the
 merged-`/usr` staging (`lib/build-package.sh`) — is shared.
+
+## Checking runtime dependencies
+
+Packages compile inside a Debian builder image, so `configure` will happily link
+against an optional library that exists only in that container. The build succeeds,
+the library is never staged, and nothing notices until the binary is exec'd in qemu —
+which is how `bash` ended up needing `libtinfo.so.6` with no `ncurses` package.
+
+```sh
+./check-rootfs-deps.sh rootfs
+```
+
+reports every `NEEDED` entry the tree can't resolve, and runs in the `rootfs` CI job.
+Libraries listed in `known-missing-libs.txt` are reported but don't fail the run, so
+new regressions stand out from the existing backlog; that file explains what wants
+each one and how to resolve it.
+
+When a package pulls in something unwanted, prefer configuring it out (e.g.
+`--without-selinux`) over adding a package to satisfy the reference.

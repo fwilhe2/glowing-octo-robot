@@ -1,0 +1,52 @@
+# Shared libraries that binaries in the rootfs link against but we don't ship.
+#
+# Everything here was picked up opportunistically from the Debian builder image: the
+# package's configure found an optional dependency, linked against it, and we never
+# staged it. check-rootfs-deps.sh reports these but doesn't fail on them, so that new
+# regressions stand out from this existing backlog.
+#
+# Fixing one means either adding a package that provides the library, or configuring
+# the package that wants it to build without that optional dependency. Delete the line
+# once it's fixed.
+
+# ---------------------------------------------------------------------------------
+# Degraded but not fatal: only the named tools break, and none are on the boot path.
+
+# coreutils cksum/md5sum/sha*sum (they fall back to internal implementations if built
+# --without-openssl) and kmod's module signature verification.
+libcrypto.so.3
+
+# coreutils basenc, expr, factor — arbitrary-precision arithmetic.
+libgmp.so.10
+
+# util-linux fdisk, sfdisk — line editing.
+libreadline.so.8
+
+# util-linux setpriv.
+libcap-ng.so.0
+
+# util-linux liblastlog2 — the lastlog2 database.
+libsqlite3.so.0
+
+# e2fsprogs fuse2fs — mounting ext4 through FUSE.
+libfuse3.so.4
+
+# glibc nscd (name service cache daemon), makedb, and memusagestat (a profiling tool).
+# Building glibc --without-selinux would drop the libselinux reference, but nscd and
+# makedb are far enough off the boot path not to be worth a 13-minute glibc rebuild.
+# Note coreutils used to account for 15 of libselinux's consumers; it is now built
+# --without-selinux, so ls/cp/mv/id no longer need it.
+libaudit.so.1
+libgd.so.3
+libselinux.so.1
+
+# pam_userdb — a PAM module we don't reference in _files/etc/pam.d.
+libdb-5.3.so
+
+# systemd's optional remote-journal components, which we don't enable.
+libcurl.so.4
+libgnutls.so.30
+libmicrohttpd.so.12
+
+# zstd's CLI links liblz4 for --format=lz4; the library itself doesn't need it.
+liblz4.so.1
