@@ -32,10 +32,13 @@ fetch() {
     curl -fsSL --max-time 60 --retry 2 --retry-delay 2 "$@"
 }
 
-# GitHub's API allows 60 unauthenticated requests an hour, which a full run can
-# exhaust; in CI GH_TOKEN lifts that to 1000.
+# GitHub's API allows 60 unauthenticated requests an hour, which a couple of full runs
+# exhaust; the workflow passes GH_TOKEN, and locally gh's own token does the job.
 gh_api() {
     local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+    if [ -z "$token" ] && command -v gh >/dev/null; then
+        token=$(gh auth token 2>/dev/null || true)
+    fi
     if [ -n "$token" ]; then
         fetch -H "Authorization: Bearer $token" -H 'Accept: application/vnd.github+json' "$1"
     else
@@ -99,14 +102,22 @@ if [ -n "$UPSTREAM_GITHUB" ]; then
 else
     index="${UPSTREAM_INDEX:-${URL%/*}/}"
     if [ -n "$UPSTREAM_SUBDIR" ]; then
-        newest_dir=$(fetch "$index" | { grep -oE "$UPSTREAM_SUBDIR" || true; } | sort -Vu | tail -1)
-        if [ -z "$newest_dir" ]; then
+        dirs=$(fetch "$index" | { grep -oE "$UPSTREAM_SUBDIR" || true; } | sort -Vu | tac)
+        if [ -z "$dirs" ]; then
             echo "error: $PKG: no subdirectory matching '$UPSTREAM_SUBDIR' at $index" >&2
             exit 1
         fi
-        index="${index%/}/$newest_dir"
+        # Newest first, stopping at the first directory that actually holds a release:
+        # the directory for a new series appears before its first final release, so the
+        # newest one can contain nothing but release candidates for a while.
+        candidates=""
+        while IFS= read -r dir; do
+            candidates=$(index_versions "${index%/}/$dir" "$UPSTREAM_REGEX")
+            if [ -n "$candidates" ]; then break; fi
+        done <<< "$dirs"
+    else
+        candidates=$(index_versions "$index" "$UPSTREAM_REGEX")
     fi
-    candidates=$(index_versions "$index" "$UPSTREAM_REGEX")
 fi
 
 # Keep only plain numeric versions, so 6.6-rc1 and 20250101 snapshots stay out.
