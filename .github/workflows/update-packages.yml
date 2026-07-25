@@ -86,7 +86,12 @@ jobs:
           git diff --exit-code "$PKG/env.sh" && { echo "error: nothing changed in $PKG/env.sh" >&2; exit 1; }
 
           git commit -am "Update $PKG to $LATEST"
-          git push origin "$BRANCH"
+
+          # --force, because this line is only reached when the branch has no pull
+          # request of its own: a branch left behind by a run that pushed and then
+          # failed before opening one would otherwise block every retry, since the
+          # retry's commit is identical in content but not in SHA.
+          git push --force origin "$BRANCH"
 
           PR_URL=$(gh pr create \
             --head "$BRANCH" \

@@ -99,7 +99,12 @@ an update that breaks something says so before it reaches `main`. Closing a pull
 request unmerged stops that version from being proposed again; the next release still
 gets its own.
 
-No secret to set up, but one wrinkle worth knowing about: GitHub deliberately starts no
+No secret to set up, but one repository setting: *Settings → Actions → General → Workflow
+permissions* → **Allow GitHub Actions to create and approve pull requests**. Without it
+the workflow pushes its branch and then dies on `gh pr create` with *GitHub Actions is
+not permitted to create or approve pull requests*.
+
+One more wrinkle worth knowing about: GitHub deliberately starts no
 workflow run for a push made with the built-in `GITHUB_TOKEN`, so the pull request would
 otherwise sit there with no CI. `workflow_dispatch` is the one event that token *is*
 allowed to trigger, so the workflow asks for the run itself with `gh workflow run ci.yml
