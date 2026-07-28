@@ -20,6 +20,9 @@
 #   UPSTREAM_REGEX    ERE matching release file names, with the version in group 1.
 #                     Defaults to $TARBALL with the version replaced by a number
 #                     pattern, e.g. coreutils-([0-9]+(\.[0-9]+)*)\.tar\.gz.
+#   UPSTREAM_SED      sed -E expression applied to every candidate before it is judged,
+#                     for upstreams whose releases aren't named after the version —
+#                     expat tags 2.8.2 as R_2_8_2.
 #   UPSTREAM_IGNORE   ERE of versions to skip.
 #
 # Only plain numeric versions are ever considered, so alphas, betas and release
@@ -94,6 +97,7 @@ source "$PKG/env.sh"
 
 UPSTREAM_GITHUB="${UPSTREAM_GITHUB:-}"
 UPSTREAM_SUBDIR="${UPSTREAM_SUBDIR:-}"
+UPSTREAM_SED="${UPSTREAM_SED:-}"
 UPSTREAM_IGNORE="${UPSTREAM_IGNORE:-}"
 UPSTREAM_REGEX="${UPSTREAM_REGEX:-$(default_regex "$TARBALL" "$VERSION")}"
 
@@ -118,6 +122,10 @@ else
     else
         candidates=$(index_versions "$index" "$UPSTREAM_REGEX")
     fi
+fi
+
+if [ -n "$UPSTREAM_SED" ]; then
+    candidates=$(printf '%s\n' "$candidates" | sed -E "$UPSTREAM_SED")
 fi
 
 # Keep only plain numeric versions, so 6.6-rc1 and 20250101 snapshots stay out.

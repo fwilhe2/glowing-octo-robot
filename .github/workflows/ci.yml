@@ -60,7 +60,9 @@ jobs:
           - attr
           - bash
           - coreutils
+          - dbus
           - e2fsprogs
+          - expat
           - kmod
           - libcap
           - libxcrypt

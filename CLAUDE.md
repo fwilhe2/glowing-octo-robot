@@ -88,7 +88,7 @@ over with ours, because builds execute what they just compiled.
 **2. Linking against a library only the builder image has.** `configure` finds an
 optional dev package inside the Debian container, links against it, and the missing `.so`
 is only discovered when the binary is exec'd in qemu. Prefer configuring the dependency
-out (`--without-selinux`, `-Dpam=disabled`) over adding a package to satisfy it.
+out (`--without-selinux`, `-Dx11_autolaunch=disabled`) over adding a package to satisfy it.
 `check-rootfs-deps.sh` reports all of them at once; `known-missing-libs.txt` allowlists
 the accepted backlog so new regressions stand out. Run it before booting.
 
@@ -98,13 +98,22 @@ the accepted backlog so new regressions stand out. Run it before booting.
 directory skeleton, `_files/etc` copied in as the shipped `/etc` (hostname `flfs`,
 credentials from `_files/etc/shadow`), `/sbin/init` → systemd, `ld.so.conf` + `ldconfig`,
 permission fixups, `mkfs.ext4 -d`. Changes to the shipped `/etc` go in `_files/`, not into
-`rootfs/`.
+`rootfs/` — and `_files` is `COPY`ed into the builder image rather than bind-mounted, so
+editing it means `podman build -f rootfs.Containerfile` again before `podman run`, or the
+image is assembled from the old copy.
 
 The kernel is a normal package (`kernel/`, `defconfig` + `kvm_guest.config`) staged at
 `rootfs/boot/bzImage`, so a CI run is self-contained. `boot-test.sh` runs `/bin/bash` as
 PID 1 by default, not systemd: it isolates "the kernel booted and the loader resolved a
 real binary" from everything systemd does on top. `network-test.sh` is the one that boots
 systemd for real (it reaches `multi-user.target` and a login prompt).
+
+The system bus is the reference `dbus-daemon` (`dbus`, which needs `expat`). Anything with
+a D-Bus API needs it — systemd-logind exits with *Failed to connect to system bus* and
+crash-loops without one — and it enables itself through `.target.wants` symlinks in its own
+unit directory, so nothing in `_files` enables it. Sessions on top of that need
+`pam_systemd.so`, which is why systemd is built `-Dpam=enabled` and why
+`_files/etc/pam.d/login` references it.
 
 Networking is systemd end to end: `_files/etc/systemd/network/20-wired.network` (DHCP on
 `en*`/`eth*`), networkd handing the lease to resolved, and `_files/etc/resolv.conf` as a

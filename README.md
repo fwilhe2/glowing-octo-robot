@@ -110,6 +110,19 @@ libraries. It runs `/bin/bash` as PID 1 rather than systemd, which keeps that fa
 apart from anything systemd does on top; the network test below is the one that boots
 systemd for real. `./boot-qemu.sh` is still the way to poke at an image interactively.
 
+## The system bus
+
+The image ships the reference `dbus-daemon` (the `dbus` package, which needs `expat`).
+It is not optional furniture: systemd-logind connects to the system bus at startup, and
+without one it exits with *Failed to connect to system bus* and is restarted until it
+hits its start limit. dbus enables itself — the `.target.wants` symlinks live in its own
+unit directory — and creates its `messagebus` user through the `sysusers.d` snippet it
+installs, so nothing in `_files` has to enable or provision it.
+
+Logging in registers a session with logind because systemd is built `-Dpam=enabled` and
+`_files/etc/pam.d/login` calls `pam_systemd.so`; `loginctl list-sessions` shows the
+serial console session.
+
 ## Networking
 
 The guest gets one virtio-net NIC on qemu's user-mode network, and everything above it

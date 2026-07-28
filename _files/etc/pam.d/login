@@ -1,4 +1,7 @@
 auth       required   pam_unix.so
 account    required   pam_unix.so
 session    required   pam_unix.so
+# Registers the login with systemd-logind as a session on seat0. Optional, so a broken
+# or missing pam_systemd.so costs the session tracking rather than the ability to log in.
+session    optional   pam_systemd.so
 password   required   pam_unix.so
