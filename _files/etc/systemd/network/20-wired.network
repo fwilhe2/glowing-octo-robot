@@ -1,0 +1,14 @@
+# Every interface we get is a virtual NIC handed over by the hypervisor — qemu's
+# virtio-net shows up as ens3, a different VMM will name it something else — so match
+# on the udev naming scheme rather than a fixed name. Container plumbing (veth*,
+# docker0, cni*, podman*) deliberately does not match: whatever creates those
+# interfaces configures them.
+#
+# systemd-networkd hands the DHCP lease's DNS servers to systemd-resolved, which is
+# what /etc/resolv.conf points at.
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=yes
+IPv6AcceptRA=yes

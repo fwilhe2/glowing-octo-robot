@@ -16,7 +16,8 @@
 # waits for the output to come back. That is a deliberately low bar — it proves the
 # kernel mounted the root filesystem, exec'd userspace and that the dynamic loader
 # resolved a real binary's libraries, which is exactly what a bad package update
-# breaks. Point INIT at systemd once systemd can reach a target on its own.
+# breaks — and keeping systemd out of it keeps that failure distinguishable from a unit
+# that didn't start. network-test.sh is the one that boots systemd for real.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -55,6 +56,7 @@ qemu-system-x86_64 \
     -m "$MEM" -smp "$CPUS" \
     -kernel "$KERNEL" \
     -drive file="$ROOTFS",format=raw,if=virtio \
+    -nic user,model=virtio-net-pci \
     -append "root=/dev/vda rw console=ttyS0 init=$INIT" \
     -nographic \
     -no-reboot \

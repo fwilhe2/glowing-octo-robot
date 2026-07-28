@@ -8,6 +8,11 @@
 #   MEM      RAM in MB              (default 1024)
 #   CPUS     vCPUs                  (default 2)
 #
+# The guest gets one virtio-net NIC on qemu's user-mode network (10.0.2.15/24, gateway
+# and DNS forwarder at 10.0.2.2/10.0.2.3), which systemd-networkd picks up over DHCP.
+# It is unprivileged and outbound-only — pass -nic user,model=virtio-net-pci,hostfwd=...
+# of your own if you need to reach a guest port from the host.
+#
 # Drop to a raw shell instead of systemd (handy for debugging a broken boot):
 #   INIT=/bin/bash ./boot-qemu.sh
 #
@@ -34,6 +39,7 @@ exec qemu-system-x86_64 \
   -m "$MEM" -smp "$CPUS" \
   -kernel "$KERNEL" \
   -drive file="$ROOTFS",format=raw,if=virtio \
+  -nic user,model=virtio-net-pci \
   -append "root=/dev/vda rw console=ttyS0 init=$INIT" \
   -nographic \
   -no-reboot \

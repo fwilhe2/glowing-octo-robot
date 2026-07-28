@@ -35,6 +35,7 @@ require breaking one, say so and offer an alternative that keeps it.
 ./check-symbol-versions.sh rootfs  # symbol versions no shipped library defines
 ./check-updates.sh [pkg...] # what upstream has released since the pinned VERSION
 ./boot-test.sh output/rootfs.ext4 rootfs/boot/bzImage   # headless boot smoke test
+./network-test.sh output/rootfs.ext4 rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
 ./boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ```
 
@@ -101,8 +102,17 @@ permission fixups, `mkfs.ext4 -d`. Changes to the shipped `/etc` go in `_files/`
 
 The kernel is a normal package (`kernel/`, `defconfig` + `kvm_guest.config`) staged at
 `rootfs/boot/bzImage`, so a CI run is self-contained. `boot-test.sh` runs `/bin/bash` as
-PID 1 by default, not systemd, because systemd cannot reach a target yet — point `INIT`
-at systemd once it can.
+PID 1 by default, not systemd: it isolates "the kernel booted and the loader resolved a
+real binary" from everything systemd does on top. `network-test.sh` is the one that boots
+systemd for real (it reaches `multi-user.target` and a login prompt).
+
+Networking is systemd end to end: `_files/etc/systemd/network/20-wired.network` (DHCP on
+`en*`/`eth*`), networkd handing the lease to resolved, and `_files/etc/resolv.conf` as a
+symlink into resolved's `/run` stub. The qemu scripts pass `-nic user,model=virtio-net-pci`;
+the NIC shows up as `ens3`, so match on the naming scheme rather than a fixed name.
+`network-test.sh` is the check — it boots systemd for real and logs in at the serial
+getty (`root`/`root`, from `_files/etc/shadow`). Its in-guest commands are bash builtins,
+`networkctl` and `getent` only: there is no `grep`, `sed` or `awk` in the image.
 
 `fetch-image.sh` / `boot-qemu.sh` are for poking at CI artifacts locally. The `rootfs-dir`
 CI artifact is lossy (`upload-artifact` dereferences symlinks); never rebuild a bootable

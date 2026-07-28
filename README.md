@@ -106,9 +106,35 @@ that can boot on its own. The `boot` job does exactly that:
 boots the image in qemu with nobody at the console, types a command at PID 1 over the
 serial port and waits for the output to come back — proof that the kernel mounted the
 root filesystem, exec'd userspace and that the dynamic loader resolved a real binary's
-libraries. It runs `/bin/bash` as PID 1, not systemd, because systemd can't reach a
-target yet; point `INIT` at systemd once it can. `./boot-qemu.sh` is still the way to
-poke at an image interactively.
+libraries. It runs `/bin/bash` as PID 1 rather than systemd, which keeps that failure
+apart from anything systemd does on top; the network test below is the one that boots
+systemd for real. `./boot-qemu.sh` is still the way to poke at an image interactively.
+
+## Networking
+
+The guest gets one virtio-net NIC on qemu's user-mode network, and everything above it
+is systemd: `_files/etc/systemd/network/20-wired.network` puts systemd-networkd on
+DHCP for anything named `en*` or `eth*`, networkd hands the lease's DNS servers to
+systemd-resolved, and `/etc/resolv.conf` is a symlink to resolved's stub. Nothing else
+is involved — there is no DHCP client, no resolver library and no init script of our
+own to go wrong.
+
+Interfaces a container runtime creates (`veth*`, `docker0`, `cni*`, `podman*`) do not
+match that file on purpose: whatever brings them up configures them.
+
+```sh
+./network-test.sh output/rootfs.ext4 rootfs/boot/bzImage
+```
+
+is the check, and it runs in the `boot` CI job. It boots the image with systemd as PID
+1 — networkd and resolved are the things under test, so a raw shell would prove nothing
+— logs in at the serial getty and asserts three layers in order: the link is
+`routable` (DHCP answered), `getent hosts example.com` resolves (the resolved stub
+answers), and a TCP connection to it is accepted (routing and the VMM's NAT work). The
+last two need the machine running the test to have internet access.
+
+The in-guest checks use bash builtins, `networkctl` and `getent` only: the image ships
+no `grep`, `sed` or `awk` yet.
 
 ## Keeping packages up to date
 

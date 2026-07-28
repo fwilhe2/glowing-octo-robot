@@ -45,9 +45,10 @@ ldconfig -r /usr/local/src || true
 
 chown -R root:root etc
 
-chmod 755 etc/systemd/system etc/pam.d
+chmod 755 etc/systemd/system etc/systemd/network etc/pam.d
 chmod 644 etc/passwd etc/group etc/fstab etc/os-release \
-          etc/nsswitch.conf etc/hostname etc/ld.so.conf etc/pam.d/*
+          etc/nsswitch.conf etc/hostname etc/ld.so.conf etc/pam.d/* \
+          etc/systemd/network/*.network
 # Password hashes must not be world-readable.
 chmod 600 etc/shadow
 
