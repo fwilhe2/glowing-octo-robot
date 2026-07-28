@@ -2,7 +2,7 @@
 # Download a bootable combination of the latest rootfs image + kernel into ./boot-image/.
 #
 # By default it grabs the latest *successful* CI run from each repo. Override any of:
-#   KERNEL_VERSION   kernel artifact to pull (default 6.12.96)
+#   KERNEL_VERSION   kernel artifact to pull (default 7.1.5)
 #   ROOTFS_RUN       pin a specific glowing-octo-robot run id
 #   KERNEL_RUN       pin a specific potential-spork run id
 #   OUT              output directory (default boot-image)
@@ -15,7 +15,7 @@ set -euo pipefail
 
 ROOTFS_REPO="fwilhe2/glowing-octo-robot"
 KERNEL_REPO="fwilhe2/potential-spork"
-KERNEL_VERSION="${KERNEL_VERSION:-6.12.96}"
+KERNEL_VERSION="${KERNEL_VERSION:-7.1.5}"
 OUT="${OUT:-boot-image}"
 
 command -v gh >/dev/null || { echo "error: gh CLI not found" >&2; exit 1; }
