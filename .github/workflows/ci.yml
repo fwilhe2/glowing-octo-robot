@@ -5,7 +5,7 @@ on:
 
 jobs:
   base:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -24,7 +24,7 @@ jobs:
   # it has to be staged before the matrix below can start. The kernel is the exception:
   # it links no libc at all, so it runs alongside instead of queueing behind.
   glibc:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs:
       - base
     steps:
@@ -36,7 +36,7 @@ jobs:
           sysroot: 'false'
 
   kernel:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs:
       - base
     steps:
@@ -48,7 +48,7 @@ jobs:
           sysroot: 'false'
 
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs:
       - glibc
 
@@ -95,16 +95,12 @@ jobs:
           package: ${{ matrix.package }}
 
   rootfs:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs:
       - build
       - kernel
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # This job drives podman itself rather than going through build-package, so it
-      # needs the same OCI runtime fix.
-      - uses: ./.github/actions/setup-podman
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -147,7 +143,7 @@ jobs:
   # An image that builds and resolves all its libraries can still fail to boot, so
   # actually boot it: the kernel we build is in rootfs/boot/bzImage.
   boot:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs:
       - rootfs
     steps:

@@ -17,10 +17,6 @@ inputs:
 runs:
   using: composite
   steps:
-    # Before anything reaches podman: the runner's own crun is too old for the podman
-    # the newer runner images ship. See .github/actions/setup-podman.
-    - uses: ./.github/actions/setup-podman
-
     # rootfs/ stays this package's own files only, so the artifact doesn't ship a copy
     # of glibc with every package. The sysroot is a separate tree.
     - name: Download glibc
