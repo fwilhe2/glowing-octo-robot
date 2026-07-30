@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       updates: ${{ steps.check.outputs.updates }}
     steps:
@@ -42,7 +42,7 @@ jobs:
           fi
 
   pull-request:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: check
     if: needs.check.outputs.updates != '[]'
     permissions:
