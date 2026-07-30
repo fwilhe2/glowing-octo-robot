@@ -96,8 +96,9 @@ shows up here.
 ## Booting
 
 The kernel is a package like any other (`kernel/`), built with `defconfig` plus
-`kvm_guest.config` and staged at `rootfs/boot/bzImage`, so a CI run produces an image
-that can boot on its own. The `boot` job does exactly that:
+`kvm_guest.config` plus a `container.config` fragment (see [Containers](#containers))
+and staged at `rootfs/boot/bzImage`, so a CI run produces an image that can boot on its
+own. The `boot` job does exactly that:
 
 ```sh
 ./boot-test.sh output/rootfs.ext4 rootfs/boot/bzImage
@@ -148,6 +149,55 @@ last two need the machine running the test to have internet access.
 
 The in-guest checks use bash builtins, `networkctl` and `getent` only: the image ships
 no `grep`, `sed` or `awk` yet.
+
+## Containers
+
+The OCI runtime is `crun`, chosen because it is the only one written in C — runc is Go
+and youki is Rust, and either would mean a second language toolchain in the builder
+image producing binaries that never pass through the `--sysroot` machinery that keeps
+everything else on our glibc. It brings one dependency with it, `json-c`, which is what
+it parses `config.json` with. crun used to bundle yajl and could be built
+`--enable-embedded-yajl`; that option is gone, so the JSON library is a package now.
+
+crun is built without seccomp and CRIU (see the comments in `crun/build.sh`), so a
+bundle's seccomp profile is accepted and ignored rather than enforced. Adding a
+`libseccomp` package would fix that and would also let systemd stop being built
+`-Dseccomp=disabled`. eBPF stays enabled even though it reads like an optional feature:
+on cgroup v2 the device controller *is* a BPF program, and a crun built `--disable-bpf`
+fails outright on any bundle with device rules — which is every bundle `crun spec`
+writes.
+
+`x86_64_defconfig` enables almost none of what a container needs — it has `CGROUPS`, the
+pid/net/ipc/uts namespaces and `SECCOMP_FILTER`, and stops there. `kernel/build.sh`
+writes out a `container.config` fragment and merges it with `make container.config`:
+`USER_NS` and `MEMCG`, `OVERLAY_FS` for image layers, `VETH`/`BRIDGE`/`TUN` for
+container networking, `BPF_SYSCALL`/`CGROUP_BPF` for the cgroup v2 device controller,
+and nftables, which is hidden behind `NETFILTER_ADVANCED` that defconfig leaves off. The
+fragment is a heredoc rather than a file next to `build.sh` because only `build.sh` is
+bind-mounted into the builder.
+
+Nothing pulls images yet: `crun` runs an OCI *bundle*, and the tooling that turns a
+registry reference into one (skopeo, umoci, podman) is all Go. `crun spec` writes a
+valid `config.json` from nothing, so a directory plus that file is enough to start a
+container by hand.
+
+```sh
+./container-test.sh output/rootfs.ext4 rootfs/boot/bzImage
+```
+
+is the check, and it runs in the `boot` CI job alongside the network test. It boots
+systemd for real — crun asks systemd over sd-bus for the cgroup v2 scope, so PID 1 is
+part of what is under test — logs in at the serial getty and then asserts three layers:
+`cgroup.controllers` lists `memory`, `pids` and `cpu` (the fragment's `MEMCG` and
+friends actually took), `crun spec` plus a bind mount produces a bundle, and `crun run`
+starts a container whose `$$` is 1 and whose `$HOSTNAME` is the one the spec set — pid
+and uts namespaces that are demonstrably not the host's.
+
+The bundle is assembled with bash parameter expansion, because the image still ships no
+`grep`, `sed`, `awk` or `jq`. Two traps are worth knowing if you edit those checks: the
+command spliced into `config.json` can contain no quotes of any kind, and `&` in the
+replacement half of `${var/pat/repl}` is a backreference to the whole match, so an `&&`
+chain silently corrupts the JSON.
 
 ## Keeping packages up to date
 
