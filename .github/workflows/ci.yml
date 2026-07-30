@@ -60,9 +60,11 @@ jobs:
           - attr
           - bash
           - coreutils
+          - crun
           - dbus
           - e2fsprogs
           - expat
+          - json-c
           - kmod
           - libcap
           - libxcrypt
@@ -177,6 +179,14 @@ jobs:
           TIMEOUT: 600
         run: ./network-test.sh image/rootfs.ext4 rootfs/boot/bzImage
 
+      # And a third, which starts an actual container: the kernel's container.config
+      # fragment and crun are only useful together, and nothing above this exercises
+      # either of them.
+      - name: Check containers
+        env:
+          TIMEOUT: 600
+        run: ./container-test.sh image/rootfs.ext4 rootfs/boot/bzImage
+
       - name: Upload console log
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -185,3 +195,4 @@ jobs:
           path: |
             boot-test.log
             network-test.log
+            container-test.log

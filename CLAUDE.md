@@ -102,8 +102,8 @@ permission fixups, `mkfs.ext4 -d`. Changes to the shipped `/etc` go in `_files/`
 editing it means `podman build -f rootfs.Containerfile` again before `podman run`, or the
 image is assembled from the old copy.
 
-The kernel is a normal package (`kernel/`, `defconfig` + `kvm_guest.config`) staged at
-`rootfs/boot/bzImage`, so a CI run is self-contained. `boot-test.sh` runs `/bin/bash` as
+The kernel is a normal package (`kernel/`, `defconfig` + `kvm_guest.config` +
+`container.config`) staged at `rootfs/boot/bzImage`, so a CI run is self-contained. `boot-test.sh` runs `/bin/bash` as
 PID 1 by default, not systemd: it isolates "the kernel booted and the loader resolved a
 real binary" from everything systemd does on top. `network-test.sh` is the one that boots
 systemd for real (it reaches `multi-user.target` and a login prompt).
@@ -122,6 +122,27 @@ the NIC shows up as `ens3`, so match on the naming scheme rather than a fixed na
 `network-test.sh` is the check — it boots systemd for real and logs in at the serial
 getty (`root`/`root`, from `_files/etc/shadow`). Its in-guest commands are bash builtins,
 `networkctl` and `getent` only: there is no `grep`, `sed` or `awk` in the image.
+
+The OCI runtime is `crun` (constraint 3), plus `json-c` for `config.json`. crun is the
+only runtime written in C; runc (Go) and youki (Rust) would each mean a second toolchain
+in the builder image and binaries that bypass the sysroot machinery, so don't propose
+swapping to them. It is built `--disable-seccomp --disable-criu`, so a bundle's seccomp
+profile is accepted and ignored rather than enforced — packaging `libseccomp` is what
+fixes that (and would let systemd stop being built `-Dseccomp=disabled`). Do **not** add
+`--disable-bpf` to that list: on cgroup v2 the device controller is a BPF program, so
+crun fails with *eBPF not supported* on any bundle carrying device rules — which the
+default `crun spec` output does. eBPF costs nothing here, being a raw syscall plus
+`linux/bpf.h` with no library to ship. There is no image tooling: skopeo/umoci/podman
+are all Go, so bundles are made by hand with `crun spec`.
+
+The container kernel options are a `container.config` fragment written out by
+`kernel/build.sh` as a heredoc and merged with `make container.config` — a *file* next
+to `build.sh` would not work, because `build.sh` is the only thing in `kernel/` that is
+bind-mounted into the builder. `x86_64_defconfig` has `CGROUPS`, the pid/net/ipc/uts
+namespaces and `SECCOMP_FILTER` and nothing else that matters here, so the fragment is
+load-bearing: `USER_NS`, `MEMCG` (without it `memory.max` does not exist and any bundle
+with a memory limit fails), `OVERLAY_FS`, `VETH`/`BRIDGE`/`TUN`, `BPF_SYSCALL` +
+`CGROUP_BPF`, and nftables — which is invisible until `NETFILTER_ADVANCED=y`.
 
 `fetch-image.sh` / `boot-qemu.sh` are for poking at CI artifacts locally. The `rootfs-dir`
 CI artifact is lossy (`upload-artifact` dereferences symlinks); never rebuild a bootable
