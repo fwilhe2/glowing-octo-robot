@@ -3,7 +3,7 @@
 # inside the guest, so a change that leaves the image without an address, without DNS
 # or without a route fails CI instead of being discovered by hand.
 #
-#     ./network-test.sh [rootfs.ext4] [bzImage]
+#     ./test/network.sh [rootfs.ext4] [bzImage]
 #
 # Overrides:
 #   HOST/PORT  what to resolve and connect to  (default example.com / 80)
@@ -13,10 +13,10 @@
 #   LOG        console transcript              (default network-test.log)
 #   LOGIN_USER/LOGIN_PASSWORD  serial console credentials (default root / root)
 #
-# Unlike boot-test.sh this has to run systemd: the addressing is systemd-networkd's job
+# Unlike test/boot.sh this has to run systemd: the addressing is systemd-networkd's job
 # and the resolver is systemd-resolved's, so a raw shell as PID 1 would prove nothing.
 # That means logging in at the serial getty first, with the credentials the image ships
-# in _files/etc/shadow.
+# in image/files/etc/shadow.
 #
 # The three checks are layered so that a failure says where it broke: a routable link
 # means DHCP answered, `getent hosts` means the systemd-resolved stub that
@@ -25,7 +25,7 @@
 # access — with qemu's user-mode networking the guest reaches the outside through it.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 ROOTFS="${1:-${ROOTFS:-output/rootfs.ext4}}"
 KERNEL="${2:-${KERNEL:-rootfs/boot/bzImage}}"
@@ -35,11 +35,11 @@ PORT="${PORT:-80}"
 TIMEOUT="${TIMEOUT:-300}"
 MEM="${MEM:-1024}"
 CPUS="${CPUS:-2}"
-LOG="${LOG:-network-test.log}"
+LOG="${LOG:-output/network-test.log}"
 LOGIN_USER="${LOGIN_USER:-root}"
 LOGIN_PASSWORD="${LOGIN_PASSWORD:-root}"
 
-# Same trick as boot-test.sh: the guest echoes back everything typed at the console, so
+# Same trick as test/boot.sh: the guest echoes back everything typed at the console, so
 # a marker must not appear in the command that produces it or we would match our own
 # input. The guest's shell strips the quotes; the patterns below are the joined string.
 #
@@ -69,6 +69,7 @@ fi
 work=$(mktemp -d)
 console="$work/console-in"
 mkfifo "$console"
+mkdir -p "$(dirname "$LOG")"
 : > "$LOG"
 
 qemu-system-x86_64 \

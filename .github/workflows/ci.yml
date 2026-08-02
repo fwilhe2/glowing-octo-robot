@@ -11,7 +11,7 @@ jobs:
 
       - run: |
           echo todo
-    #     ./build-base.sh
+    #     ./builder/base.sh
     #     podman save --quiet -o ${{ runner.temp }}/myimage.tar localhost/abstract-lfs-builder
 
     # - name: Upload artifact
@@ -104,9 +104,9 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: packages
+          path: artifacts
 
-      - run: find packages -name '*.tar' -exec tar xf {} \;
+      - run: find artifacts -name '*.tar' -exec tar xf {} \;
 
       - name: Display structure of downloaded files
         run: find rootfs
@@ -114,18 +114,18 @@ jobs:
       # Packages are compiled against the Debian builder's libraries, so a missing
       # runtime dependency is invisible until the binary is exec'd in qemu.
       - name: Check for unresolved library dependencies
-        run: ./check-rootfs-deps.sh rootfs
+        run: ./test/check-rootfs-deps.sh rootfs
 
       # And a library that is present can still be the wrong one: this is what proves
       # the packages were built against our glibc and not the builder image's.
       - name: Check for unsatisfied symbol versions
-        run: ./check-symbol-versions.sh rootfs
+        run: ./test/check-symbol-versions.sh rootfs
 
       - run: mkdir -p output
 
       - name: Create disk image
         run: |
-            podman build -t rootfs-builder -f rootfs.Containerfile .
+            podman build -t rootfs-builder -f image/Containerfile .
             podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh
 
       - name: Upload rootfs
@@ -152,16 +152,16 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: rootfs.ext4
-          path: image
+          path: artifacts
 
       # Just the kernel package, not the whole assembled rootfs artifact: the image is
-      # already in image/rootfs.ext4 and qemu only needs the bzImage next to it.
+      # already in artifacts/rootfs.ext4 and qemu only needs the bzImage next to it.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: package-kernel
-          path: image
+          path: artifacts
 
-      - run: tar xf image/kernel.tar
+      - run: tar xf artifacts/kernel.tar
 
       - name: Install qemu
         run: |
@@ -169,24 +169,24 @@ jobs:
           sudo apt-get install -y --no-install-recommends qemu-system-x86
 
       - name: Boot the image
-        run: ./boot-test.sh image/rootfs.ext4 rootfs/boot/bzImage
+        run: ./test/boot.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
 
       # A second boot, this one all the way into systemd, asking only whether systemd is
       # happy with itself: a package that ships a unit it cannot run leaves every boot
       # `degraded`, and nothing above notices.
       - name: Check for failed units
-        # A full systemd boot plus a login, rather than the single exec boot-test.sh
+        # A full systemd boot plus a login, rather than the single exec test/boot.sh
         # needs, so give it more room than the 300s default when qemu emulates.
         env:
           TIMEOUT: 600
-        run: ./systemd-test.sh image/rootfs.ext4 rootfs/boot/bzImage
+        run: ./test/systemd.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
 
       # A third boot: networkd has to configure the NIC, resolved has to answer, and the
       # guest has to reach the outside world.
       - name: Check networking
         env:
           TIMEOUT: 600
-        run: ./network-test.sh image/rootfs.ext4 rootfs/boot/bzImage
+        run: ./test/network.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
 
       # And a fourth, which starts an actual container: the kernel's container.config
       # fragment and crun are only useful together, and nothing above this exercises
@@ -194,15 +194,11 @@ jobs:
       - name: Check containers
         env:
           TIMEOUT: 600
-        run: ./container-test.sh image/rootfs.ext4 rootfs/boot/bzImage
+        run: ./test/container.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
 
       - name: Upload console log
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: boot-console-log
-          path: |
-            boot-test.log
-            systemd-test.log
-            network-test.log
-            container-test.log
+          path: output/*.log

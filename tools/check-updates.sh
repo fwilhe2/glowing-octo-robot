@@ -1,17 +1,17 @@
 #!/bin/bash
 # Compare the version each package is pinned to against what upstream has released:
 #
-#     ./check-updates.sh              # every package
-#     ./check-updates.sh bash glibc   # only these
-#     ./check-updates.sh --json       # machine-readable, for the update workflow
+#     ./tools/check-updates.sh              # every package
+#     ./tools/check-updates.sh bash glibc   # only these
+#     ./tools/check-updates.sh --json       # machine-readable, for the update workflow
 #
-# Where to look for versions is declared per package in its env.sh; see lib/upstream.sh.
+# Where to look for versions is declared per package in its env.sh; see tools/upstream.sh.
 # A candidate is only reported once its tarball has been confirmed to exist at the URL
 # env.sh would download it from, so a project that changes its file naming shows up as
 # an error here instead of as a pull request that fails to build.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 JSON=false
 PACKAGES=()
@@ -21,12 +21,13 @@ for arg in "$@"; do
         --json) JSON=true ;;
         -h|--help) sed -n '2,11p' "$0" | sed 's/^# \?//'; exit 0 ;;
         -*) echo "error: unknown option: $arg" >&2; exit 1 ;;
-        *) PACKAGES+=("${arg%/}") ;;
+        # Accept both `coreutils` and the path a shell tab-completes to.
+        *) arg="${arg%/}"; PACKAGES+=("${arg#packages/}") ;;
     esac
 done
 
 if [ ${#PACKAGES[@]} -eq 0 ]; then
-    for e in */env.sh; do PACKAGES+=("$(dirname "$e")"); done
+    for e in packages/*/env.sh; do PACKAGES+=("$(basename "$(dirname "$e")")"); done
 fi
 
 # The URL a package would download if its env.sh said VERSION=$2. env.sh derives
@@ -34,7 +35,7 @@ fi
 # ever has to do — both here and in the pull request the workflow opens.
 url_for_version() (
     PKG="$1"
-    eval "$(sed -E "s/^VERSION=.*/VERSION=\"$2\"/" "$PKG/env.sh")"
+    eval "$(sed -E "s/^VERSION=.*/VERSION=\"$2\"/" "packages/$PKG/env.sh")"
     printf '%s\n' "$URL"
 )
 
@@ -42,15 +43,15 @@ updates=()
 failed=false
 
 for PKG in "${PACKAGES[@]}"; do
-    if [ ! -f "$PKG/env.sh" ]; then
-        echo "error: unknown package '$PKG' (no $PKG/env.sh)" >&2
+    if [ ! -f "packages/$PKG/env.sh" ]; then
+        echo "error: unknown package '$PKG' (no packages/$PKG/env.sh)" >&2
         failed=true
         continue
     fi
 
-    current=$(source "$PKG/env.sh"; printf '%s\n' "$VERSION")
+    current=$(source "packages/$PKG/env.sh"; printf '%s\n' "$VERSION")
 
-    if ! latest=$(./lib/upstream.sh "$PKG"); then
+    if ! latest=$(./tools/upstream.sh "$PKG"); then
         $JSON || printf '%-12s %-10s %s\n' "$PKG" "$current" "ERROR: upstream lookup failed"
         failed=true
         continue

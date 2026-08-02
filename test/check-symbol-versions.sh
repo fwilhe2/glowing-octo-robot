@@ -1,7 +1,7 @@
 #!/bin/bash
 # Report binaries that require a symbol version none of the libraries we ship define.
 #
-# check-rootfs-deps.sh answers "is libfoo.so.N in the tree at all?". This answers the
+# test/check-rootfs-deps.sh answers "is libfoo.so.N in the tree at all?". This answers the
 # next question: the binary found the library, but does that library actually have the
 # symbols it wants? Versioned symbols are how glibc keeps old binaries working, so a
 # binary compiled against a newer libc than the one we ship links fine in the builder
@@ -11,9 +11,9 @@
 #
 # which is exactly the failure mode of compiling against the builder image's glibc
 # instead of ours (issue #33). Requirements on libraries the tree doesn't ship at all
-# are check-rootfs-deps.sh's business and ignored here.
+# are test/check-rootfs-deps.sh's business and ignored here.
 #
-#     ./check-symbol-versions.sh [rootfs-dir]
+#     ./test/check-symbol-versions.sh [rootfs-dir]
 set -euo pipefail
 
 ROOT="${1:-rootfs}"
@@ -71,7 +71,7 @@ cat "$work"/dump.* 2>/dev/null | awk '
 awk -F'\t' '$1 == "P" { print $2 "\t" $3 }' "$work/versions" | sort -u > "$work/provided"
 awk -F'\t' '$1 == "N" { print $2 "\t" $3 "\t" $4 }' "$work/versions" | sort -u > "$work/needed"
 
-# A library the tree doesn't ship can't be checked here — check-rootfs-deps.sh reports
+# A library the tree doesn't ship can't be checked here — test/check-rootfs-deps.sh reports
 # those — so only requirements on libraries we do ship are held against it.
 awk -F'\t' '
     NR == FNR { defines[$1 "\t" $2] = 1; shipped[$1] = 1; next }
@@ -100,6 +100,6 @@ done
 echo
 echo "These binaries were compiled against a newer library than the image ships and will"
 echo "fail at exec time. For glibc that means the build didn't go through our sysroot:"
-echo "check that SYSROOT reaches the compiler (lib/build-package.sh) and that the"
+echo "check that SYSROOT reaches the compiler (builder/build-package.sh) and that the"
 echo "package's build system doesn't drop the CFLAGS/LDFLAGS it exports."
 exit 1

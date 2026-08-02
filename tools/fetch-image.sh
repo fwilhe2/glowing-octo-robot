@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Download a bootable combination of the latest rootfs image + kernel into ./boot-image/.
+# Download a bootable combination of the latest rootfs image + kernel into
+# output/boot-image/.
 #
 # Both come out of the same CI run, because they have to match: the kernel is a package
 # in this repo (kernel/), and its container.config fragment is what makes the image able
@@ -8,15 +9,17 @@
 #
 # By default it grabs the latest *successful* CI run. Override any of:
 #   ROOTFS_RUN   pin a specific glowing-octo-robot run id
-#   OUT          output directory (default boot-image)
+#   OUT          output directory (default output/boot-image)
 #
 # Examples:
-#   ./fetch-image.sh
-#   ROOTFS_RUN=29703135782 ./fetch-image.sh
+#   ./tools/fetch-image.sh
+#   ROOTFS_RUN=29703135782 ./tools/fetch-image.sh
 set -euo pipefail
 
+cd "$(dirname "$0")/.."
+
 REPO="fwilhe2/glowing-octo-robot"
-OUT="${OUT:-boot-image}"
+OUT="${OUT:-output/boot-image}"
 
 command -v gh >/dev/null || { echo "error: gh CLI not found" >&2; exit 1; }
 
@@ -42,4 +45,4 @@ cp "$tmp/kernel/rootfs/boot/bzImage" "$OUT/bzImage"
 echo
 echo "Downloaded into $OUT/:"
 ls -la "$OUT/rootfs.ext4" "$OUT/bzImage"
-echo "Boot it with: ./boot-qemu.sh"
+echo "Boot it with: ./tools/boot-qemu.sh"

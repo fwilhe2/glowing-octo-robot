@@ -1,8 +1,10 @@
-# Only these paths are ever COPYied into an image (package.Containerfile and
-# rootfs.Containerfile); everything else — unpacked source trees, the rootfs staging
-# dir, tarballs, .git — would just bloat the build context. Add an entry here when a
-# Containerfile starts copying something new.
+# Only these paths are ever COPYied into an image (builder/package.Containerfile and
+# image/Containerfile); everything else — unpacked source trees, the rootfs staging
+# dir, downloaded tarballs, .git — would just bloat the build context. Add an entry
+# here when a Containerfile starts copying something new.
+#
+# Whole directories, because re-including a file under a directory that `*` has already
+# excluded does not work: the parent has to come back first.
 *
-!lib
-!_files
-!build-rootfs.sh
+!builder
+!image

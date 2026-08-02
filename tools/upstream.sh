@@ -1,7 +1,7 @@
 #!/bin/bash
 # Print the latest version a package's upstream has released:
 #
-#     lib/upstream.sh coreutils
+#     tools/upstream.sh coreutils
 #     9.8
 #
 # Where to look is declared in the package's env.sh. Nothing is needed for the common
@@ -28,6 +28,9 @@
 # Only plain numeric versions are ever considered, so alphas, betas and release
 # candidates never show up as an update.
 set -euo pipefail
+
+# Package directories are relative to the repository root, not to tools/.
+cd "$(dirname "$0")/.."
 
 NUM='[0-9]+(\.[0-9]+)*'
 
@@ -88,12 +91,13 @@ if [ -z "$PKG" ]; then
 fi
 
 PKG="${PKG%/}"
-if [ ! -f "$PKG/env.sh" ]; then
-    echo "error: unknown package '$PKG' (no $PKG/env.sh)" >&2
+PKG="${PKG#packages/}"
+if [ ! -f "packages/$PKG/env.sh" ]; then
+    echo "error: unknown package '$PKG' (no packages/$PKG/env.sh)" >&2
     exit 1
 fi
 
-source "$PKG/env.sh"
+source "packages/$PKG/env.sh"
 
 UPSTREAM_GITHUB="${UPSTREAM_GITHUB:-}"
 UPSTREAM_SUBDIR="${UPSTREAM_SUBDIR:-}"
