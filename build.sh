@@ -3,19 +3,21 @@
 #
 #     ./build.sh <package>        # e.g. ./build.sh coreutils
 #
-# Everything package-specific lives in the package's own directory:
+# Everything package-specific lives in the package's own directory under packages/:
 #
-#   <package>/env.sh     version, tarball URL, and optionally BUILD_DEP (the Debian
-#                        source package to take build-dependencies from, defaults to
-#                        the package directory name), EXTRA_DEPS (extra apt packages
-#                        build-dep doesn't cover) and NO_SYSROOT.
-#   <package>/build.sh   the configure/compile/install commands, sourced inside the
-#                        container by lib/build-package.sh with the unpacked source
-#                        tree as the working directory.
+#   packages/<pkg>/env.sh     version, tarball URL, and optionally BUILD_DEP (the Debian
+#                             source package to take build-dependencies from, defaults to
+#                             the package directory name), EXTRA_DEPS (extra apt packages
+#                             build-dep doesn't cover) and NO_SYSROOT.
+#   packages/<pkg>/build.sh   the configure/compile/install commands, sourced inside the
+#                             container by builder/build-package.sh with the unpacked
+#                             source tree as the working directory.
+#
+# The tarball is downloaded to downloads/ and unpacked into the package's own directory.
 #
 # Packages compile against our own glibc, not the builder image's: a tree that already
 # has glibc staged in it is bind-mounted read-only and passed to gcc as --sysroot (see
-# lib/build-package.sh). That tree defaults to rootfs/ — where ./build.sh glibc puts it
+# builder/build-package.sh). That tree defaults to rootfs/ — where ./build.sh glibc puts it
 # — and can be pointed elsewhere with SYSROOT_DIR, which CI uses to keep each package's
 # artifact free of glibc's files. So glibc has to be built before anything else:
 #
@@ -26,19 +28,22 @@ PKG="${1:-}"
 
 if [ -z "$PKG" ]; then
     echo "usage: $0 <package>" >&2
-    echo "packages: $(for e in */env.sh; do dirname "$e"; done | tr '\n' ' ')" >&2
+    echo "packages: $(for e in packages/*/env.sh; do basename "$(dirname "$e")"; done | tr '\n' ' ')" >&2
     exit 1
 fi
 
+# Accept both `coreutils` and the path a shell tab-completes to, `packages/coreutils/`.
 PKG="${PKG%/}"
+PKG="${PKG#packages/}"
+PKG_DIR="packages/$PKG"
 
-if [ ! -f "$PKG/env.sh" ]; then
-    echo "error: unknown package '$PKG' (no $PKG/env.sh)" >&2
+if [ ! -f "$PKG_DIR/env.sh" ]; then
+    echo "error: unknown package '$PKG' (no $PKG_DIR/env.sh)" >&2
     exit 1
 fi
 
 # env.sh may refer to $PKG when composing its download URL.
-source "$PKG/env.sh"
+source "$PKG_DIR/env.sh"
 
 # Unset means "same name as the package directory"; explicitly empty means "no Debian
 # source package to take build-dependencies from", so keep the two apart.
@@ -65,12 +70,12 @@ if [ -z "$NO_SYSROOT" ]; then
                    --env SYSROOT=/usr/local/sysroot)
 fi
 
-./build-base.sh
+./builder/base.sh
 
 podman build -t "localhost/$PKG-lfs-builder" \
     --build-arg "BUILD_DEP=$BUILD_DEP" \
     --build-arg "EXTRA_DEPS=$EXTRA_DEPS" \
-    -f package.Containerfile .
+    -f builder/package.Containerfile .
 
 # The builder also has to *run* what it compiles: help2man asks a freshly built ptx for
 # its --help, ncurses runs its own tic. Those binaries are linked against our glibc, and
@@ -96,23 +101,28 @@ if [ -z "$NO_SYSROOT" ]; then
         sh -c 'dpkg -L libc6 | while read -r p; do [ -f "$p" ] && printf "%s\n" "$p"; done')
 fi
 
-if [ ! -f "$TARBALL" ]; then
+# Tarballs are shared across packages' rebuilds and never belong to any one of them, so
+# they live in one gitignored directory rather than next to whichever package downloaded
+# them first.
+mkdir -p downloads
+
+if [ ! -f "downloads/$TARBALL" ]; then
     echo "Downloading ${TARBALL}..."
-    wget -q "$URL"
+    wget -q -O "downloads/$TARBALL" "$URL"
 else
     echo "${TARBALL} already exists, skipping download."
 fi
 
-if [ ! -d "$PKG/$PACKAGE" ]; then
+if [ ! -d "$PKG_DIR/$PACKAGE" ]; then
     echo "Extracting ${TARBALL}..."
-    tar -xf "$TARBALL" -C "$PKG"
+    tar -xf "downloads/$TARBALL" -C "$PKG_DIR"
 else
-    echo "Directory $PKG/$PACKAGE already exists, skipping extraction."
+    echo "Directory $PKG_DIR/$PACKAGE already exists, skipping extraction."
 fi
 
 podman run --rm \
-    --volume "$PWD/$PKG/$PACKAGE":/usr/local/src \
-    --volume "$PWD/$PKG/build.sh":/package-build.sh:ro \
+    --volume "$PWD/$PKG_DIR/$PACKAGE":/usr/local/src \
+    --volume "$PWD/$PKG_DIR/build.sh":/package-build.sh:ro \
     --volume "$PWD/rootfs":/usr/local/rootfs \
     "${sysroot_mount[@]}" \
     "localhost/$PKG-lfs-builder" /build.sh

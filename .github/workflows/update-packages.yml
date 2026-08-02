@@ -33,7 +33,7 @@ jobs:
         run: |
           # An upstream that can't be reached shouldn't stop the packages that can, so
           # the failures are reported at the end rather than aborting the run.
-          ./check-updates.sh --json $PACKAGES > updates.json || failed=1
+          ./tools/check-updates.sh --json $PACKAGES > updates.json || failed=1
           [ -s updates.json ] || echo '[]' > updates.json
           echo "updates=$(cat updates.json)" >> "$GITHUB_OUTPUT"
           jq -r '.[] | "\(.package): \(.current) -> \(.latest)"' updates.json
@@ -82,8 +82,8 @@ jobs:
           # env.sh derives PACKAGE, TARBALL and URL from VERSION, so this one line is
           # the whole update. Anything else the new version needs — a configure flag,
           # a patch — is for the human reviewing the failing build to add.
-          sed -i -E "s|^VERSION=.*|VERSION=\"$LATEST\"|" "$PKG/env.sh"
-          git diff --exit-code "$PKG/env.sh" && { echo "error: nothing changed in $PKG/env.sh" >&2; exit 1; }
+          sed -i -E "s|^VERSION=.*|VERSION=\"$LATEST\"|" "packages/$PKG/env.sh"
+          git diff --exit-code "packages/$PKG/env.sh" && { echo "error: nothing changed in packages/$PKG/env.sh" >&2; exit 1; }
 
           git commit -am "Update $PKG to $LATEST"
 
@@ -103,7 +103,7 @@ jobs:
 
           Opened automatically by \`.github/workflows/update-packages.yml\`. CI builds
           the package and boots the resulting image; if either fails, this version
-          needs work in \`$PKG/build.sh\` before it can be merged. Closing this pull
+          needs work in \`packages/$PKG/build.sh\` before it can be merged. Closing this pull
           request stops $LATEST from being proposed again.
           EOF
           )")

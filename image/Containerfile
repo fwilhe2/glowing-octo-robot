@@ -2,9 +2,9 @@ FROM debian:sid
 
 RUN apt-get update && apt-get -y install e2fsprogs cpio
 
-COPY build-rootfs.sh /usr/local/bin/
+COPY image/build-rootfs.sh /usr/local/bin/
 RUN chmod +X /usr/local/bin/build-rootfs.sh
 
-COPY _files /files
+COPY image/files /files
 
 WORKDIR /usr/local/src

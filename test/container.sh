@@ -3,7 +3,7 @@
 # a kernel config or a crun build that cannot run one fails CI instead of being
 # discovered by hand.
 #
-#     ./container-test.sh [rootfs.ext4] [bzImage]
+#     ./test/container.sh [rootfs.ext4] [bzImage]
 #
 # Overrides:
 #   TIMEOUT    seconds to wait   (default 300 — qemu falls back to TCG in CI, where
@@ -12,7 +12,7 @@
 #   LOG        console transcript (default container-test.log)
 #   LOGIN_USER/LOGIN_PASSWORD    serial console credentials (default root / root)
 #
-# Like network-test.sh this boots systemd rather than a raw shell: crun asks systemd
+# Like test/network.sh this boots systemd rather than a raw shell: crun asks systemd
 # over sd-bus to create the cgroup v2 scope, so PID 1 is part of what is under test.
 #
 # The checks are layered so a failure says where it broke:
@@ -26,7 +26,7 @@
 # no grep, sed, awk or jq, and none of them are needed for this.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 ROOTFS="${1:-${ROOTFS:-output/rootfs.ext4}}"
 KERNEL="${2:-${KERNEL:-rootfs/boot/bzImage}}"
@@ -34,11 +34,11 @@ INIT="${INIT:-/usr/lib/systemd/systemd}"
 TIMEOUT="${TIMEOUT:-300}"
 MEM="${MEM:-1024}"
 CPUS="${CPUS:-2}"
-LOG="${LOG:-container-test.log}"
+LOG="${LOG:-output/container-test.log}"
 LOGIN_USER="${LOGIN_USER:-root}"
 LOGIN_PASSWORD="${LOGIN_PASSWORD:-root}"
 
-# Same trick as network-test.sh: the guest echoes back everything typed at the console,
+# Same trick as test/network.sh: the guest echoes back everything typed at the console,
 # so a marker must not appear in the command that produces it or we would match our own
 # input. The guest's shell strips the quotes; the patterns below are the joined string.
 READY="SHELL-IS-UP"
@@ -111,6 +111,7 @@ fi
 work=$(mktemp -d)
 console="$work/console-in"
 mkfifo "$console"
+mkdir -p "$(dirname "$LOG")"
 : > "$LOG"
 
 qemu-system-x86_64 \

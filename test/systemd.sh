@@ -3,7 +3,7 @@
 # units — so a package that ships a unit it cannot actually run fails CI instead of
 # leaving every boot `degraded` for someone to notice by hand.
 #
-#     ./systemd-test.sh [rootfs.ext4] [bzImage]
+#     ./test/systemd.sh [rootfs.ext4] [bzImage]
 #
 # Overrides:
 #   TIMEOUT    seconds to wait   (default 300 — qemu falls back to TCG in CI, where
@@ -17,13 +17,13 @@
 # at. --wait blocks until startup has actually settled, which is what keeps this from
 # racing a unit that is merely slow; the deadline below is what catches one that hangs.
 #
-# This is deliberately separate from boot-test.sh and network-test.sh rather than folded
-# into either: boot-test.sh proves the kernel and the loader work with a raw shell as
-# PID 1, network-test.sh proves addressing and DNS, and this proves systemd itself is
+# This is deliberately separate from test/boot.sh and test/network.sh rather than folded
+# into either: test/boot.sh proves the kernel and the loader work with a raw shell as
+# PID 1, test/network.sh proves addressing and DNS, and this proves systemd itself is
 # happy. Three failures that mean three different things stay three different tests.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 ROOTFS="${1:-${ROOTFS:-output/rootfs.ext4}}"
 KERNEL="${2:-${KERNEL:-rootfs/boot/bzImage}}"
@@ -31,11 +31,11 @@ INIT="${INIT:-/usr/lib/systemd/systemd}"
 TIMEOUT="${TIMEOUT:-300}"
 MEM="${MEM:-1024}"
 CPUS="${CPUS:-2}"
-LOG="${LOG:-systemd-test.log}"
+LOG="${LOG:-output/systemd-test.log}"
 LOGIN_USER="${LOGIN_USER:-root}"
 LOGIN_PASSWORD="${LOGIN_PASSWORD:-root}"
 
-# Same trick as network-test.sh: the guest echoes back what is typed at the console
+# Same trick as test/network.sh: the guest echoes back what is typed at the console
 # until `stty -echo` takes effect, so a marker must not appear verbatim in the command
 # that produces it. The guest's shell strips the quotes; the patterns below are the
 # joined string.
@@ -65,6 +65,7 @@ fi
 work=$(mktemp -d)
 console="$work/console-in"
 mkfifo "$console"
+mkdir -p "$(dirname "$LOG")"
 : > "$LOG"
 
 qemu-system-x86_64 \

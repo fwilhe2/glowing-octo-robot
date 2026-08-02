@@ -1,14 +1,17 @@
-*.tar.gz
-*.tar.xz
+# Downloaded source tarballs.
+downloads
+
+# The shared, cumulative staging tree every package installs into, and a glibc-only
+# tree to compile against when it isn't rootfs/ itself.
 rootfs
-# a glibc-only staging tree to compile against, when it isn't rootfs/ itself
 sysroot
 glibc-package
+
+# Built images, fetched CI artifacts and test console logs all land here.
 output
-boot-image/
-boot-test.log
-systemd-test.log
-network-test.log
-container-test.log
-# unpacked source trees, e.g. bash/bash-5.3
-/*/*-[0-9]*/
+
+# CI's scratch directory for downloaded artifacts.
+artifacts
+
+# Unpacked source trees, e.g. packages/bash/bash-5.3/
+/packages/*/*-[0-9]*/

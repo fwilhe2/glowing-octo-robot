@@ -3,7 +3,7 @@
 # runs, so a package update that produces an unbootable image fails CI instead of
 # being discovered the next time someone boots it by hand.
 #
-#     ./boot-test.sh [rootfs.ext4] [bzImage]
+#     ./test/boot.sh [rootfs.ext4] [bzImage]
 #
 # Overrides:
 #   INIT      PID 1 to run          (default /bin/bash)
@@ -17,10 +17,10 @@
 # kernel mounted the root filesystem, exec'd userspace and that the dynamic loader
 # resolved a real binary's libraries, which is exactly what a bad package update
 # breaks — and keeping systemd out of it keeps that failure distinguishable from a unit
-# that didn't start. network-test.sh is the one that boots systemd for real.
+# that didn't start. test/network.sh is the one that boots systemd for real.
 set -euo pipefail
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 ROOTFS="${1:-${ROOTFS:-boot-image/rootfs.ext4}}"
 KERNEL="${2:-${KERNEL:-boot-image/bzImage}}"
@@ -28,7 +28,7 @@ INIT="${INIT:-/bin/bash}"
 TIMEOUT="${TIMEOUT:-300}"
 MEM="${MEM:-1024}"
 CPUS="${CPUS:-2}"
-LOG="${LOG:-boot-test.log}"
+LOG="${LOG:-output/boot-test.log}"
 
 # The marker must not appear in the command that produces it: the guest echoes back
 # everything typed at the console, and matching our own input would pass every time.
@@ -49,6 +49,7 @@ fi
 work=$(mktemp -d)
 console="$work/console-in"
 mkfifo "$console"
+mkdir -p "$(dirname "$LOG")"
 : > "$LOG"
 
 qemu-system-x86_64 \

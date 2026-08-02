@@ -37,12 +37,12 @@ runs:
       id: get_key
       shell: bash
       run: |
-        PKG="${{ inputs.package }}"
+        PKG="packages/${{ inputs.package }}"
         source $PKG/env.sh
         echo "package=$PACKAGE" >> $GITHUB_OUTPUT
-        # glibc/env.sh is in here for every package: they are compiled against that
-        # glibc, so bumping its version has to rebuild all of them.
-        echo "build_script_sum=$(cat build.sh build-base.sh Containerfile package.Containerfile lib/build-package.sh glibc/env.sh $PKG/build.sh $PKG/env.sh | md5sum | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+        # packages/glibc/env.sh is in here for every package: they are compiled against
+        # that glibc, so bumping its version has to rebuild all of them.
+        echo "build_script_sum=$(cat build.sh builder/base.sh builder/base.Containerfile builder/package.Containerfile builder/build-package.sh packages/glibc/env.sh $PKG/build.sh $PKG/env.sh | md5sum | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
 
     - name: Cache
       id: cache-build

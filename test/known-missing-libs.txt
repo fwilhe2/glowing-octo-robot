@@ -2,7 +2,7 @@
 #
 # Everything here was picked up opportunistically from the Debian builder image: the
 # package's configure found an optional dependency, linked against it, and we never
-# staged it. check-rootfs-deps.sh reports these but doesn't fail on them, so that new
+# staged it. test/check-rootfs-deps.sh reports these but doesn't fail on them, so that new
 # regressions stand out from this existing backlog.
 #
 # Fixing one means either adding a package that provides the library, or configuring
@@ -33,7 +33,7 @@ libaudit.so.1
 libgd.so.3
 libselinux.so.1
 
-# pam_userdb — a PAM module we don't reference in _files/etc/pam.d.
+# pam_userdb — a PAM module we don't reference in image/files/etc/pam.d.
 libdb-5.3.so
 
 # systemd's optional remote-journal components, which we don't enable.

@@ -1,6 +1,25 @@
 # glowing-octo-robot
 my experimental linux from scratch (lfs) build, targeting qemu
 
+## Layout
+
+```
+build.sh          the only build entry point — ./build.sh <package>
+packages/<pkg>/   env.sh + build.sh per package, and the tree its tarball unpacks into
+builder/          how a package is compiled: the base and per-package builder images,
+                  and the container entrypoint that sets up the sysroot
+image/            how the staging tree becomes a disk image: Containerfile,
+                  build-rootfs.sh, and files/ — the /etc the image ships
+test/             everything CI runs to verify a build
+tools/            local conveniences and maintenance, not part of a build
+downloads/        source tarballs (gitignored)
+rootfs/           shared staging tree every package installs into (gitignored)
+output/           built images, fetched CI artifacts, test console logs (gitignored)
+```
+
+Scripts under `test/` and `tools/` `cd` to the repository root themselves, so they run
+correctly from any directory.
+
 ## Building
 
 Each package is built in a throwaway podman container and installed into the shared
@@ -29,13 +48,13 @@ Everything else a package links against still comes from the builder image, so t
 not the staged LFS toolchain — it is the one library where a version skew silently
 produces binaries that can't start.
 
-`rootfs.Containerfile` / `build-rootfs.sh` then turn `rootfs/` into `output/rootfs.ext4`
-(see the `rootfs` job in `.github/workflows/ci.yml`), which `./boot-qemu.sh` boots.
+`image/Containerfile` / `image/build-rootfs.sh` then turn `rootfs/` into `output/rootfs.ext4`
+(see the `rootfs` job in `.github/workflows/ci.yml`), which `./tools/boot-qemu.sh` boots.
 
 ## Adding a package
 
-Create a directory named after the package with two files in it, and add it to the CI
-matrix in `.github/workflows/ci.yml`:
+Create a directory under `packages/` named after the package with two files in it, and
+add it to the CI matrix in `.github/workflows/ci.yml`:
 
 * `env.sh` — the source tarball, plus optional knobs:
 
@@ -48,18 +67,18 @@ matrix in `.github/workflows/ci.yml`:
   | `BUILD_DEP` | Debian source package to take build-dependencies from (default: `$PKG`; empty to skip `build-dep` entirely) |
   | `EXTRA_DEPS` | extra apt packages `build-dep` doesn't cover |
   | `NO_SYSROOT` | set to `1` for packages that aren't compiled against our glibc |
-  | `UPSTREAM_*` | where to look for new releases, when the directory `URL` points into isn't it — see `lib/upstream.sh` |
+  | `UPSTREAM_*` | where to look for new releases, when the directory `URL` points into isn't it — see `tools/upstream.sh` |
 
   Everything is derived from `VERSION`, so bumping that one line is a complete update —
   which is what the update workflow below relies on.
 
 * `build.sh` — only the configure/compile/install commands. It is sourced inside the
-  container by `lib/build-package.sh` with the unpacked source tree as the working
+  container by `builder/build-package.sh` with the unpacked source tree as the working
   directory; install with `DESTDIR=/usr/local/rootfs`.
 
-Everything else — the base image (`Containerfile`), the per-package builder image
-(`package.Containerfile`), the download/unpack/run dance (`build.sh`) and the
-merged-`/usr` staging (`lib/build-package.sh`) — is shared.
+Everything else — the base image (`builder/base.Containerfile`), the per-package builder image
+(`builder/package.Containerfile`), the download/unpack/run dance (`build.sh`) and the
+merged-`/usr` staging (`builder/build-package.sh`) — is shared.
 
 ## Checking runtime dependencies
 
@@ -69,11 +88,11 @@ the library is never staged, and nothing notices until the binary is exec'd in q
 which is how `bash` ended up needing `libtinfo.so.6` with no `ncurses` package.
 
 ```sh
-./check-rootfs-deps.sh rootfs
+./test/check-rootfs-deps.sh rootfs
 ```
 
 reports every `NEEDED` entry the tree can't resolve, and runs in the `rootfs` CI job.
-Libraries listed in `known-missing-libs.txt` are reported but don't fail the run, so
+Libraries listed in `test/known-missing-libs.txt` are reported but don't fail the run, so
 new regressions stand out from the existing backlog; that file explains what wants
 each one and how to resolve it.
 
@@ -85,7 +104,7 @@ newer glibc than the image ships links fine in the builder and then dies at exec
 with ``version `GLIBC_2.44' not found``. So:
 
 ```sh
-./check-symbol-versions.sh rootfs
+./test/check-symbol-versions.sh rootfs
 ```
 
 compares every versioned symbol the tree's binaries ask for against what the tree's own
@@ -95,13 +114,13 @@ shows up here.
 
 ## Booting
 
-The kernel is a package like any other (`kernel/`), built with `defconfig` plus
+The kernel is a package like any other (`packages/kernel/`), built with `defconfig` plus
 `kvm_guest.config` plus a `container.config` fragment (see [Containers](#containers))
 and staged at `rootfs/boot/bzImage`, so a CI run produces an image that can boot on its
 own. The `boot` job does exactly that:
 
 ```sh
-./boot-test.sh output/rootfs.ext4 rootfs/boot/bzImage
+./test/boot.sh output/rootfs.ext4 rootfs/boot/bzImage
 ```
 
 boots the image in qemu with nobody at the console, types a command at PID 1 over the
@@ -109,10 +128,10 @@ serial port and waits for the output to come back — proof that the kernel moun
 root filesystem, exec'd userspace and that the dynamic loader resolved a real binary's
 libraries. It runs `/bin/bash` as PID 1 rather than systemd, which keeps that failure
 apart from anything systemd does on top; the tests below are the ones that boot systemd
-for real. `./boot-qemu.sh` is still the way to poke at an image interactively.
+for real. `./tools/boot-qemu.sh` is still the way to poke at an image interactively.
 
 ```sh
-./systemd-test.sh output/rootfs.ext4 rootfs/boot/bzImage
+./test/systemd.sh output/rootfs.ext4 rootfs/boot/bzImage
 ```
 
 is the next layer up, and it also runs in the `boot` job. It boots systemd, logs in at
@@ -130,16 +149,16 @@ It is not optional furniture: systemd-logind connects to the system bus at start
 without one it exits with *Failed to connect to system bus* and is restarted until it
 hits its start limit. dbus enables itself — the `.target.wants` symlinks live in its own
 unit directory — and creates its `messagebus` user through the `sysusers.d` snippet it
-installs, so nothing in `_files` has to enable or provision it.
+installs, so nothing in `image/files` has to enable or provision it.
 
 Logging in registers a session with logind because systemd is built `-Dpam=enabled` and
-`_files/etc/pam.d/login` calls `pam_systemd.so`; `loginctl list-sessions` shows the
+`image/files/etc/pam.d/login` calls `pam_systemd.so`; `loginctl list-sessions` shows the
 serial console session.
 
 ## Networking
 
 The guest gets one virtio-net NIC on qemu's user-mode network, and everything above it
-is systemd: `_files/etc/systemd/network/20-wired.network` puts systemd-networkd on
+is systemd: `image/files/etc/systemd/network/20-wired.network` puts systemd-networkd on
 DHCP for anything named `en*` or `eth*`, networkd hands the lease's DNS servers to
 systemd-resolved, and `/etc/resolv.conf` is a symlink to resolved's stub. Nothing else
 is involved — there is no DHCP client, no resolver library and no init script of our
@@ -149,7 +168,7 @@ Interfaces a container runtime creates (`veth*`, `docker0`, `cni*`, `podman*`) d
 match that file on purpose: whatever brings them up configures them.
 
 ```sh
-./network-test.sh output/rootfs.ext4 rootfs/boot/bzImage
+./test/network.sh output/rootfs.ext4 rootfs/boot/bzImage
 ```
 
 is the check, and it runs in the `boot` CI job. It boots the image with systemd as PID
@@ -194,7 +213,7 @@ valid `config.json` from nothing, so a directory plus that file is enough to sta
 container by hand.
 
 ```sh
-./container-test.sh output/rootfs.ext4 rootfs/boot/bzImage
+./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage
 ```
 
 is the check, and it runs in the `boot` CI job alongside the network test. It boots
@@ -214,12 +233,12 @@ chain silently corrupts the JSON.
 ## Keeping packages up to date
 
 ```sh
-./check-updates.sh              # every package
-./check-updates.sh bash glibc   # only these
+./tools/check-updates.sh              # every package
+./tools/check-updates.sh bash glibc   # only these
 ```
 
 reports what each package is pinned to and what upstream has released since. Where to
-look is declared per package in `env.sh` (see `lib/upstream.sh` for the knobs); nothing
+look is declared per package in `env.sh` (see `tools/upstream.sh` for the knobs); nothing
 needs declaring when the download URL points into a directory that holds every release,
 which covers the GNU mirrors, savannah and kernel.org. Projects that publish on GitHub
 set `UPSTREAM_GITHUB="owner/repo"`. Only plain numeric versions are considered, so

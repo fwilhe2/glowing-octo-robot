@@ -13,5 +13,5 @@ RUN apt-get update \
     && if [ -n "$BUILD_DEP" ]; then apt-get build-dep -y "$BUILD_DEP"; fi \
     && if [ -n "$EXTRA_DEPS" ]; then apt-get install -y $EXTRA_DEPS; fi
 
-COPY lib/build-package.sh /build.sh
+COPY builder/build-package.sh /build.sh
 RUN chmod +x /build.sh

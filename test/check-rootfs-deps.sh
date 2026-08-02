@@ -7,9 +7,9 @@
 # That is how bash ended up needing libtinfo.so.6 with no ncurses package. This walks
 # the assembled tree and reports every unresolved NEEDED entry at once.
 #
-#     ./check-rootfs-deps.sh [rootfs-dir] [allowlist]
+#     ./test/check-rootfs-deps.sh [rootfs-dir] [allowlist]
 #
-# Libraries listed in known-missing-libs.txt are reported but don't fail the run, so
+# Libraries listed in test/known-missing-libs.txt are reported but don't fail the run, so
 # this catches new regressions without being blocked on the existing backlog.
 set -euo pipefail
 
