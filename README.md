@@ -140,7 +140,9 @@ which it does if and only if no unit failed. That catches the class of problem n
 else here looks for: a package installing a unit it cannot actually run, which costs
 nothing at build time and leaves every boot `degraded`. When it fails it prints
 `systemctl --failed` and the boot's error-priority journal, so the failing unit and its
-reason land in the CI log.
+reason land in the CI log. It also asserts systemd's `Tainted` property is
+empty, which catches image-assembly mistakes no unit ever fails over — an unmerged
+`/usr/sbin`, a `/var/run` that is a real directory.
 
 ## The system bus
 

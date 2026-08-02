@@ -135,7 +135,8 @@ real binary" from everything systemd does on top. `test/systemd.sh`, `test/netwo
 `test/container.sh` boot systemd for real (they reach `multi-user.target` and a login
 prompt). `test/systemd.sh` is the cheap catch-all: it asserts `systemctl is-system-running`
 says `running`, which is `degraded` if and only if some unit failed — the failure mode a
-package gets for free by installing a unit whose binary needs a library we don't ship.
+package gets for free by installing a unit whose binary needs a library we don't ship. It also
+asserts the `Tainted` property is empty.
 
 The system bus is the reference `dbus-daemon` (`dbus`, which needs `expat`). Anything with
 a D-Bus API needs it — systemd-logind exits with *Failed to connect to system bus* and
