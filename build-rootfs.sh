@@ -45,10 +45,12 @@ ldconfig -r /usr/local/src || true
 
 chown -R root:root etc
 
-chmod 755 etc/systemd/system etc/systemd/network etc/pam.d
+chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
+          etc/systemd/system/dbus.service.d
 chmod 644 etc/passwd etc/group etc/fstab etc/os-release \
           etc/nsswitch.conf etc/hostname etc/ld.so.conf etc/pam.d/* \
-          etc/systemd/network/*.network
+          etc/systemd/network/*.network \
+          etc/systemd/system/dbus.service.d/*.conf
 # Password hashes must not be world-readable.
 chmod 600 etc/shadow
 

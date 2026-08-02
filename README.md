@@ -108,8 +108,20 @@ boots the image in qemu with nobody at the console, types a command at PID 1 ove
 serial port and waits for the output to come back — proof that the kernel mounted the
 root filesystem, exec'd userspace and that the dynamic loader resolved a real binary's
 libraries. It runs `/bin/bash` as PID 1 rather than systemd, which keeps that failure
-apart from anything systemd does on top; the network test below is the one that boots
-systemd for real. `./boot-qemu.sh` is still the way to poke at an image interactively.
+apart from anything systemd does on top; the tests below are the ones that boot systemd
+for real. `./boot-qemu.sh` is still the way to poke at an image interactively.
+
+```sh
+./systemd-test.sh output/rootfs.ext4 rootfs/boot/bzImage
+```
+
+is the next layer up, and it also runs in the `boot` job. It boots systemd, logs in at
+the serial getty and asserts that `systemctl is-system-running` reports `running` —
+which it does if and only if no unit failed. That catches the class of problem nothing
+else here looks for: a package installing a unit it cannot actually run, which costs
+nothing at build time and leaves every boot `degraded`. When it fails it prints
+`systemctl --failed` and the boot's error-priority journal, so the failing unit and its
+reason land in the CI log.
 
 ## The system bus
 

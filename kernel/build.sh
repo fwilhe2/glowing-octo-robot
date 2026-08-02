@@ -46,6 +46,17 @@ CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
 EOF
 make container.config
 
+# A second fragment for the other direction: x86_64_defconfig is a general-purpose
+# config and turns on hardware a VM will never have. Only ever a guest (qemu today,
+# rust-vmm-style VMMs next), so this is dead code and, in the wireless case, a boot-time
+# error — cfg80211 asks the firmware loader for regulatory.db, which the image does not
+# ship and never will, and the failure lands in the journal at every boot.
+cat > kernel/configs/vm.config <<'EOF'
+# No radio in a virtual machine. Clearing WIRELESS takes CFG80211 and MAC80211 with it.
+# CONFIG_WIRELESS is not set
+EOF
+make vm.config
+
 make -j"$(nproc)"
 
 # The rootfs image is what CI hands to qemu, so the kernel rides along inside it. It is

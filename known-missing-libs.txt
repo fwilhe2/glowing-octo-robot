@@ -12,10 +12,6 @@
 # ---------------------------------------------------------------------------------
 # Degraded but not fatal: only the named tools break, and none are on the boot path.
 
-# coreutils cksum/md5sum/sha*sum (they fall back to internal implementations if built
-# --without-openssl) and kmod's module signature verification.
-libcrypto.so.3
-
 # coreutils basenc, expr, factor — arbitrary-precision arithmetic.
 libgmp.so.10
 
@@ -24,9 +20,6 @@ libreadline.so.8
 
 # util-linux setpriv.
 libcap-ng.so.0
-
-# util-linux liblastlog2 — the lastlog2 database.
-libsqlite3.so.0
 
 # e2fsprogs fuse2fs — mounting ext4 through FUSE.
 libfuse3.so.4

@@ -1,2 +1,4 @@
 # <file system> <mount point> <type> <options> <dump> <pass>
-/dev/sda   /   ext4   defaults   0   1
+# By label, not by device node: build-rootfs.sh runs mkfs.ext4 -L root, the root disk
+# is virtio (/dev/vda) under qemu, and the next VMM may well name it something else.
+LABEL=root   /   ext4   defaults   0   1

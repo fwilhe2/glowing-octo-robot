@@ -1,49 +1,43 @@
 #!/usr/bin/env bash
 # Download a bootable combination of the latest rootfs image + kernel into ./boot-image/.
 #
-# By default it grabs the latest *successful* CI run from each repo. Override any of:
-#   KERNEL_VERSION   kernel artifact to pull (default 7.1.5)
-#   ROOTFS_RUN       pin a specific glowing-octo-robot run id
-#   KERNEL_RUN       pin a specific potential-spork run id
-#   OUT              output directory (default boot-image)
+# Both come out of the same CI run, because they have to match: the kernel is a package
+# in this repo (kernel/), and its container.config fragment is what makes the image able
+# to run containers at all. Pulling a kernel from anywhere else gives you a guest that
+# boots and then quietly has no `memory` cgroup controller, no overlayfs and no veth.
+#
+# By default it grabs the latest *successful* CI run. Override any of:
+#   ROOTFS_RUN   pin a specific glowing-octo-robot run id
+#   OUT          output directory (default boot-image)
 #
 # Examples:
 #   ./fetch-image.sh
-#   KERNEL_VERSION=7.1.4 ./fetch-image.sh
-#   ROOTFS_RUN=29703135782 KERNEL_RUN=29703191432 ./fetch-image.sh
+#   ROOTFS_RUN=29703135782 ./fetch-image.sh
 set -euo pipefail
 
-ROOTFS_REPO="fwilhe2/glowing-octo-robot"
-KERNEL_REPO="fwilhe2/potential-spork"
-KERNEL_VERSION="${KERNEL_VERSION:-7.1.5}"
+REPO="fwilhe2/glowing-octo-robot"
 OUT="${OUT:-boot-image}"
 
 command -v gh >/dev/null || { echo "error: gh CLI not found" >&2; exit 1; }
-
-latest_success_run() { # repo [workflow]
-  local repo="$1" wf="${2:-}"
-  if [ -n "$wf" ]; then
-    gh run list -R "$repo" --workflow "$wf" --status success -L 1 --json databaseId -q '.[0].databaseId'
-  else
-    gh run list -R "$repo" --status success -L 1 --json databaseId -q '.[0].databaseId'
-  fi
-}
 
 mkdir -p "$OUT"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-ROOTFS_RUN="${ROOTFS_RUN:-$(latest_success_run "$ROOTFS_REPO" ci.yml)}"
-[ -n "$ROOTFS_RUN" ] || { echo "error: no successful rootfs run found" >&2; exit 1; }
-echo ">> rootfs: $ROOTFS_REPO run $ROOTFS_RUN (artifact: rootfs.ext4)"
-gh run download "$ROOTFS_RUN" -R "$ROOTFS_REPO" -n rootfs.ext4 -D "$tmp/rootfs"
+RUN="${ROOTFS_RUN:-$(gh run list -R "$REPO" --workflow ci.yml --status success -L 1 \
+                       --json databaseId -q '.[0].databaseId')}"
+[ -n "$RUN" ] || { echo "error: no successful run found" >&2; exit 1; }
+
+echo ">> rootfs: $REPO run $RUN (artifact: rootfs.ext4)"
+gh run download "$RUN" -R "$REPO" -n rootfs.ext4 -D "$tmp/rootfs"
 cp "$(find "$tmp/rootfs" -type f | head -1)" "$OUT/rootfs.ext4"
 
-KERNEL_RUN="${KERNEL_RUN:-$(latest_success_run "$KERNEL_REPO")}"
-[ -n "$KERNEL_RUN" ] || { echo "error: no successful kernel run found" >&2; exit 1; }
-echo ">> kernel: $KERNEL_REPO run $KERNEL_RUN (artifact: bzImage-$KERNEL_VERSION)"
-gh run download "$KERNEL_RUN" -R "$KERNEL_REPO" -n "bzImage-$KERNEL_VERSION" -D "$tmp/kernel"
-cp "$(find "$tmp/kernel" -type f | head -1)" "$OUT/bzImage"
+# The kernel package artifact rather than the assembled rootfs one: it is a tar, so the
+# bzImage comes out byte-for-byte, and it is the same artifact the CI boot job uses.
+echo ">> kernel: $REPO run $RUN (artifact: package-kernel)"
+gh run download "$RUN" -R "$REPO" -n package-kernel -D "$tmp/kernel"
+tar xf "$tmp/kernel/kernel.tar" -C "$tmp/kernel" rootfs/boot/bzImage
+cp "$tmp/kernel/rootfs/boot/bzImage" "$OUT/bzImage"
 
 echo
 echo "Downloaded into $OUT/:"

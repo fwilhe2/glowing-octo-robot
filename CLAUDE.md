@@ -35,7 +35,9 @@ require breaking one, say so and offer an alternative that keeps it.
 ./check-symbol-versions.sh rootfs  # symbol versions no shipped library defines
 ./check-updates.sh [pkg...] # what upstream has released since the pinned VERSION
 ./boot-test.sh output/rootfs.ext4 rootfs/boot/bzImage   # headless boot smoke test
+./systemd-test.sh output/rootfs.ext4 rootfs/boot/bzImage  # no failed units
 ./network-test.sh output/rootfs.ext4 rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
+./container-test.sh output/rootfs.ext4 rootfs/boot/bzImage  # crun starts a container
 ./boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ```
 
@@ -105,8 +107,11 @@ image is assembled from the old copy.
 The kernel is a normal package (`kernel/`, `defconfig` + `kvm_guest.config` +
 `container.config`) staged at `rootfs/boot/bzImage`, so a CI run is self-contained. `boot-test.sh` runs `/bin/bash` as
 PID 1 by default, not systemd: it isolates "the kernel booted and the loader resolved a
-real binary" from everything systemd does on top. `network-test.sh` is the one that boots
-systemd for real (it reaches `multi-user.target` and a login prompt).
+real binary" from everything systemd does on top. `systemd-test.sh`, `network-test.sh` and
+`container-test.sh` boot systemd for real (they reach `multi-user.target` and a login
+prompt). `systemd-test.sh` is the cheap catch-all: it asserts `systemctl is-system-running`
+says `running`, which is `degraded` if and only if some unit failed — the failure mode a
+package gets for free by installing a unit whose binary needs a library we don't ship.
 
 The system bus is the reference `dbus-daemon` (`dbus`, which needs `expat`). Anything with
 a D-Bus API needs it — systemd-logind exits with *Failed to connect to system bus* and

@@ -7,6 +7,7 @@ glibc-package
 output
 boot-image/
 boot-test.log
+systemd-test.log
 network-test.log
 container-test.log
 # unpacked source trees, e.g. bash/bash-5.3
