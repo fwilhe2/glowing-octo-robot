@@ -25,6 +25,27 @@ CONFIG_MEMCG=y
 CONFIG_BPF_SYSCALL=y
 CONFIG_CGROUP_BPF=y
 
+# systemd's own sandboxing is BPF too, and it needs more than the syscall. It loads its
+# programs through libbpf (the libbpf package) and logs "cgroup BPF features disabled"
+# without it; these are what make the loaded programs actually run.
+#
+# BPF_JIT: BPF_LSM depends on it, and defconfig leaves it off. BPF_EVENTS is already y.
+# BPF_LSM: the hook type behind RestrictFileSystems= and nsresourced's user-namespace
+#   lockdown. CONFIG_LSM already lists "bpf", so enabling this is all it takes to make
+#   it show up as active.
+# SECURITYFS: how a booted system reports which LSMs are on, in
+#   /sys/kernel/security/lsm. systemd reads exactly that file to decide whether bpf-lsm
+#   is available, so without securityfs the answer is "no" no matter what is compiled in.
+# DEBUG_INFO_BTF: an LSM program is attached by naming the kernel function it hooks, and
+#   resolving that name needs the kernel's own BTF in /sys/kernel/btf/vmlinux. Without
+#   it the program loads and then fails to attach. It costs a kernel compiled with debug
+#   info and a pahole pass over vmlinux — dwarves is already in this package's
+#   EXTRA_DEPS for exactly this.
+CONFIG_BPF_JIT=y
+CONFIG_BPF_LSM=y
+CONFIG_SECURITYFS=y
+CONFIG_DEBUG_INFO_BTF=y
+
 # Image layers.
 CONFIG_OVERLAY_FS=y
 

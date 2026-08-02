@@ -207,6 +207,32 @@ and nftables, which is hidden behind `NETFILTER_ADVANCED` that defconfig leaves 
 fragment is a heredoc rather than a file next to `build.sh` because only `build.sh` is
 bind-mounted into the builder.
 
+## systemd's BPF sandboxing
+
+Separate from crun's use of BPF above. crun talks to the cgroup v2 device controller
+through raw `bpf(2)` calls and needs no library; systemd loads its own programs —
+`IPAddressAllow=`/`Deny=`, `RestrictNetworkInterfaces=`, `SocketBind*=`,
+`RestrictFileSystems=` — through **libbpf**. systemd is built with `-Dbpf-framework`
+enabled, so those programs are compiled by clang inside the builder image and embedded
+as skeletons; it then `dlopen`s `libbpf.so.1` at runtime to load them. Not shipping the
+library disabled all of it with a single line in the journal, which is why `libbpf` and
+`elfutils` (for `libelf.so.1`, which libbpf parses ELF objects with) are packages.
+
+The LSM-based ones — `RestrictFileSystems=` and the user-namespace lockdown
+`systemd-nsresourced` does — need the kernel side too, and the `container.config`
+fragment carries all four symbols:
+
+| symbol | why |
+| --- | --- |
+| `BPF_JIT` | `BPF_LSM` depends on it; defconfig leaves it off |
+| `BPF_LSM` | the hook type itself. `CONFIG_LSM` already lists `bpf` |
+| `SECURITYFS` | systemd decides bpf-lsm is available by reading `/sys/kernel/security/lsm`, so without securityfs the answer is no however the kernel is built |
+| `DEBUG_INFO_BTF` | an LSM program names the kernel function it hooks, and resolving that name needs `/sys/kernel/btf/vmlinux` |
+
+`DEBUG_INFO_BTF` is the one with a real price: it compiles the kernel with debug info
+and runs pahole over `vmlinux`, so the kernel job gets noticeably slower. `dwarves` is
+already in the kernel package's `EXTRA_DEPS`.
+
 Nothing pulls images yet: `crun` runs an OCI *bundle*, and the tooling that turns a
 registry reference into one (skopeo, umoci, podman) is all Go. `crun spec` writes a
 valid `config.json` from nothing, so a directory plus that file is enough to start a

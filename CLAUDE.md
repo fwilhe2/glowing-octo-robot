@@ -173,6 +173,22 @@ load-bearing: `USER_NS`, `MEMCG` (without it `memory.max` does not exist and any
 with a memory limit fails), `OVERLAY_FS`, `VETH`/`BRIDGE`/`TUN`, `BPF_SYSCALL` +
 `CGROUP_BPF`, and nftables — which is invisible until `NETFILTER_ADVANCED=y`.
 
+systemd's own BPF sandboxing is a separate axis from crun's. crun reaches the cgroup v2
+device controller through raw `bpf(2)` and needs no library; systemd loads its compiled-in
+programs through **libbpf**, which is why `libbpf` and `elfutils` (for `libelf.so.1`) are
+packages. systemd is already built `-Dbpf-framework` enabled — the programs are compiled
+by clang inside the builder and embedded as skeletons — so not shipping the library was
+enough to disable `IPAddressAllow`/`Deny`, `RestrictNetworkInterfaces` and `SocketBind*`
+silently, with one warning at boot.
+
+The LSM half needs four more kernel symbols, all in the fragment: `BPF_JIT` (which
+`BPF_LSM` depends on and defconfig leaves off), `BPF_LSM` itself, `SECURITYFS` — systemd
+decides whether bpf-lsm is available by reading `/sys/kernel/security/lsm`, so without
+securityfs the answer is no however the kernel is built — and `DEBUG_INFO_BTF`, because
+an LSM program names the kernel function it hooks and resolving that name needs
+`/sys/kernel/btf/vmlinux`. `CONFIG_LSM` already lists `bpf`. The BTF option is the
+expensive one: it compiles the kernel with debug info and runs pahole over `vmlinux`.
+
 `tools/fetch-image.sh` / `tools/boot-qemu.sh` are for poking at CI artifacts locally. The `rootfs-dir`
 CI artifact is lossy (`upload-artifact` dereferences symlinks); never rebuild a bootable
 image from it — `output/rootfs.ext4` is the real output.

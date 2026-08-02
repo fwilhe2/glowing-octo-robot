@@ -63,9 +63,11 @@ jobs:
           - crun
           - dbus
           - e2fsprogs
+          - elfutils
           - expat
           - json-c
           - kmod
+          - libbpf
           - libcap
           - libxcrypt
           - ncurses
