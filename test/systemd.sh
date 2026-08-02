@@ -44,11 +44,24 @@ LOGIN_PASSWORD="${LOGIN_PASSWORD:-root}"
 # or awk, so [[ ]] and command substitution stand in for them.
 READY="SHELL-IS-UP"
 STATE="SYSTEMD-STATE:"
+TAINT="SYSTEMD-TAINT:"
 # SYSTEMD_COLORS=0 because the failure diagnostics below are read by whoever is looking
 # at a CI log, and systemctl wraps every field of `systemctl --failed` in escapes.
 QUIET="stty -echo; PS1=; export SYSTEMD_COLORS=0"
 PROBE="echo SHELL-IS'-UP'"
 CHECK="echo SYSTEMD'-STATE':\$(systemctl is-system-running --wait)"
+# The taint string is systemd's own summary of things it found wrong with the system that
+# no unit will ever fail over — an unmerged /usr/sbin, a /var/run that is a directory. It
+# is a colon-separated word list, empty on a healthy system, so it costs one more command
+# and catches a whole class of image-assembly mistakes that otherwise only turn up when
+# somebody happens to read `systemctl status` on a booted guest.
+#
+# Deliberately not `--value`: the property is "Tainted", and `systemctl show -p` prints
+# *nothing at all* for a name it does not know, so a typo here would produce an empty
+# string and silently pass forever — which is exactly what the first draft of this check
+# did. Keeping the "Tainted=" prefix in the output lets it tell "no taint" apart from
+# "never asked the right question".
+TAINT_CHECK="echo SYSTEMD'-TAINT':[\$(systemctl show -p Tainted)]"
 DIAGNOSE="systemctl --failed --no-pager --plain; journalctl -p err -b --no-pager -o short"
 
 command -v qemu-system-x86_64 >/dev/null || { echo "error: qemu-system-x86_64 not found" >&2; exit 1; }
@@ -158,5 +171,24 @@ case "$result" in
         ;;
     *)
         fail "unexpected system state: ${result:-<none>}"
+        ;;
+esac
+
+# Bracketed, so an empty taint string is still something to match on rather than the
+# absence of output — which would be indistinguishable from the command never running.
+printf '%s\n' "$TAINT_CHECK" >&3
+await "$TAINT" 30 || fail "systemd never reported its taint string"
+
+taint=$(tr -d '\r' < "$LOG" | sed -n "s/.*${TAINT}\\[\\([^]]*\\)\\].*/\\1/p" | tail -1)
+
+case "$taint" in
+    "Tainted=")
+        echo ">> systemd OK: taint string is empty"
+        ;;
+    "Tainted="*)
+        fail "systemd reports the system as tainted: ${taint#Tainted=} (systemd's src/core/taint.c says what each flag means)"
+        ;;
+    *)
+        fail "could not read systemd's Tainted property (got: ${taint:-<nothing>})"
         ;;
 esac

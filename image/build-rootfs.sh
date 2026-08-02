@@ -3,13 +3,33 @@ set -euo pipefail
 
 set -x
 
-mkdir -p usr/{sbin,bin} bin sbin boot
+mkdir -p usr/bin bin sbin boot
 mkdir -p {dev,etc,home,lib}
 mkdir -p {mnt,opt,proc,srv,sys}
-mkdir -p var/{lib,lock,log,run,spool}
+mkdir -p var/{lib,lock,log,spool}
 install -d -m 0750 root
 install -d -m 1777 tmp
 mkdir -p usr/{include,lib,share,src}
+
+# systemd checks both of these at startup and tags the system "unmerged-bin" and
+# "var-run-bad" in `systemctl show -p Taint` when they are real directories rather than
+# symlinks. builder/build-package.sh already stages /usr/sbin as a link, but assert it
+# here too: this script is what defines the shipped image, and it should not depend on
+# the state the staging tree happened to arrive in.
+if [ -d usr/sbin ] && [ ! -L usr/sbin ]; then
+    find usr/sbin -mindepth 1 -maxdepth 1 -exec mv -t usr/bin/ {} +
+    rmdir usr/sbin
+fi
+ln -sfn bin usr/sbin
+
+# systemd's own tmpfiles ship `L /var/run - - - - ../run`, but tmpfiles will not replace
+# a directory that already exists — so pre-creating var/run above was the only reason the
+# link never appeared. Anything staged under it is meaningless anyway: /run is a tmpfs at
+# runtime.
+if [ -d var/run ] && [ ! -L var/run ]; then
+    rm -rf var/run
+fi
+ln -sfn ../run var/run
 
 cp -r /files/* .
 

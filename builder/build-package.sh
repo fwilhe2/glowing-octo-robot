@@ -9,8 +9,24 @@
 #   /usr/local/sysroot  tree with our glibc in it, compiled against as $SYSROOT
 set -euo pipefail
 
-# merged-/usr staging: /bin /sbin /lib /lib64 become symlinks into /usr
-install -d /usr/local/rootfs/usr/{bin,sbin,lib}
+# merged-/usr staging: /bin /sbin /lib /lib64 become symlinks into /usr, and /usr/sbin
+# into /usr/bin — the bin/sbin merge. Both halves are load-bearing: systemd checks them
+# at startup and tags the system "unmerged-usr" / "unmerged-bin" in its taint string when
+# either is a real directory. Packages install into /usr/sbin freely; with the symlink in
+# place before any of them runs, those files land in /usr/bin.
+install -d /usr/local/rootfs/usr/{bin,lib}
+
+# rootfs/ is cumulative, so this can meet a tree staged before the bin/sbin merge, with a
+# real /usr/sbin that has files in it. Move them across first: `ln -sfn` against an
+# existing *directory* creates a link inside it rather than replacing it, so the result
+# would silently be /usr/sbin/bin and the taint would stay.
+if [ -d /usr/local/rootfs/usr/sbin ] && [ ! -L /usr/local/rootfs/usr/sbin ]; then
+    find /usr/local/rootfs/usr/sbin -mindepth 1 -maxdepth 1 \
+        -exec mv -t /usr/local/rootfs/usr/bin/ {} +
+    rmdir /usr/local/rootfs/usr/sbin
+fi
+
+ln -sfn bin      /usr/local/rootfs/usr/sbin
 ln -sfn usr/bin  /usr/local/rootfs/bin
 ln -sfn usr/sbin /usr/local/rootfs/sbin
 ln -sfn usr/lib  /usr/local/rootfs/lib
