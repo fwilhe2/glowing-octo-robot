@@ -115,9 +115,11 @@ shows up here.
 ## Booting
 
 The kernel is a package like any other (`packages/kernel/`), built with `defconfig` plus
-`kvm_guest.config` plus a `container.config` fragment (see [Containers](#containers))
-and staged at `rootfs/boot/bzImage`, so a CI run produces an image that can boot on its
-own. The `boot` job does exactly that:
+`kvm_guest.config`, a `container.config` fragment that adds what containers need (see
+[Containers](#containers)) and a `vm.config` fragment that takes away what a virtual
+machine does not have (see [What the image leaves out](#what-the-image-leaves-out)), and
+staged at `rootfs/boot/bzImage`, so a CI run produces an image that can boot on its own.
+The `boot` job does exactly that:
 
 ```sh
 ./test/boot.sh output/rootfs.ext4 rootfs/boot/bzImage
@@ -143,6 +145,45 @@ nothing at build time and leaves every boot `degraded`. When it fails it prints
 reason land in the CI log. It also asserts systemd's `Tainted` property is
 empty, which catches image-assembly mistakes no unit ever fails over — an unmerged
 `/usr/sbin`, a `/var/run` that is a real directory.
+
+## What the image leaves out
+
+The staging tree and the disk image are not the same thing. `rootfs/` is what the
+package builds produce *and* the sysroot the next package compiles against, so it keeps
+its headers, static libraries and `.pc` files; `image/build-rootfs.sh` copies it and
+assembles the disk from the copy, dropping everything a booted system cannot reach:
+
+* **debug symbols** — nothing is stripped at install time, so roughly half the tree is
+  DWARF for a debugger the image does not ship (`libc.so.6` alone is 11 MB unstripped
+  and 2 MB stripped)
+* **link-time-only files** — `*.a`, `*.la`, the `crt*.o` startup objects, `usr/include`
+  and pkg-config metadata: there is no compiler here
+* **documentation** — `share/man`, `share/info`, `share/doc`, with no reader for any of it
+* **locale data** — `share/locale` message catalogues and the `share/i18n` source
+  definitions. The image runs in the C locale: no locale archive is built and nothing
+  sets `LANG`
+* **terminfo** — 2500 terminal descriptions cut down to the dozen `TERM` values that can
+  appear on a serial console
+* **shell completions and polkit rules** — for shells and a `polkitd` that are not here
+
+That is the mechanical half. The other half is not building things in the first place:
+`packages/systemd/build.sh` turns off some fifty components (the EFI/bootloader half of
+the tree, `machined`/`nspawn`/`importd`, `portabled`, `repart`, `homed`, `oomd`,
+`coredump`, the remote journal transports, backlight/rfkill/hibernate/quotas, the 22 MB
+hardware database) and `packages/kernel/build.sh` extends its `vm.config` fragment to
+subtract the hardware `x86_64_defconfig` assumes — the DRM stack, sound, USB, HID, SATA
+and PATA, every ethernet vendor driver, IOMMU, PCMCIA, RAID/device-mapper, NFS, FAT and
+ISO9660, SELinux, audit, and the loadable-module machinery itself, since every symbol
+here is built in and `make modules_install` is never run.
+
+Both halves follow the same rule, which is worth keeping when adding to them: something
+is removed because *nothing in the image can reach it*, never because it seems unlikely
+to be used. A VM's devices are virtio and the console is a serial line — that is what
+makes the driver list above dead code rather than a bet.
+
+Rebuilding only the image after changing one of the build-time options is not enough
+locally: `rootfs/` is cumulative and nothing removes stale files from it, so a component
+that is no longer built stays staged until the tree is deleted and rebuilt.
 
 ## The system bus
 

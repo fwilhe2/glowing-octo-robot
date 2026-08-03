@@ -36,10 +36,5 @@ libselinux.so.1
 # pam_userdb — a PAM module we don't reference in image/files/etc/pam.d.
 libdb-5.3.so
 
-# systemd's optional remote-journal components, which we don't enable.
-libcurl.so.4
-libgnutls.so.30
-libmicrohttpd.so.12
-
 # zstd's CLI links liblz4 for --format=lz4; the library itself doesn't need it.
 liblz4.so.1

@@ -1,6 +1,8 @@
 FROM debian:sid
 
-RUN apt-get update && apt-get -y install e2fsprogs cpio
+# binutils is here for strip: build-rootfs.sh drops the debug symbols the packages are
+# compiled with, which is about half the size of the shipped tree.
+RUN apt-get update && apt-get -y install e2fsprogs cpio binutils
 
 COPY image/build-rootfs.sh /usr/local/bin/
 RUN chmod +X /usr/local/bin/build-rootfs.sh

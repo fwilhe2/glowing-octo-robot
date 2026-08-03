@@ -72,9 +72,117 @@ make container.config
 # rust-vmm-style VMMs next), so this is dead code and, in the wireless case, a boot-time
 # error — cfg80211 asks the firmware loader for regulatory.db, which the image does not
 # ship and never will, and the failure lands in the journal at every boot.
+# Order matters: this comes after container.config so that where the two disagree the
+# subtractive fragment is what olddefconfig sees last. Nothing here may take away what
+# container.config just turned on — the guest devices are virtio and nothing else.
 cat > kernel/configs/vm.config <<'EOF'
 # No radio in a virtual machine. Clearing WIRELESS takes CFG80211 and MAC80211 with it.
 # CONFIG_WIRELESS is not set
+# CONFIG_RFKILL is not set
+
+# No display. Every console we use is the 8250 serial port (`console=ttyS0`, and every
+# qemu invocation in test/ and tools/ passes -nographic), so the DRM stack — i915, and
+# virtio-gpu from kvm_guest.config — draws for nobody. This is the single biggest driver
+# in the tree.
+# CONFIG_DRM is not set
+# CONFIG_AGP is not set
+# CONFIG_SOUND is not set
+
+# No USB controller is on the qemu command line, so the four host controllers, the
+# storage and printer class drivers and the HID layer above them are all unreachable.
+# Input stays for virtio-input; the exotic gamepad and tablet drivers do not.
+# CONFIG_USB_SUPPORT is not set
+# CONFIG_HID_SUPPORT is not set
+# CONFIG_INPUT_JOYSTICK is not set
+# CONFIG_INPUT_TABLET is not set
+# CONFIG_INPUT_TOUCHSCREEN is not set
+# CONFIG_INPUT_MISC is not set
+
+# The root disk is virtio-blk (`-drive if=virtio`), which leaves defconfig's SATA and
+# PATA controllers, the CD-ROM and SCSI generic paths, RAID/device-mapper and PCMCIA
+# with nothing to bind to. VIRTIO_BLK, BLK_DEV_SD and SCSI_VIRTIO stay; so does the loop
+# device, which is how a container image gets mounted.
+# CONFIG_ATA is not set
+# CONFIG_BLK_DEV_SR is not set
+# CONFIG_CHR_DEV_SG is not set
+# CONFIG_MD is not set
+# CONFIG_PCCARD is not set
+# CONFIG_MACINTOSH_DRIVERS is not set
+# CONFIG_EEEPC_LAPTOP is not set
+# CONFIG_I2C is not set
+# CONFIG_WATCHDOG is not set
+# CONFIG_NVRAM is not set
+# CONFIG_DMADEVICES is not set
+
+# The NIC is virtio-net (`-nic user,model=virtio-net-pci`). CONFIG_ETHERNET is the menu
+# holding every vendor driver — tigon3, e1000, e1000e, sky2, forcedeth, 8139too, r8169,
+# tulip — and virtio_net does not live under it, so this drops them all and keeps ours.
+# CONFIG_ETHERNET is not set
+# CONFIG_NETCONSOLE is not set
+
+# IOMMU emulation is for passing host devices into a guest, which is the other side of
+# the boundary we live on.
+# CONFIG_AMD_IOMMU is not set
+# CONFIG_INTEL_IOMMU is not set
+
+# Power management a VM does not do: there is no disk to suspend to, no CPU frequency to
+# scale (the vCPU's clock is the host's problem), and no dock or boot splash.
+# CONFIG_HIBERNATION is not set
+# CONFIG_CPU_FREQ is not set
+# CONFIG_ACPI_DOCK is not set
+# CONFIG_ACPI_BGRT is not set
+
+# Filesystems with nothing to mount: no optical media, no FAT partition (there is no
+# ESP — we are booted with -kernel), no NFS server anywhere near this image, and quotas
+# on a single-user appliance root. ext4 is the root, 9p stays for host directory
+# sharing, and autofs stays because systemd's .automount units need it.
+# CONFIG_ISO9660_FS is not set
+# CONFIG_FAT_FS is not set
+# CONFIG_NFS_FS is not set
+# CONFIG_QUOTA is not set
+# CONFIG_NLS_CODEPAGE_437 is not set
+# CONFIG_NLS_ISO8859_1 is not set
+
+# SELinux is compiled in by defconfig, but every package here is built --without-selinux
+# and the image ships no policy, so the hooks can never do anything. NETLABEL and the
+# secmark netfilter targets exist only to label packets for it. SECURITY itself stays:
+# BPF_LSM hangs off it.
+# CONFIG_SECURITY_SELINUX is not set
+# CONFIG_NETLABEL is not set
+# CONFIG_NETFILTER_XT_TARGET_SECMARK is not set
+# CONFIG_NETFILTER_XT_TARGET_CONNSECMARK is not set
+
+# The audit subsystem has no consumer: systemd is built -Daudit=disabled and there is no
+# auditd to read the netlink socket.
+# CONFIG_AUDIT is not set
+
+# Everything in this config is built in and `make modules_install` is never run, so a
+# symbol that ends up =m is silently dropped from the image instead of failing the
+# build. Turning modules off makes that impossible: kconfig has to resolve every
+# tristate to y or n, and the module loader, its signature checking and the /proc and
+# sysfs interfaces around it stop being built at all.
+# CONFIG_MODULES is not set
+
+# Kernel debugging left on by defconfig. DEBUG_KERNEL itself has to stay — kvm_guest.config
+# asks for it and DEBUG_INFO_BTF needs it — but the expensive checks under it do not.
+# CONFIG_DEBUG_ENTRY is not set
+# CONFIG_DEBUG_WX is not set
+# CONFIG_DEBUG_STACK_USAGE is not set
+# CONFIG_DEBUG_DEVRES is not set
+# CONFIG_DEBUG_BOOT_PARAMS is not set
+# CONFIG_PM_DEBUG is not set
+# CONFIG_CGROUP_DEBUG is not set
+# CONFIG_SCHEDSTATS is not set
+# CONFIG_BLK_DEV_IO_TRACE is not set
+# CONFIG_PROC_KCORE is not set
+# CONFIG_PROFILING is not set
+# CONFIG_KEXEC is not set
+# CONFIG_PROVIDE_OHCI1394_DMA_INIT is not set
+# CONFIG_EARLY_PRINTK_DBGP is not set
+# CONFIG_X86_CHECK_BIOS_CORRUPTION is not set
+
+# cgroup controllers for hardware this kernel no longer has drivers for.
+# CONFIG_CGROUP_RDMA is not set
 EOF
 make vm.config
 
