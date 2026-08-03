@@ -122,14 +122,32 @@ the accepted backlog so new regressions stand out. Run it before booting.
 
 `image/Containerfile` + `image/build-rootfs.sh` turn `rootfs/` into `output/rootfs.ext4`:
 directory skeleton, `image/files/etc` copied in as the shipped `/etc` (hostname `flfs`,
-credentials from `image/files/etc/shadow`), `/sbin/init` → systemd, `ld.so.conf` + `ldconfig`,
-permission fixups, `mkfs.ext4 -d`. Changes to the shipped `/etc` go in `image/files/`, not into
+credentials from `image/files/etc/shadow`), `/sbin/init` → systemd, the trim (below),
+`ld.so.conf` + `ldconfig`, permission fixups, `mkfs.ext4 -d`. Changes to the shipped `/etc` go
+in `image/files/`, not into
 `rootfs/` — and `image/files` is `COPY`ed into the builder image rather than bind-mounted, so
 editing it means `podman build -f image/Containerfile` again before `podman run`, or the
 image is assembled from the old copy.
 
+All of that happens on a *copy* at `/usr/local/image` inside the container, not on the
+bind-mounted staging tree. It has to: `rootfs/` is simultaneously the image's input and the
+sysroot the next package compiles against, so the headers, `*.a` and `*.pc` files the trim
+deletes are still needed there. Nothing in the image build may write to `/usr/local/src`.
+
+The trim is that whole middle section of `build-rootfs.sh` — `strip`, then removing what a
+booted system cannot reach: static libraries and `crt*.o`, `usr/include`, pkg-config data,
+man/info/doc, `share/locale` and `share/i18n` (the image is C-locale only), all but a dozen
+terminfo entries, shell completions, polkit rules. `strip` needs `binutils` in
+`image/Containerfile`, ignores non-ELF files, and runs before `ldconfig` so the cache
+indexes the final libraries. The bar for adding to that list is that *nothing in the image
+can reach the file*, not that it looks unlikely to be used — and the rest of the trim
+happens at build time, in `packages/systemd/build.sh` (some fifty components off) and the
+`vm.config` fragment in `packages/kernel/build.sh` (defconfig's hardware taken back out).
+Because `rootfs/` is cumulative, a component that stops being built stays staged locally
+until the tree is deleted; only CI starts clean.
+
 The kernel is a normal package (`packages/kernel/`, `defconfig` + `kvm_guest.config` +
-`container.config`) staged at `rootfs/boot/bzImage`, so a CI run is self-contained. `test/boot.sh` runs `/bin/bash` as
+`container.config` + `vm.config`) staged at `rootfs/boot/bzImage`, so a CI run is self-contained. `test/boot.sh` runs `/bin/bash` as
 PID 1 by default, not systemd: it isolates "the kernel booted and the loader resolved a
 real binary" from everything systemd does on top. `test/systemd.sh`, `test/network.sh` and
 `test/container.sh` boot systemd for real (they reach `multi-user.target` and a login
@@ -173,6 +191,18 @@ namespaces and `SECCOMP_FILTER` and nothing else that matters here, so the fragm
 load-bearing: `USER_NS`, `MEMCG` (without it `memory.max` does not exist and any bundle
 with a memory limit fails), `OVERLAY_FS`, `VETH`/`BRIDGE`/`TUN`, `BPF_SYSCALL` +
 `CGROUP_BPF`, and nftables — which is invisible until `NETFILTER_ADVANCED=y`.
+
+`vm.config` is the same mechanism pointed the other way, and is merged *after*
+`container.config` so the subtractions are what olddefconfig sees last — nothing in it may
+take back a symbol the container fragment turned on. It clears the hardware
+`x86_64_defconfig` assumes and a virtio guest never has: DRM (i915 *and* virtio-gpu — every
+qemu invocation here is `-nographic` on `console=ttyS0`), sound, USB, HID, SATA/PATA,
+`CONFIG_ETHERNET` (the menu holding every vendor NIC driver; `VIRTIO_NET` lives outside it,
+which is what makes that safe), IOMMU, PCMCIA, RAID/device-mapper, NFS/FAT/ISO9660, quotas,
+hibernation and cpufreq — plus SELinux and audit, which have no userspace here, and
+defconfig's debug options. It also turns `CONFIG_MODULES` off: everything is built in and
+`make modules_install` is never run, so a symbol that resolves to `=m` is silently missing
+from the image — with modules off, kconfig has to resolve every tristate to `y` or `n`.
 
 systemd's own BPF sandboxing is a separate axis from crun's. crun reaches the cgroup v2
 device controller through raw `bpf(2)` and needs no library; systemd loads its compiled-in

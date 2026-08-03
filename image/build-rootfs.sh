@@ -3,13 +3,26 @@ set -euo pipefail
 
 set -x
 
+# The staging tree is an input, not the image. Everything below — the /etc we ship, the
+# stripping, the pruning — happens on a copy in the container's own filesystem, so that
+# rootfs/ stays exactly what the package builds put there. It has to: rootfs/ is also
+# the sysroot the *next* package compiles against, and that needs the headers, static
+# libraries and .pc files this script is about to throw away.
+STAGE=/usr/local/src
+IMAGE=/usr/local/image
+
+rm -rf "$IMAGE"
+mkdir -p "$IMAGE"
+cp -a "$STAGE"/. "$IMAGE"/
+cd "$IMAGE"
+
 mkdir -p usr/bin bin sbin boot
 mkdir -p {dev,etc,home,lib}
 mkdir -p {mnt,opt,proc,srv,sys}
 mkdir -p var/{lib,lock,log,spool}
 install -d -m 0750 root
 install -d -m 1777 tmp
-mkdir -p usr/{include,lib,share,src}
+mkdir -p usr/{lib,share}
 
 # systemd checks both of these at startup and tags the system "unmerged-bin" and
 # "var-run-bad" in `systemctl show -p Taint` when they are real directories rather than
@@ -39,10 +52,6 @@ ln -sf /usr/lib/systemd/system/multi-user.target etc/systemd/system/default.targ
 # The kernel execs /sbin/init; point it at systemd.
 ln -sf /usr/lib/systemd/systemd sbin/init
 
-# We ship a preconfigured /etc (hostname, root password, locale-less defaults), so the
-# interactive first-boot wizard would just block the console waiting for a keypress.
-ln -sf /dev/null etc/systemd/system/systemd-firstboot.service
-
 # Binaries carry the ELF interpreter path /lib64/ld-linux-x86-64.so.2 (baked in by
 # the toolchain). With merged-/usr, lib64 -> usr/lib already makes this resolve; only
 # add a symlink if it doesn't (e.g. glibc landed the loader somewhere unexpected).
@@ -54,14 +63,75 @@ if [ ! -e lib64/ld-linux-x86-64.so.2 ]; then
     fi
 fi
 
-# Build the shared-library search path and cache so the loader finds our libs.
+# ---------------------------------------------------------------------------------
+# Trim. Everything from here to ldconfig removes things that exist only because a
+# package's `make install` puts them there, not because anything in a booted image
+# reads them. None of it is a judgement call about what a user might want later: the
+# image has no compiler, no man/info reader and no locale support, so these files are
+# unreachable, not merely unused. Build-time consumers get them from rootfs/, which
+# this script no longer touches.
+
+# Debug symbols. glibc, systemd and util-linux are compiled with -g and nothing strips
+# them, so about half of what would be shipped is DWARF that only a debugger we do not
+# have could read — libc.so.6 alone is 11 MB unstripped and 2 MB stripped. strip refuses
+# to touch anything that is not an ELF object and leaves it alone, which is what makes
+# it safe to point at the whole tree; /boot is excluded because the kernel is not one.
+find usr -type f -print0 \
+    | xargs -0 -r -P "$(nproc)" -n 50 strip --strip-unneeded 2>/dev/null || true
+
+# Link-time-only files: static archives, libtool descriptors, the crt*.o startup objects
+# glibc installs next to them, headers and pkg-config metadata. The loader never opens
+# any of it — a running binary uses the .so — and there is no compiler here to link with.
+find usr \( -name '*.a' -o -name '*.la' \) -delete
+find usr/lib usr/lib64 -maxdepth 1 -name '*.o' -delete 2>/dev/null || true
+rm -rf usr/include usr/src
+rm -rf usr/lib/pkgconfig usr/lib64/pkgconfig usr/share/pkgconfig
+rm -rf usr/share/aclocal usr/share/gtk-doc
+# e2fsprogs' compile_et/mk_cmds templates, used to generate C at build time.
+rm -rf usr/share/et usr/share/ss
+
+# Documentation, for readers this image does not ship: there is no man, no info, and
+# nothing that renders the html and xml under share/doc.
+rm -rf usr/share/man usr/share/doc usr/share/info usr/share/xml
+
+# Translations and locale definitions. The image runs in the C locale — no
+# locale-archive is generated and nothing sets LANG — so the .mo catalogues can never be
+# loaded, and share/i18n is the *source* form that localedef would compile if it were.
+rm -rf usr/share/locale usr/share/i18n usr/share/gettext
+
+# Shell completions for shells that are not in the image (bash's own live in
+# share/bash-completion, which is only read by the bash-completion package we do not
+# ship), and polkit rules with no polkitd to enforce them.
+rm -rf usr/share/bash-completion usr/share/zsh usr/share/fish etc/bash_completion.d
+rm -rf usr/share/polkit-1 usr/share/X11 etc/X11
+
+# terminfo is 12 MB describing some 2500 terminals. The console here is a serial line,
+# so keep the handful of TERM values that can actually appear on it and drop the rest.
+# Matching by name rather than by first-letter directory: ncurses can be built with
+# hashed directories instead.
+if [ -d usr/share/terminfo ]; then
+    for t in ansi dumb linux screen screen-256color tmux tmux-256color \
+             vt100 vt102 vt220 xterm xterm-256color xterm-color; do
+        entry=$(find usr/share/terminfo -mindepth 2 -maxdepth 2 -name "$t" -print -quit)
+        [ -n "$entry" ] || continue
+        install -D -m 644 "$entry" "usr/share/terminfo.keep/${entry#usr/share/terminfo/}"
+    done
+    rm -rf usr/share/terminfo
+    if [ -d usr/share/terminfo.keep ]; then
+        mv usr/share/terminfo.keep usr/share/terminfo
+    fi
+fi
+# ---------------------------------------------------------------------------------
+
+# Build the shared-library search path and cache so the loader finds our libs. This is
+# the last step that touches libraries: ld.so.cache indexes what is there when it runs.
 cat > etc/ld.so.conf <<'EOF'
 /usr/lib
 /usr/local/lib
 /lib64
 /usr/lib/x86_64-linux-gnu
 EOF
-ldconfig -r /usr/local/src || true
+ldconfig -r "$IMAGE" || true
 
 chown -R root:root etc
 
@@ -74,4 +144,5 @@ chmod 644 etc/passwd etc/group etc/fstab etc/os-release \
 # Password hashes must not be world-readable.
 chmod 600 etc/shadow
 
-/sbin/mkfs.ext4 -L root -d /usr/local/src /usr/local/output/rootfs.ext4 1G
+du -sh "$IMAGE"
+/sbin/mkfs.ext4 -L root -d "$IMAGE" /usr/local/output/rootfs.ext4 1G
