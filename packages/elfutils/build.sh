@@ -27,3 +27,15 @@
   CFLAGS="${CFLAGS:-} -Wno-error"
 make -j"$(nproc)"
 make install DESTDIR=/usr/local/rootfs
+
+# The eu-* tools (readelf, nm, strip, addr2line, …) are not why elfutils is here, and
+# shipping them is what makes the build fail check-rootfs-deps: eu-srcfiles is the one
+# C++ program in the tree, so it drags in libstdc++.so.6 and libgcc_s.so.1, and it links
+# libarchive.so.13 whenever the builder image happens to have it. None of the three is a
+# package here. Configuring them away is not an option — --disable-demangler drops the
+# libstdc++ *demangle* call but srcfiles.cxx still links the C++ runtime, and the tools
+# are built unconditionally. Dropping the binaries after the install keeps the libraries,
+# which is all libbpf and systemd ever wanted, and leaves the image with no dependency the
+# rootfs cannot resolve. The glob covers the bin_SCRIPTS entry (eu-make-debug-archive)
+# too: configure defaults program_prefix to "eu-" for everything in bin_PROGRAMS.
+rm -f /usr/local/rootfs/usr/bin/eu-*
