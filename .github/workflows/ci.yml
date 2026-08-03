@@ -259,25 +259,17 @@ jobs:
       # happy with itself: a package that ships a unit it cannot run leaves every boot
       # `degraded`, and nothing above notices.
       - name: Check for failed units
-        # A full systemd boot plus a login, rather than the single exec test/boot.sh
-        # needs, so give it more room than the 300s default when qemu emulates.
-        env:
-          TIMEOUT: 600
         run: ./test/systemd.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
 
       # A third boot: networkd has to configure the NIC, resolved has to answer, and the
       # guest has to reach the outside world.
       - name: Check networking
-        env:
-          TIMEOUT: 600
         run: ./test/network.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
 
       # And a fourth, which starts an actual container: the kernel's container.config
       # fragment and crun are only useful together, and nothing above this exercises
       # either of them.
       - name: Check containers
-        env:
-          TIMEOUT: 600
         run: ./test/container.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
 
       - name: Upload console log
