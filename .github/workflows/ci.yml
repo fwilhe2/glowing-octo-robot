@@ -3,9 +3,32 @@ on:
   push:
   workflow_dispatch:
 
+# Every job below is matrixed on arch (amd64/arm64) and runs on a runner native to that
+# arch — nothing here cross-compiles, so a native runner is what makes `make defconfig`,
+# `gcc -print-multiarch` and friends pick the right target on their own (see
+# builder/base.sh, packages/kernel/build.sh, image/build-rootfs.sh). The `runner` value
+# each matrix carries via `include` is the GitHub-hosted arm64 label as of this writing;
+# adjust it if your plan/org exposes it under a different name or you're pointing this
+# at self-hosted arm64 runners instead.
+#
+# `needs:` is a job-level dependency, not a matrix-aware one: e.g. `rootfs`'s `needs:
+# [build, kernel]` waits for *both* arches of `build` and `kernel` to finish before
+# *either* arch of `rootfs` starts, even though rootfs-amd64 only actually needs
+# build-amd64 and kernel-amd64. That costs a little wall-clock time but keeps the
+# workflow from having to duplicate every job definition per arch.
+
 jobs:
   base:
-    runs-on: ubuntu-26.04
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            runner: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -24,37 +47,58 @@ jobs:
   # it has to be staged before the matrix below can start. The kernel is the exception:
   # it links no libc at all, so it runs alongside instead of queueing behind.
   glibc:
-    runs-on: ubuntu-26.04
+    runs-on: ${{ matrix.runner }}
     needs:
       - base
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            runner: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: ./.github/actions/build-package
         with:
           package: glibc
+          arch: ${{ matrix.arch }}
           sysroot: 'false'
 
   kernel:
-    runs-on: ubuntu-26.04
+    runs-on: ${{ matrix.runner }}
     needs:
       - base
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            runner: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: ./.github/actions/build-package
         with:
           package: kernel
+          arch: ${{ matrix.arch }}
           sysroot: 'false'
 
   build:
-    runs-on: ubuntu-26.04
+    runs-on: ${{ matrix.runner }}
     needs:
       - glibc
 
     strategy:
       fail-fast: false
       matrix:
+        arch: [amd64, arm64]
         package:
           - acl
           - attr
@@ -77,6 +121,11 @@ jobs:
           - xz
           - zlib
           - zstd
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            runner: ubuntu-26.04-arm
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,17 +144,32 @@ jobs:
       - uses: ./.github/actions/build-package
         with:
           package: ${{ matrix.package }}
+          arch: ${{ matrix.arch }}
 
   rootfs:
-    runs-on: ubuntu-26.04
+    runs-on: ${{ matrix.runner }}
     needs:
       - build
       - kernel
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            runner: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Only this arch's packages: every package-<name>-<arch> artifact this run
+      # produced matches the pattern, which is glibc, kernel and the whole build
+      # matrix — the same set the old unfiltered download pulled in, just scoped to one
+      # arch instead of grabbing the other arch's (mutually useless) binaries too.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          pattern: package-*-${{ matrix.arch }}
           path: artifacts
 
       - run: find artifacts -name '*.tar' -exec tar xf {} \;
@@ -133,42 +197,60 @@ jobs:
       - name: Upload rootfs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rootfs-dir
+          name: rootfs-dir-${{ matrix.arch }}
           path: rootfs
 
       - name: Upload rootfs.ext4
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: rootfs.ext4
+          name: rootfs.ext4-${{ matrix.arch }}
           path: output/rootfs.ext4
 
   # An image that builds and resolves all its libraries can still fail to boot, so
   # actually boot it: the kernel we build is in rootfs/boot/bzImage.
   boot:
-    runs-on: ubuntu-26.04
+    runs-on: ${{ matrix.runner }}
     needs:
       - rootfs
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            runner: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: rootfs.ext4
+          name: rootfs.ext4-${{ matrix.arch }}
           path: artifacts
 
       # Just the kernel package, not the whole assembled rootfs artifact: the image is
       # already in artifacts/rootfs.ext4 and qemu only needs the bzImage next to it.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: package-kernel
+          name: package-kernel-${{ matrix.arch }}
           path: artifacts
 
       - run: tar xf artifacts/kernel.tar
 
+      # test/*.sh pick the qemu binary, machine type and console device to match the
+      # runner's own arch on their own (see test/boot.sh); the only thing this step
+      # has to get right is installing the package that ships that binary. qemu-system-
+      # arm is Debian/Ubuntu's name for the package that provides qemu-system-aarch64,
+      # not a typo.
       - name: Install qemu
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          if [ "${{ matrix.arch }}" = arm64 ]; then
+            sudo apt-get install -y --no-install-recommends qemu-system-arm
+          else
+            sudo apt-get install -y --no-install-recommends qemu-system-x86
+          fi
 
       - name: Boot the image
         run: ./test/boot.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
@@ -202,5 +284,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: boot-console-log
+          name: boot-console-log-${{ matrix.arch }}
           path: output/*.log

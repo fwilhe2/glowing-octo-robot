@@ -97,12 +97,46 @@ FEATURES="crun --version; echo '--- features ---'; crun features"
 DIAGNOSE="crun list; echo '--- cgroup ---'; cat /sys/fs/cgroup/cgroup.controllers; \
 echo '--- config ---'; cat /run/ct/config.json; echo '--- dmesg ---'; dmesg | tail -40"
 
-command -v qemu-system-x86_64 >/dev/null || { echo "error: qemu-system-x86_64 not found" >&2; exit 1; }
+# Defaults to the host's own architecture — CI runs this on a matching amd64 or arm64
+# runner, so it never has to be told. Override with ARCH=amd64|arm64 to point at the
+# other qemu binary and machine type explicitly. Both uname's spelling (x86_64/aarch64)
+# and this repo's (amd64/arm64) are accepted.
+ARCH="${ARCH:-$(uname -m)}"
+case "$ARCH" in
+    x86_64|amd64)  ARCH=amd64 ;;
+    aarch64|arm64) ARCH=arm64 ;;
+    *) echo "error: unsupported architecture: $ARCH (expected amd64 or arm64)" >&2; exit 1 ;;
+esac
+
+# amd64's "pc" machine and default cpu need no flags at all; arm64 has no implicit
+# machine type, so qemu-system-aarch64 refuses to start without one. ttyS0 is the 8250
+# UART kvm_guest.config/vm.config build in on amd64; arm64's virt board exposes a PL011
+# instead, at ttyAMA0 — see packages/kernel/build.sh.
+if [ "$ARCH" = arm64 ]; then
+    QEMU=qemu-system-aarch64
+    CONSOLE=ttyAMA0
+else
+    QEMU=qemu-system-x86_64
+    CONSOLE=ttyS0
+fi
+
+command -v "$QEMU" >/dev/null || { echo "error: $QEMU not found" >&2; exit 1; }
 [ -f "$KERNEL" ] || { echo "error: missing kernel: $KERNEL" >&2; exit 1; }
 [ -f "$ROOTFS" ] || { echo "error: missing rootfs: $ROOTFS" >&2; exit 1; }
 
+# Use KVM acceleration when available. On arm64 that means naming the machine type and
+# accel together (-machine virt,accel=kvm) rather than as a separate flag, since virt
+# isn't optional there the way amd64's implicit pc machine is.
 accel=()
-if [ -w /dev/kvm ]; then
+machine=()
+if [ "$ARCH" = arm64 ]; then
+    if [ -w /dev/kvm ]; then
+        machine=(-machine virt,accel=kvm -cpu host)
+    else
+        echo "note: /dev/kvm not available, emulating (slow)"
+        machine=(-machine virt -cpu max)
+    fi
+elif [ -w /dev/kvm ]; then
     accel=(-enable-kvm -cpu host)
 else
     echo "note: /dev/kvm not available, emulating (slow)"
@@ -114,13 +148,13 @@ mkfifo "$console"
 mkdir -p "$(dirname "$LOG")"
 : > "$LOG"
 
-qemu-system-x86_64 \
-    "${accel[@]}" \
+"$QEMU" \
+    "${accel[@]}" "${machine[@]}" \
     -m "$MEM" -smp "$CPUS" \
     -kernel "$KERNEL" \
     -drive file="$ROOTFS",format=raw,if=virtio \
     -nic user,model=virtio-net-pci \
-    -append "root=/dev/vda rw console=ttyS0 init=$INIT" \
+    -append "root=/dev/vda rw console=$CONSOLE init=$INIT" \
     -nographic \
     -no-reboot \
     < "$console" > "$LOG" 2>&1 &

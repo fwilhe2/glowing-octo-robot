@@ -11,6 +11,16 @@ set -x
 STAGE=/usr/local/src
 IMAGE=/usr/local/image
 
+# This runs natively inside the same-arch podman build as the packages it is assembling
+# — never cross-arch — so the host's own uname tells us which ELF interpreter and
+# multiarch library directory the toolchain baked into the binaries it just produced.
+case "$(uname -m)" in
+    x86_64)  ld_so=ld-linux-x86-64.so.2  ; multiarch=x86_64-linux-gnu  ;;
+    aarch64) ld_so=ld-linux-aarch64.so.1 ; multiarch=aarch64-linux-gnu ;;
+    *) echo "error: unsupported build architecture: $(uname -m) (expected x86_64 or aarch64)" >&2
+       exit 1 ;;
+esac
+
 rm -rf "$IMAGE"
 mkdir -p "$IMAGE"
 cp -a "$STAGE"/. "$IMAGE"/
@@ -52,14 +62,15 @@ ln -sf /usr/lib/systemd/system/multi-user.target etc/systemd/system/default.targ
 # The kernel execs /sbin/init; point it at systemd.
 ln -sf /usr/lib/systemd/systemd sbin/init
 
-# Binaries carry the ELF interpreter path /lib64/ld-linux-x86-64.so.2 (baked in by
-# the toolchain). With merged-/usr, lib64 -> usr/lib already makes this resolve; only
-# add a symlink if it doesn't (e.g. glibc landed the loader somewhere unexpected).
-if [ ! -e lib64/ld-linux-x86-64.so.2 ]; then
-    loader=$(find . -name 'ld-linux-x86-64.so.2' -not -path './lib64/*' | head -n1)
+# Binaries carry an ELF interpreter path baked in by the toolchain — /lib64/ld-linux-
+# x86-64.so.2 on amd64, /lib/ld-linux-aarch64.so.1 on arm64. With merged-/usr, lib64 and
+# lib both already point at usr/lib, so this resolves either way; only add a symlink if
+# it doesn't (e.g. glibc landed the loader somewhere unexpected).
+if [ ! -e "lib64/$ld_so" ]; then
+    loader=$(find . -name "$ld_so" -not -path './lib64/*' -not -path './lib/*' | head -n1)
     if [ -n "$loader" ]; then
         mkdir -p lib64
-        ln -sf "/${loader#./}" lib64/ld-linux-x86-64.so.2
+        ln -sf "/${loader#./}" "lib64/$ld_so"
     fi
 fi
 
@@ -125,11 +136,11 @@ fi
 
 # Build the shared-library search path and cache so the loader finds our libs. This is
 # the last step that touches libraries: ld.so.cache indexes what is there when it runs.
-cat > etc/ld.so.conf <<'EOF'
+cat > etc/ld.so.conf <<EOF
 /usr/lib
 /usr/local/lib
 /lib64
-/usr/lib/x86_64-linux-gnu
+/usr/lib/$multiarch
 EOF
 ldconfig -r "$IMAGE" || true
 

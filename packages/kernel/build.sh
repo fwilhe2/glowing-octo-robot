@@ -1,12 +1,19 @@
 # defconfig plus kvm_guest.config is what a qemu guest needs: virtio-blk for the root
-# disk and the 8250 serial console, both built in, so the image boots with no initrd.
+# disk and a built-in serial console (8250/ttyS0 on amd64, PL011/ttyAMA0 on arm64), so
+# the image boots with no initrd. This builds natively — never cross-compiled — so
+# `make defconfig` already resolved to the right arch's defconfig from `uname -m`
+# (SUBARCH in the kernel's own top-level Makefile); nothing here passes ARCH= explicitly.
+# kvm_guest.config is a generic (arch/-independent) fragment, but a few of the symbols
+# in it — CONFIG_PARAVIRT and friends — only exist under arch/x86; merge_config.sh warns
+# that it couldn't apply them on arm64 and moves on, which is expected and harmless.
 make defconfig
 make kvm_guest.config
 
-# ...but neither of them turns on anything a container runtime needs. x86_64_defconfig
+# ...but neither of them turns on anything a container runtime needs. defconfig
 # gives us CGROUPS, the pid/net/ipc/uts namespaces and SECCOMP_FILTER and stops there:
 # no USER_NS, no MEMCG, no OVERLAY_FS, no veth. This fragment is the difference between
-# "the kernel has namespaces" and "crun can actually start a container".
+# "the kernel has namespaces" and "crun can actually start a container". Every symbol in
+# it lives outside arch/, so it applies identically on amd64 and arm64.
 #
 # It is written out here rather than kept as a file next to this one because only
 # build.sh is bind-mounted into the builder — the rest of kernel/ isn't there to copy.
@@ -67,7 +74,7 @@ CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
 EOF
 make container.config
 
-# A second fragment for the other direction: x86_64_defconfig is a general-purpose
+# A second fragment for the other direction: the arch's defconfig is a general-purpose
 # config and turns on hardware a VM will never have. Only ever a guest (qemu today,
 # rust-vmm-style VMMs next), so this is dead code and, in the wireless case, a boot-time
 # error — cfg80211 asks the firmware loader for regulatory.db, which the image does not
@@ -75,6 +82,12 @@ make container.config
 # Order matters: this comes after container.config so that where the two disagree the
 # subtractive fragment is what olddefconfig sees last. Nothing here may take away what
 # container.config just turned on — the guest devices are virtio and nothing else.
+#
+# A handful of lines below (AGP, the IOMMU pair, ACPI_DOCK/ACPI_BGRT,
+# X86_CHECK_BIOS_CORRUPTION, EARLY_PRINTK_DBGP, MACINTOSH_DRIVERS, EEEPC_LAPTOP) name
+# symbols that only exist under arch/x86; merge_config.sh reports it couldn't find them
+# and moves on when this runs on arm64. That is a report, not a failure — nothing here
+# depends on them actually applying there.
 cat > kernel/configs/vm.config <<'EOF'
 # No radio in a virtual machine. Clearing WIRELESS takes CFG80211 and MAC80211 with it.
 # CONFIG_WIRELESS is not set
@@ -188,7 +201,21 @@ make vm.config
 
 make -j"$(nproc)"
 
+# Building natively rather than cross-compiling means `make defconfig` already picked
+# x86_64_defconfig or arm64 defconfig on its own, from SUBARCH's `uname -m` — nothing
+# above this line is arch-conditional. But the two arches don't put the finished image
+# in the same place or call it the same thing: x86 emits a self-decompressing bzImage,
+# arm64 emits a plain Image (qemu-system-aarch64's -kernel loads that directly; there is
+# no bzImage equivalent). Staged under one conventional name either way, so nothing
+# downstream (test/, tools/, ci.yml) needs to know which arch built it.
+case "$(uname -m)" in
+    x86_64)  kernel_image=arch/x86/boot/bzImage ;;
+    aarch64) kernel_image=arch/arm64/boot/Image ;;
+    *) echo "error: unsupported build architecture: $(uname -m) (expected x86_64 or aarch64)" >&2
+       exit 1 ;;
+esac
+
 # The rootfs image is what CI hands to qemu, so the kernel rides along inside it. It is
 # never loaded from there — qemu is passed -kernel — but keeping the two together means
 # a build artifact is always bootable on its own.
-install -D -m 644 arch/x86/boot/bzImage /usr/local/rootfs/boot/bzImage
+install -D -m 644 "$kernel_image" /usr/local/rootfs/boot/bzImage
