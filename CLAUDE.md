@@ -156,6 +156,15 @@ says `running`, which is `degraded` if and only if some unit failed — the fail
 package gets for free by installing a unit whose binary needs a library we don't ship. It also
 asserts the `Tainted` property is empty.
 
+All three drive a real serial login, and their `await` only matches console output that
+arrived *after* the point the caller passes in. That is load-bearing rather than tidy:
+matching the whole transcript once made the password get typed into the username prompt,
+because systemd (built `-Dmode=release`, so status lines are unit *descriptions* — see
+`status-unit-format-default` in its `meson.build`) prints "Query the User Interactively
+for a Password" long before login asks for one. The symptom is `Login incorrect` with
+perfectly correct credentials, so when a test cannot log in, suspect the handshake before
+suspecting `image/files/etc/shadow`.
+
 The system bus is the reference `dbus-daemon` (`dbus`, which needs `expat`). Anything with
 a D-Bus API needs it — systemd-logind exits with *Failed to connect to system bus* and
 crash-loops without one — and it enables itself through `.target.wants` symlinks in its own

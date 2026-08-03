@@ -151,10 +151,17 @@ fail() {
     exit 1
 }
 
-await() { # pattern seconds
-    local until=$((SECONDS + $2))
+# How much console output there is so far, as a byte offset into the log — the caller
+# takes one of these before it types something and passes it to await, so that only the
+# guest's answer can satisfy the wait. See the login handshake below for why that
+# matters.
+console_mark() { wc -c < "$LOG"; }
+
+# With a third argument, output before that offset is ignored.
+await() { # pattern seconds [since]
+    local until=$((SECONDS + $2)) since="${3:-0}"
     while [ "$SECONDS" -lt "$until" ]; do
-        grep -qaE "$1" "$LOG" && return 0
+        tail -c "+$((since + 1))" "$LOG" | grep -qaE "$1" && return 0
         grep -qaE "$DIED" "$LOG" && fail "the guest died"
         kill -0 "$qemu_pid" 2>/dev/null || fail "qemu exited"
         [ "$SECONDS" -lt "$deadline" ] || fail "timed out waiting for: $1"
@@ -166,10 +173,15 @@ await() { # pattern seconds
 await 'login:' "$TIMEOUT" || fail "no login prompt"
 echo ">> got a login prompt, logging in as $LOGIN_USER"
 
+# The password waits on output typed *after* the username, not on "Password" appearing
+# anywhere in the log: systemd's status lines contain "Query the User Interactively for
+# a Password" a few seconds into the boot, and matching that types the password into the
+# username prompt. test/systemd.sh has the long version.
 until grep -qaF "$READY" "$LOG"; do
     [ "$SECONDS" -lt "$deadline" ] || fail "could not get a shell (login rejected?)"
+    prompt=$(console_mark)
     printf '%s\n' "$LOGIN_USER" >&3
-    await 'Password' 15 || continue
+    await 'Password' 15 "$prompt" || continue
     printf '%s\n' "$LOGIN_PASSWORD" >&3
     sleep 3
     printf '%s\n' "$QUIET" >&3
