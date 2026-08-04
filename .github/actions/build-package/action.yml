@@ -7,6 +7,14 @@ inputs:
   package:
     description: Package directory to build, e.g. coreutils.
     required: true
+  arch:
+    description: >
+      amd64 or arm64. Everything here builds natively rather than being cross-compiled,
+      so this only ever selects which native runner the calling workflow put the job on
+      — it doesn't change what build.sh does. It has to be threaded through anyway: the
+      binaries one arch produces are meaningless on the other, so the cache key and the
+      uploaded artifact name both carry it to keep the two arches from colliding.
+    required: true
   sysroot:
     description: >
       Whether to compile against our glibc. True for everything except glibc itself,
@@ -23,7 +31,7 @@ runs:
       if: inputs.sysroot == 'true'
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
-        name: package-glibc
+        name: package-glibc-${{ inputs.arch }}
         path: glibc-package
 
     - name: Stage the sysroot
@@ -49,7 +57,9 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: rootfs
-        key: ${{ steps.get_key.outputs.package }}-${{ steps.get_key.outputs.build_script_sum }}
+        # arch has to be in the key: an amd64 and an arm64 build of the same package at
+        # the same script hash produce entirely different, mutually useless binaries.
+        key: ${{ inputs.arch }}-${{ steps.get_key.outputs.package }}-${{ steps.get_key.outputs.build_script_sum }}
 
     - name: Build
       if: steps.cache-build.outputs.cache-hit != 'true'
@@ -63,5 +73,5 @@ runs:
     - name: Upload Package
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: package-${{ inputs.package }}
+        name: package-${{ inputs.package }}-${{ inputs.arch }}
         path: ${{ inputs.package }}.tar

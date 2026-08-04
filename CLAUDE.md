@@ -212,6 +212,11 @@ hibernation and cpufreq — plus SELinux and audit, which have no userspace here
 defconfig's debug options. It also turns `CONFIG_MODULES` off: everything is built in and
 `make modules_install` is never run, so a symbol that resolves to `=m` is silently missing
 from the image — with modules off, kconfig has to resolve every tristate to `y` or `n`.
+Note what that costs on arm64: kconfig resolves an explicitly-set `=m` to `y`, not `n`,
+and arm64's defconfig is far more modular than `x86_64_defconfig`, so turning modules off
+builds most of a distro kernel *in*. That is why the arm64 image is several times the size
+of the amd64 one, and why `vm.config` has to name subtractions (media, wireless) that
+amd64 never needed.
 
 systemd's own BPF sandboxing is a separate axis from crun's. crun reaches the cgroup v2
 device controller through raw `bpf(2)` and needs no library; systemd loads its compiled-in
@@ -221,13 +226,36 @@ by clang inside the builder and embedded as skeletons — so not shipping the li
 enough to disable `IPAddressAllow`/`Deny`, `RestrictNetworkInterfaces` and `SocketBind*`
 silently, with one warning at boot.
 
-The LSM half needs four more kernel symbols, all in the fragment: `BPF_JIT` (which
-`BPF_LSM` depends on and defconfig leaves off), `BPF_LSM` itself, `SECURITYFS` — systemd
-decides whether bpf-lsm is available by reading `/sys/kernel/security/lsm`, so without
-securityfs the answer is no however the kernel is built — and `DEBUG_INFO_BTF`, because
-an LSM program names the kernel function it hooks and resolving that name needs
+The LSM half needs more kernel symbols, all in the fragment: `BPF_JIT` (which `BPF_LSM`
+depends on and defconfig leaves off), `FTRACE` (`BPF_LSM` also depends on `BPF_EVENTS`,
+which is not a knob — it is `default y` behind the probe event types, and those live
+inside the FTRACE menu, which `x86_64_defconfig` leaves on and arm64's defconfig
+explicitly switches off), `BPF_LSM` itself, `SECURITYFS` — systemd decides whether
+bpf-lsm is available by reading `/sys/kernel/security/lsm`, so without securityfs the
+answer is no however the kernel is built — and `DEBUG_INFO_BTF`, because an LSM program
+names the kernel function it hooks and resolving that name needs
 `/sys/kernel/btf/vmlinux`. `CONFIG_LSM` already lists `bpf`. The BTF option is the
-expensive one: it compiles the kernel with debug info and runs pahole over `vmlinux`.
+expensive one: it compiles the kernel with debug info and runs pahole over `vmlinux`. It
+also cannot be asked for on its own — it lives inside `if DEBUG_INFO`, and `DEBUG_INFO`
+is itself only ever *selected*, by the "Debug information" choice that `x86_64_defconfig`
+leaves at None and arm64's defconfig sets to REDUCED, so the fragment has to settle that
+choice (`DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT`, `# DEBUG_INFO_REDUCED is not set`) before
+the BTF line means anything.
+
+**A fragment line that cannot be applied is dropped in silence, so `build.sh` checks.**
+`merge_config.sh` only verifies its own work when it is the thing that runs the config
+command; `make <name>.config` passes it `-m` and re-runs `olddefconfig` as a separate
+step, and a symbol whose dependencies are unmet disappears between the two without a
+word. Every silent kernel-config failure this repo has had went that way — `BPF_LSM`
+asked for with no `BPF_EVENTS` under it, `DEBUG_INFO_BTF` asked for inside an `if
+DEBUG_INFO` that was off, `WIRELESS`/`FAT_FS`/`CPU_FREQ`/`I2C` cleared and immediately
+`select`ed back by `WLAN`/`VFAT_FS`/`SCHED_MC_PRIO`/`MEDIA_SUBDRV_AUTOSELECT`. The check
+after `make vm.config` fails the build instead: everything `container.config` turns on
+has to be `=y`, and nothing either fragment clears may come back `=y`. `vm.config` is
+still allowed to name symbols that do not exist on this architecture — that is how the
+x86-only lines behave on arm64 — it just may not name one that exists and stayed on.
+When adding to `vm.config`, expect to clear the symbol that *selects* the one you want
+gone, not only the one you want gone.
 
 `tools/fetch-image.sh` / `tools/boot-qemu.sh` are for poking at CI artifacts locally. The `rootfs-dir`
 CI artifact is lossy (`upload-artifact` dereferences symlinks); never rebuild a bootable

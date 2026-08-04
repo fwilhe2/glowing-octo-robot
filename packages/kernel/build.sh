@@ -1,18 +1,26 @@
 # defconfig plus kvm_guest.config is what a qemu guest needs: virtio-blk for the root
-# disk and the 8250 serial console, both built in, so the image boots with no initrd.
+# disk and a built-in serial console (8250/ttyS0 on amd64, PL011/ttyAMA0 on arm64), so
+# the image boots with no initrd. This builds natively — never cross-compiled — so
+# `make defconfig` already resolved to the right arch's defconfig from `uname -m`
+# (SUBARCH in the kernel's own top-level Makefile); nothing here passes ARCH= explicitly.
+# kvm_guest.config is a generic (arch/-independent) fragment, but a few of the symbols
+# in it — CONFIG_PARAVIRT and friends — only exist under arch/x86; merge_config.sh warns
+# that it couldn't apply them on arm64 and moves on, which is expected and harmless.
 make defconfig
 make kvm_guest.config
 
-# ...but neither of them turns on anything a container runtime needs. x86_64_defconfig
+# ...but neither of them turns on anything a container runtime needs. defconfig
 # gives us CGROUPS, the pid/net/ipc/uts namespaces and SECCOMP_FILTER and stops there:
 # no USER_NS, no MEMCG, no OVERLAY_FS, no veth. This fragment is the difference between
-# "the kernel has namespaces" and "crun can actually start a container".
+# "the kernel has namespaces" and "crun can actually start a container". Every symbol in
+# it lives outside arch/, so it applies identically on amd64 and arm64.
 #
 # It is written out here rather than kept as a file next to this one because only
 # build.sh is bind-mounted into the builder — the rest of kernel/ isn't there to copy.
 # `make <name>.config` runs scripts/kconfig/merge_config.sh, which merges the fragment
-# and then re-runs olddefconfig, so anything these symbols select gets pulled in too and
-# a value that could not be applied is reported as a warning.
+# and then re-runs olddefconfig, so anything these symbols select gets pulled in too — and
+# anything they ask for that olddefconfig cannot honour is dropped in silence. Nothing
+# upstream complains about that; the check after `make vm.config` below is what does.
 cat > kernel/configs/container.config <<'EOF'
 # Namespaces and cgroup v2 controllers. CGROUPS, CGROUP_PIDS, CGROUP_FREEZER,
 # CGROUP_DEVICE, BLK_CGROUP and CGROUP_SCHED are already on; MEMCG is what makes
@@ -29,21 +37,41 @@ CONFIG_CGROUP_BPF=y
 # programs through libbpf (the libbpf package) and logs "cgroup BPF features disabled"
 # without it; these are what make the loaded programs actually run.
 #
-# BPF_JIT: BPF_LSM depends on it, and defconfig leaves it off. BPF_EVENTS is already y.
+# BPF_JIT: BPF_LSM depends on it, and defconfig leaves it off.
+# FTRACE: BPF_LSM also depends on BPF_EVENTS, which is not a knob — it is `default y`
+#   behind (KPROBE_EVENTS || UPROBE_EVENTS) && PERF_EVENTS, and both of those probe
+#   types live inside the FTRACE menu. x86_64_defconfig leaves FTRACE on and arm64's
+#   defconfig switches it off explicitly, so asking for BPF_LSM got a kernel with it on
+#   amd64 and a kernel silently without it on arm64. UPROBE_EVENTS is enough on its own
+#   (it only wants ARCH_SUPPORTS_UPROBES, which both arches have), so this does not also
+#   need KPROBES.
 # BPF_LSM: the hook type behind RestrictFileSystems= and nsresourced's user-namespace
 #   lockdown. CONFIG_LSM already lists "bpf", so enabling this is all it takes to make
 #   it show up as active.
 # SECURITYFS: how a booted system reports which LSMs are on, in
 #   /sys/kernel/security/lsm. systemd reads exactly that file to decide whether bpf-lsm
 #   is available, so without securityfs the answer is "no" no matter what is compiled in.
-# DEBUG_INFO_BTF: an LSM program is attached by naming the kernel function it hooks, and
-#   resolving that name needs the kernel's own BTF in /sys/kernel/btf/vmlinux. Without
-#   it the program loads and then fails to attach. It costs a kernel compiled with debug
-#   info and a pahole pass over vmlinux — dwarves is already in this package's
-#   EXTRA_DEPS for exactly this.
 CONFIG_BPF_JIT=y
+CONFIG_FTRACE=y
 CONFIG_BPF_LSM=y
 CONFIG_SECURITYFS=y
+
+# An LSM program is attached by naming the kernel function it hooks, and resolving that
+# name needs the kernel's own BTF in /sys/kernel/btf/vmlinux. Without it the program
+# loads and then fails to attach — systemd says "bpf-restrict-fs: Failed to load BPF
+# object: No such process" at every boot.
+#
+# DEBUG_INFO_BTF alone does not get there, and used not to: it lives inside `if
+# DEBUG_INFO`, and DEBUG_INFO is not a knob either — it is selected by the "Debug
+# information" choice, which x86_64_defconfig leaves at None and arm64's defconfig sets
+# to REDUCED. Under a None or a REDUCED choice the symbol does not exist to be set, so
+# the line below it was a no-op on both arches. Settling that choice here is what makes
+# it real, and what makes this the expensive option it was always described as: the
+# kernel is compiled with full debug info and pahole runs over vmlinux (dwarves is in
+# this package's EXTRA_DEPS for exactly that). Only the .BTF section is installed; the
+# DWARF stays behind in the build tree.
+CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT=y
+# CONFIG_DEBUG_INFO_REDUCED is not set
 CONFIG_DEBUG_INFO_BTF=y
 
 # Image layers.
@@ -67,7 +95,7 @@ CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
 EOF
 make container.config
 
-# A second fragment for the other direction: x86_64_defconfig is a general-purpose
+# A second fragment for the other direction: the arch's defconfig is a general-purpose
 # config and turns on hardware a VM will never have. Only ever a guest (qemu today,
 # rust-vmm-style VMMs next), so this is dead code and, in the wireless case, a boot-time
 # error — cfg80211 asks the firmware loader for regulatory.db, which the image does not
@@ -75,8 +103,19 @@ make container.config
 # Order matters: this comes after container.config so that where the two disagree the
 # subtractive fragment is what olddefconfig sees last. Nothing here may take away what
 # container.config just turned on — the guest devices are virtio and nothing else.
+#
+# A handful of lines below (AGP, the IOMMU pair, ACPI_DOCK/ACPI_BGRT, SCHED_MC_PRIO,
+# X86_CHECK_BIOS_CORRUPTION, EARLY_PRINTK_DBGP, MACINTOSH_DRIVERS, EEEPC_LAPTOP) name
+# symbols that only exist under arch/x86, and simply do not appear in the .config when
+# this runs on arm64. That is fine and the check below allows it: a subtraction only has
+# to hold for symbols this architecture actually has.
 cat > kernel/configs/vm.config <<'EOF'
-# No radio in a virtual machine. Clearing WIRELESS takes CFG80211 and MAC80211 with it.
+# No radio in a virtual machine. Clearing WIRELESS takes CFG80211 and MAC80211 with it —
+# but only once WLAN goes too: WLAN is `default y` and `select WIRELESS`, so clearing
+# WIRELESS on its own was undone by olddefconfig on the spot, on both arches. The
+# leftover cfg80211 is what asks the firmware loader for a regulatory.db the image does
+# not ship, which is the boot-time error this was written to remove in the first place.
+# CONFIG_WLAN is not set
 # CONFIG_WIRELESS is not set
 # CONFIG_RFKILL is not set
 
@@ -109,6 +148,10 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_PCCARD is not set
 # CONFIG_MACINTOSH_DRIVERS is not set
 # CONFIG_EEEPC_LAPTOP is not set
+# No camera, tuner or capture card on any qemu command line here, and MEDIA_SUPPORT is
+# what drags I2C back in behind it (MEDIA_SUBDRV_AUTOSELECT selects it), so clearing I2C
+# alone did nothing on arm64, whose defconfig has the media stack and x86_64's does not.
+# CONFIG_MEDIA_SUPPORT is not set
 # CONFIG_I2C is not set
 # CONFIG_WATCHDOG is not set
 # CONFIG_NVRAM is not set
@@ -128,6 +171,9 @@ cat > kernel/configs/vm.config <<'EOF'
 # Power management a VM does not do: there is no disk to suspend to, no CPU frequency to
 # scale (the vCPU's clock is the host's problem), and no dock or boot splash.
 # CONFIG_HIBERNATION is not set
+# SCHED_MC_PRIO is `default y` on x86 and selects CPU_FREQ, so that one had to go first
+# or the governor stack came back with it.
+# CONFIG_SCHED_MC_PRIO is not set
 # CONFIG_CPU_FREQ is not set
 # CONFIG_ACPI_DOCK is not set
 # CONFIG_ACPI_BGRT is not set
@@ -137,6 +183,10 @@ cat > kernel/configs/vm.config <<'EOF'
 # on a single-user appliance root. ext4 is the root, 9p stays for host directory
 # sharing, and autofs stays because systemd's .automount units need it.
 # CONFIG_ISO9660_FS is not set
+# VFAT_FS is the one both defconfigs actually set, and it selects FAT_FS, so clearing
+# FAT_FS on its own came straight back.
+# CONFIG_VFAT_FS is not set
+# CONFIG_MSDOS_FS is not set
 # CONFIG_FAT_FS is not set
 # CONFIG_NFS_FS is not set
 # CONFIG_QUOTA is not set
@@ -186,9 +236,56 @@ cat > kernel/configs/vm.config <<'EOF'
 EOF
 make vm.config
 
+# Now check that the two fragments above actually took, because nothing else does.
+# merge_config.sh only verifies its own work when it is the thing that runs the config
+# command; `make <name>.config` passes it -m and re-runs olddefconfig separately, so a
+# symbol whose dependencies are unmet is dropped between the two steps without a word.
+# Every one of the silent failures this file has had went that way: DEBUG_INFO_BTF asked
+# for inside a `if DEBUG_INFO` that was off, BPF_LSM asked for without the BPF_EVENTS
+# under it, WIRELESS cleared and immediately selected back by WLAN. A fragment that
+# quietly does nothing is worse than one that fails, so fail.
+#
+# The two halves are not checked the same way. Everything container.config turns on has
+# to be there, no exceptions. vm.config is allowed to name symbols that do not exist on
+# this architecture — the x86-only lines above are expected to vanish on arm64 — so the
+# bar there is only that nothing it clears came back on.
+unapplied=""
+while read -r sym; do
+    if ! grep -qx "$sym" .config; then
+        unapplied="$unapplied  $sym  (asked for, not in .config)"$'\n'
+    fi
+done < <(grep -E '^CONFIG_[A-Z0-9_]+=y$' kernel/configs/container.config)
+
+while read -r sym; do
+    if grep -qx "$sym=y" .config; then
+        unapplied="$unapplied  $sym  (cleared, came back =y)"$'\n'
+    fi
+done < <(sed -n 's/^# \(CONFIG_[A-Z0-9_]*\) is not set$/\1/p' \
+             kernel/configs/container.config kernel/configs/vm.config)
+
+if [ -n "$unapplied" ]; then
+    echo "error: config fragments did not apply as written:" >&2
+    printf '%s' "$unapplied" >&2
+    exit 1
+fi
+
 make -j"$(nproc)"
+
+# Building natively rather than cross-compiling means `make defconfig` already picked
+# x86_64_defconfig or arm64 defconfig on its own, from SUBARCH's `uname -m` — nothing
+# above this line is arch-conditional. But the two arches don't put the finished image
+# in the same place or call it the same thing: x86 emits a self-decompressing bzImage,
+# arm64 emits a plain Image (qemu-system-aarch64's -kernel loads that directly; there is
+# no bzImage equivalent). Staged under one conventional name either way, so nothing
+# downstream (test/, tools/, ci.yml) needs to know which arch built it.
+case "$(uname -m)" in
+    x86_64)  kernel_image=arch/x86/boot/bzImage ;;
+    aarch64) kernel_image=arch/arm64/boot/Image ;;
+    *) echo "error: unsupported build architecture: $(uname -m) (expected x86_64 or aarch64)" >&2
+       exit 1 ;;
+esac
 
 # The rootfs image is what CI hands to qemu, so the kernel rides along inside it. It is
 # never loaded from there — qemu is passed -kernel — but keeping the two together means
 # a build artifact is always bootable on its own.
-install -D -m 644 arch/x86/boot/bzImage /usr/local/rootfs/boot/bzImage
+install -D -m 644 "$kernel_image" /usr/local/rootfs/boot/bzImage
