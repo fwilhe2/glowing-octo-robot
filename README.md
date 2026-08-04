@@ -12,6 +12,7 @@ image/            how the staging tree becomes a disk image: Containerfile,
                   build-rootfs.sh, and files/ — the /etc the image ships
 test/             everything CI runs to verify a build
 tools/            local conveniences and maintenance, not part of a build
+docs/             design notes for work not done yet — proposals, not descriptions
 downloads/        source tarballs (gitignored)
 rootfs/           shared staging tree every package installs into (gitignored)
 output/           built images, fetched CI artifacts, test console logs (gitignored)

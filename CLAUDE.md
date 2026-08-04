@@ -40,6 +40,7 @@ image/            how the staging tree becomes a disk: Containerfile, build-root
                   and files/ — the /etc the image ships
 test/             everything CI runs to verify a build, plus known-missing-libs.txt
 tools/            local conveniences and maintenance, not part of a build
+docs/             design notes for work not done yet — proposals, not descriptions
 downloads/        source tarballs (gitignored)
 rootfs/           shared, cumulative staging tree every package installs into (gitignored)
 output/           built images, fetched CI artifacts, test console logs (gitignored)
@@ -89,6 +90,10 @@ in `.github/workflows/ci.yml`. Everything else is shared and should stay that wa
 - `build.sh` (root) → the only driver: download, extract, assemble podman mounts, run.
 - `builder/build-package.sh` → container entrypoint: merged-`/usr` staging, sysroot flags,
   then `source /package-build.sh`.
+
+There is a proposal to replace the per-package images with a single one, published to a
+registry alongside the pinned tarballs, in `docs/build-container.md`. It is not
+implemented — the above is what the repository actually does.
 
 `packages/<pkg>/build.sh` is bind-mounted, not copied into the image, and is *sourced* with the
 unpacked source tree as the working directory. Install with `DESTDIR=/usr/local/rootfs`
