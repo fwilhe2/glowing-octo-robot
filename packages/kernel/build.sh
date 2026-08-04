@@ -110,6 +110,75 @@ make container.config
 # this runs on arm64. That is fine and the check below allows it: a subtraction only has
 # to hold for symbols this architecture actually has.
 cat > kernel/configs/vm.config <<'EOF'
+# arm64's defconfig is a multi-platform config: it turns on every ARM SoC vendor's
+# platform support, and each one drags in that SoC's pinctrl, clocks, PHYs, regulators,
+# MMC, SPI and RTC behind it. That is 2484 symbols built in on arm64 that amd64 never
+# has, and it is why the arm64 kernel is 54 MB against amd64's 11 MB and takes twice as
+# long to compile. qemu's virt board needs none of it: there is no ARCH_VIRT symbol
+# because the board is described entirely by the device tree qemu passes in and driven
+# by generic drivers — GICv3, the PL011 UART, the architected timer, PSCI and virtio.
+# These are all arm64-only symbols, so on amd64 they simply do not appear.
+# CONFIG_ARCH_ACTIONS is not set
+# CONFIG_ARCH_AIROHA is not set
+# CONFIG_ARCH_ALPINE is not set
+# CONFIG_ARCH_APPLE is not set
+# CONFIG_ARCH_ARTPEC is not set
+# CONFIG_ARCH_AXIADO is not set
+# CONFIG_ARCH_BCM2835 is not set
+# CONFIG_ARCH_BCMBCA is not set
+# CONFIG_ARCH_BCM_IPROC is not set
+# CONFIG_ARCH_BERLIN is not set
+# CONFIG_ARCH_BLAIZE is not set
+# CONFIG_ARCH_BRCMSTB is not set
+# CONFIG_ARCH_BST is not set
+# CONFIG_ARCH_CIX is not set
+# CONFIG_ARCH_EXYNOS is not set
+# CONFIG_ARCH_HISI is not set
+# CONFIG_ARCH_INTEL_SOCFPGA is not set
+# CONFIG_ARCH_K3 is not set
+# CONFIG_ARCH_KEEMBAY is not set
+# CONFIG_ARCH_LAYERSCAPE is not set
+# CONFIG_ARCH_LG1K is not set
+# CONFIG_ARCH_MA35 is not set
+# CONFIG_ARCH_MEDIATEK is not set
+# CONFIG_ARCH_MESON is not set
+# CONFIG_ARCH_MVEBU is not set
+# CONFIG_ARCH_MXC is not set
+# CONFIG_ARCH_NPCM is not set
+# CONFIG_ARCH_QCOM is not set
+# CONFIG_ARCH_REALTEK is not set
+# CONFIG_ARCH_RENESAS is not set
+# CONFIG_ARCH_ROCKCHIP is not set
+# CONFIG_ARCH_S32 is not set
+# CONFIG_ARCH_SEATTLE is not set
+# CONFIG_ARCH_SOPHGO is not set
+# CONFIG_ARCH_SPARX5 is not set
+# CONFIG_ARCH_SPRD is not set
+# CONFIG_ARCH_STM32 is not set
+# CONFIG_ARCH_SUNXI is not set
+# CONFIG_ARCH_SYNQUACER is not set
+# CONFIG_ARCH_TEGRA is not set
+# CONFIG_ARCH_TESLA_FSD is not set
+# CONFIG_ARCH_THUNDER is not set
+# CONFIG_ARCH_THUNDER2 is not set
+# CONFIG_ARCH_UNIPHIER is not set
+# CONFIG_ARCH_VEXPRESS is not set
+# CONFIG_ARCH_VISCONTI is not set
+# CONFIG_ARCH_XGENE is not set
+# CONFIG_ARCH_ZYNQMP is not set
+
+# Buses and device classes the virt board does not expose, all of which x86_64_defconfig
+# already leaves off — so these lines only ever do anything on arm64, and what they do is
+# close the gap rather than take anything away from amd64. Note SERIAL_8250 is *not* here
+# even though the virt board has no 8250 either: this fragment is shared, and amd64's
+# console is exactly that.
+# CONFIG_MTD is not set
+# CONFIG_MMC is not set
+# CONFIG_SPI is not set
+# CONFIG_REGULATOR is not set
+# CONFIG_BT is not set
+# CONFIG_CAN is not set
+
 # No radio in a virtual machine. Clearing WIRELESS takes CFG80211 and MAC80211 with it —
 # but only once WLAN goes too: WLAN is `default y` and `select WIRELESS`, so clearing
 # WIRELESS on its own was undone by olddefconfig on the spot, on both arches. The
@@ -289,3 +358,11 @@ esac
 # never loaded from there — qemu is passed -kernel — but keeping the two together means
 # a build artifact is always bootable on its own.
 install -D -m 644 "$kernel_image" /usr/local/rootfs/boot/bzImage
+
+# The resolved config rides along beside it, the way a distro ships /boot/config-*. The
+# check above proves the fragments applied; test/kernel-caps.sh reads this to prove the
+# result can actually run a container, which is a different question — a capability the
+# defconfig used to provide for free can stop being provided without any fragment
+# changing. It is ~250 KB and it is the only record of how the kernel next to it was
+# configured, which is worth that on its own when a boot misbehaves.
+install -D -m 644 .config /usr/local/rootfs/boot/config

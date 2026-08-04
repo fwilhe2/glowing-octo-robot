@@ -57,6 +57,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./build.sh <package>        # one package into the shared rootfs/ staging tree
 ./test/check-rootfs-deps.sh rootfs      # unresolved NEEDED entries
 ./test/check-symbol-versions.sh rootfs  # symbol versions no shipped library defines
+./test/kernel-caps.sh rootfs            # kernel config vs what a container needs
 ./tools/check-updates.sh [pkg...] # what upstream has released since the pinned VERSION
 ./test/boot.sh output/rootfs.ext4 rootfs/boot/bzImage   # headless boot smoke test
 ./test/systemd.sh output/rootfs.ext4 rootfs/boot/bzImage  # no failed units
@@ -214,9 +215,20 @@ defconfig's debug options. It also turns `CONFIG_MODULES` off: everything is bui
 from the image — with modules off, kconfig has to resolve every tristate to `y` or `n`.
 Note what that costs on arm64: kconfig resolves an explicitly-set `=m` to `y`, not `n`,
 and arm64's defconfig is far more modular than `x86_64_defconfig`, so turning modules off
-builds most of a distro kernel *in*. That is why the arm64 image is several times the size
-of the amd64 one, and why `vm.config` has to name subtractions (media, wireless) that
-amd64 never needed.
+builds most of a distro kernel *in*. That is why `vm.config` has to name subtractions
+(media, wireless, MTD/MMC/SPI/regulator, Bluetooth, CAN) that amd64 never needed.
+
+The largest of those by far is arm64's SoC platform support. `arch/arm64/Kconfig.platforms`
+is a multi-platform config — 48 `ARCH_<vendor>` symbols, each pulling in that SoC's
+pinctrl, clocks, PHYs, regulators, MMC, SPI and RTC — and clearing all of them removes
+**1594 built-in symbols**, 43% of the arm64 kernel. Nothing is lost: qemu's `virt` board
+has no `ARCH_*` symbol of its own because it is described entirely by the device tree qemu
+passes in and driven by generic drivers (GICv3, the PL011 UART, the architected timer,
+PSCI, virtio). The arm64 kernel still has ~40% more built in than amd64's; the rest is
+crypto implementations and generic subsystems, and trimming further has a worse
+risk-to-reward ratio than what is already gone. **`SERIAL_8250` must never be added to
+`vm.config`** however tempting it looks on arm64 — the fragment is shared, and it is
+amd64's console.
 
 systemd's own BPF sandboxing is a separate axis from crun's. crun reaches the cgroup v2
 device controller through raw `bpf(2)` and needs no library; systemd loads its compiled-in
