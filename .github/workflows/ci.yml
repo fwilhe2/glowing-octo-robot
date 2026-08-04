@@ -292,10 +292,12 @@ jobs:
       - name: Boot the image
         run: ./test/boot.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
 
-      # A second boot, this one all the way into systemd, asking only whether systemd is
-      # happy with itself: a package that ships a unit it cannot run leaves every boot
-      # `degraded`, and nothing above notices.
-      - name: Check for failed units
+      # A second boot, this one all the way into systemd, asking whether systemd is happy
+      # with itself: a package that ships a unit it cannot run leaves every boot
+      # `degraded`, and nothing above notices. It also runs flfsfetch on the shell it
+      # already has, which is the only time CI executes a shipped binary that is not on
+      # systemd's or login's critical path — and prints the result, which is the point.
+      - name: Check for failed units, and say hello
         run: ./test/systemd.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
 
       # A third boot: networkd has to configure the NIC, resolved has to answer, and the

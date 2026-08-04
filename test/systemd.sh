@@ -12,10 +12,14 @@
 #   LOG        console transcript (default systemd-test.log)
 #   LOGIN_USER/LOGIN_PASSWORD  serial console credentials (default root / root)
 #
-# `systemctl is-system-running` is the whole assertion: it reports `degraded` if and
+# `systemctl is-system-running` is the main assertion: it reports `degraded` if and
 # only if at least one unit failed, so it covers units nothing else here thinks to look
 # at. --wait blocks until startup has actually settled, which is what keeps this from
 # racing a unit that is merely slow; the deadline below is what catches one that hangs.
+# Two more ride along on the same shell, because a login over a serial console is the
+# expensive part and running one more command on it is free: systemd's Tainted property,
+# and flfsfetch, which is the only binary in usr/bin that anything in test/ ever runs
+# for its own sake.
 #
 # This is deliberately separate from test/boot.sh and test/network.sh rather than folded
 # into either: test/boot.sh proves the kernel and the loader work with a raw shell as
@@ -45,11 +49,14 @@ LOGIN_PASSWORD="${LOGIN_PASSWORD:-root}"
 READY="SHELL-IS-UP"
 STATE="SYSTEMD-STATE:"
 TAINT="SYSTEMD-TAINT:"
+FETCH="FLFSFETCH-DONE"
 # SYSTEMD_COLORS=0 because the failure diagnostics below are read by whoever is looking
 # at a CI log, and systemctl wraps every field of `systemctl --failed` in escapes.
 QUIET="stty -echo; PS1=; export SYSTEMD_COLORS=0"
 PROBE="echo SHELL-IS'-UP'"
 CHECK="echo SYSTEMD'-STATE':\$(systemctl is-system-running --wait)"
+# --no-color because this transcript is read as text, in a CI log or output/*.log.
+FETCH_RUN="flfsfetch --no-color; echo FLFSFETCH'-DONE'"
 # The taint string is systemd's own summary of things it found wrong with the system that
 # no unit will ever fail over — an unmerged /usr/sbin, a /var/run that is a directory. It
 # is a colon-separated word list, empty on a healthy system, so it costs one more command
@@ -241,3 +248,29 @@ case "$taint" in
         fail "could not read systemd's Tainted property (got: ${taint:-<nothing>})"
         ;;
 esac
+
+# Partly for the pleasure of seeing it in a CI log, and partly because this is the only
+# place anything in test/ runs a binary out of usr/bin that is not already on systemd's
+# or login's critical path. It rides along on the shell this test already has rather
+# than costing a fifth qemu boot, and flfsfetch is a fair canary: it links nothing but
+# glibc and reads /etc/os-release, /proc and /sys, so "it printed its own OS name" means
+# the loader, the libc and the shipped /etc all did their jobs.
+#
+# It is a hard failure rather than a nicety. A binary that is in the image and cannot run
+# is exactly the class of bug the rest of this directory exists to catch.
+mark=$(console_mark)
+printf '%s\n' "$FETCH_RUN" >&3
+await "$FETCH" 30 "$mark" || fail "flfsfetch did not run (is /usr/bin/flfsfetch in the image?)"
+
+# Everything the guest emitted after the command was typed, minus the end marker itself.
+echo ">> flfsfetch says:"
+tail -c "+$((mark + 1))" "$LOG" | tr -d '\r' | sed -e "/$FETCH/,\$d" -e 's/^/   /'
+
+# The OS field exists only if /etc/os-release was found and parsed — flfsfetch omits a
+# field it cannot fill rather than printing it empty. Matching the field name rather than
+# its value keeps this from breaking the day the name in image/files/etc/os-release
+# changes.
+if ! tail -c "+$((mark + 1))" "$LOG" | grep -qa 'OS: '; then
+    fail "flfsfetch ran but printed no OS field — /etc/os-release unreadable?"
+fi
+echo ">> flfsfetch OK"
