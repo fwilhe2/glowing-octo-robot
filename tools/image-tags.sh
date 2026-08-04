@@ -35,9 +35,13 @@ case "${1:-}" in
         # Every pinned version and its checksum. A version bump changes the tag, which is
         # the point — the image contents changed. Nothing else in env.sh matters here:
         # a changed URL that still yields the same bytes is the same image.
+        # LOCAL_SOURCE packages contribute nothing: they put no tarball in the image, so
+        # bumping one must not invalidate a tag that describes the tarballs.
         hash=$(for e in packages/*/env.sh; do
                    ( PKG=$(basename "$(dirname "$e")"); . "$e"
-                     printf '%s %s %s\n' "$PKG" "$TARBALL" "$SHA256" )
+                     if [ -z "${LOCAL_SOURCE:-}" ]; then
+                         printf '%s %s %s\n' "$PKG" "$TARBALL" "$SHA256"
+                     fi )
                done | sort | sha256sum)
         ;;
     *)

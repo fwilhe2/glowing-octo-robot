@@ -53,7 +53,13 @@ runs:
         # The builder image reference is in here rather than the files behind it: it is
         # already a content hash of builder/, so a changed dependency list rebuilds every
         # package, which is what we want and what listing the files by hand used to do.
-        echo "build_script_sum=$(cat build.sh builder/build-package.sh packages/glibc/env.sh $PKG/build.sh $PKG/env.sh <(./tools/image-tags.sh builder) | md5sum | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+        #
+        # $PKG/src is a LOCAL_SOURCE package's actual source, and it has to be in the key
+        # for the same reason env.sh is: for every other package a source change means a
+        # new VERSION and so a new env.sh, but here the source can change with env.sh
+        # untouched, and a cache hit would then ship the previous build's binary. Sorted,
+        # because find's order is the filesystem's and a key has to be deterministic.
+        echo "build_script_sum=$(cat build.sh builder/build-package.sh packages/glibc/env.sh $PKG/build.sh $PKG/env.sh <(./tools/image-tags.sh builder) <(find $PKG/src -type f -print0 2>/dev/null | sort -z | xargs -0r cat) | md5sum | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
 
     - name: Cache
       id: cache-build

@@ -27,14 +27,21 @@ CURL=(curl --location --fail --silent --show-error
 
 fetch_one() {
     local pkg="$1"
-    local VERSION PACKAGE TARBALL URL SHA256 MIRRORS
+    local VERSION PACKAGE TARBALL URL SHA256 MIRRORS LOCAL_SOURCE
 
     # Subshell would hide the values, so unset what the previous package set instead.
-    unset VERSION PACKAGE TARBALL URL SHA256 MIRRORS
+    unset VERSION PACKAGE TARBALL URL SHA256 MIRRORS LOCAL_SOURCE
     # env.sh may refer to $PKG when composing its URL.
     local PKG="$pkg"
     # shellcheck disable=SC1090
     source "packages/$pkg/env.sh"
+
+    # A package whose source is in this repository has no tarball and no checksum, so
+    # there is nothing here to fetch or verify. It is still a package everywhere else.
+    if [ -n "${LOCAL_SOURCE:-}" ]; then
+        echo "  $pkg: source is in this repository, nothing to fetch"
+        return 0
+    fi
 
     local target="downloads/$TARBALL"
 

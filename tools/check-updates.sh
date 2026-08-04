@@ -51,6 +51,13 @@ for PKG in "${PACKAGES[@]}"; do
 
     current=$(source "packages/$PKG/env.sh"; printf '%s\n' "$VERSION")
 
+    # A package whose source is in this repository has no upstream to compare against —
+    # its VERSION is ours, and nothing announces releases of it.
+    if [ -n "$(source "packages/$PKG/env.sh"; printf '%s' "${LOCAL_SOURCE:-}")" ]; then
+        $JSON || printf '%-12s %-10s local source, no upstream\n' "$PKG" "$current"
+        continue
+    fi
+
     if ! latest=$(./tools/upstream.sh "$PKG"); then
         $JSON || printf '%-12s %-10s %s\n' "$PKG" "$current" "ERROR: upstream lookup failed"
         failed=true

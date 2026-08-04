@@ -146,6 +146,9 @@ jobs:
           - e2fsprogs
           - elfutils
           - expat
+          # Not an upstream project: packages/flfsfetch/src is this repository's own C,
+          # built by the same machinery as everything else. See CLAUDE.md.
+          - flfsfetch
           - json-c
           - kmod
           - libbpf

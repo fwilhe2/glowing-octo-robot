@@ -5,7 +5,8 @@
 #
 # Everything package-specific lives in the package's own directory under packages/:
 #
-#   packages/<pkg>/env.sh     version, tarball URL, its SHA256, and optionally NO_SYSROOT.
+#   packages/<pkg>/env.sh     version, tarball URL, its SHA256, and optionally
+#                             NO_SYSROOT or LOCAL_SOURCE.
 #   packages/<pkg>/build.sh   the configure/compile/install commands, sourced inside the
 #                             container by builder/build-package.sh with the unpacked
 #                             source tree as the working directory.
@@ -102,17 +103,35 @@ if [ -z "$NO_SYSROOT" ]; then
         sh -c 'dpkg -L libc6 | while read -r p; do [ -f "$p" ] && printf "%s\n" "$p"; done')
 fi
 
-# Tarballs are shared across packages' rebuilds and never belong to any one of them, so
-# they live in one gitignored directory rather than next to whichever package downloaded
-# them first. prep.sh above already fetched every package's; this re-checks just ours, so
-# a tarball deleted or corrupted since then is caught here rather than half-extracted.
-./tools/fetch-sources.sh "$PKG"
-
-if [ ! -d "$PKG_DIR/$PACKAGE" ]; then
-    echo "Extracting ${TARBALL}..."
-    tar -xf "downloads/$TARBALL" -C "$PKG_DIR"
+# A package's source is normally a pinned upstream tarball, but it does not have to be:
+# LOCAL_SOURCE=1 in env.sh means the source is in this repository, under
+# packages/<pkg>/src, with nothing to download and nothing to unpack.
+#
+# That tree is mounted read-only, unlike the extracted tarball every other package gets.
+# It is tracked by git, so a build that dropped object files into it would turn a
+# successful build into a dirty working tree — the package's build.sh compiles straight
+# to DESTDIR instead. See CLAUDE.md.
+if [ -n "${LOCAL_SOURCE:-}" ]; then
+    if [ ! -d "$PKG_DIR/src" ]; then
+        echo "error: $PKG sets LOCAL_SOURCE but has no $PKG_DIR/src directory" >&2
+        exit 1
+    fi
+    src_mount=(--volume "$PWD/$PKG_DIR/src":/usr/local/src:ro)
 else
-    echo "Directory $PKG_DIR/$PACKAGE already exists, skipping extraction."
+    # Tarballs are shared across packages' rebuilds and never belong to any one of them,
+    # so they live in one gitignored directory rather than next to whichever package
+    # downloaded them first. prep.sh above already fetched every package's; this
+    # re-checks just ours, so a tarball deleted or corrupted since then is caught here
+    # rather than half-extracted.
+    ./tools/fetch-sources.sh "$PKG"
+
+    if [ ! -d "$PKG_DIR/$PACKAGE" ]; then
+        echo "Extracting ${TARBALL}..."
+        tar -xf "downloads/$TARBALL" -C "$PKG_DIR"
+    else
+        echo "Directory $PKG_DIR/$PACKAGE already exists, skipping extraction."
+    fi
+    src_mount=(--volume "$PWD/$PKG_DIR/$PACKAGE":/usr/local/src)
 fi
 
 # --network=none is the point of splitting prep out: the sources are on disk and the
@@ -120,7 +139,7 @@ fi
 # this is what turns that from a claim into something it cannot do.
 podman run --rm \
     --network=none \
-    --volume "$PWD/$PKG_DIR/$PACKAGE":/usr/local/src \
+    "${src_mount[@]}" \
     --volume "$PWD/$PKG_DIR/build.sh":/package-build.sh:ro \
     --volume "$PWD/rootfs":/usr/local/rootfs \
     "${sysroot_mount[@]}" \

@@ -88,8 +88,12 @@ else
     trap 'rm -rf "$stage"' EXIT
     mkdir -p "$stage/sources"
     for e in packages/*/env.sh; do
+        # LOCAL_SOURCE packages have no tarball to vendor — their source is in git, which
+        # is a better copy than this image could be.
         ( PKG=$(basename "$(dirname "$e")"); . "$e"
-          cp "downloads/$TARBALL" "$stage/sources/$TARBALL" )
+          if [ -z "${LOCAL_SOURCE:-}" ]; then
+              cp "downloads/$TARBALL" "$stage/sources/$TARBALL"
+          fi )
     done
     printf 'FROM scratch\nCOPY sources /sources\n' > "$stage/Containerfile"
     # A manifest list covering both architectures, from one build. There is nothing to
