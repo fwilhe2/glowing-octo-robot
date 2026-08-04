@@ -7,6 +7,8 @@
 #
 # Overrides:
 #   INIT      PID 1 to run          (default /bin/bash)
+#   PROMPT    regex the shell's prompt matches, i.e. when it is safe to type
+#                                   (default bash-[0-9]; change it with INIT)
 #   TIMEOUT   seconds to wait       (default 300 — qemu falls back to TCG in CI,
 #                                    where there is no KVM, and that is slow)
 #   MEM/CPUS  guest size            (default 1024 / 2)
@@ -57,6 +59,17 @@ fi
 # everything typed at the console, and matching our own input would pass every time.
 MARKER="BOOT-SMOKE-OK"
 COMMAND="uname -srm; echo BOOT-SMOKE'-OK'"
+
+# Nothing may be typed before this appears in the transcript, and that is a correctness
+# requirement rather than tidiness. arm64's console is a PL011, and qemu stops reading
+# its own stdin the moment that model's receive FIFO fills. The FIFO is only drained
+# once the guest opens /dev/console and enables receive interrupts — which is what
+# starting a shell on it does — so a command line typed before then sits there unread,
+# and qemu never resumes: the console is deaf for the rest of the boot. The image comes
+# up perfectly and the test times out anyway, with a prompt as the last thing in the
+# log. amd64's 16550 recovers from exactly the same abuse, which is why typing blind
+# from t=0 worked for as long as this only ever ran on amd64.
+PROMPT="${PROMPT:-bash-[0-9]}"
 
 command -v "$QEMU" >/dev/null || { echo "error: $QEMU not found" >&2; exit 1; }
 [ -f "$KERNEL" ] || { echo "error: missing kernel: $KERNEL" >&2; exit 1; }
@@ -113,6 +126,7 @@ echo ">> booting $ROOTFS with $KERNEL (init=$INIT), waiting up to ${TIMEOUT}s"
 
 status=timeout
 deadline=$((SECONDS + TIMEOUT))
+typed=
 
 while [ "$SECONDS" -lt "$deadline" ]; do
     if grep -qF "$MARKER" "$LOG"; then
@@ -127,11 +141,22 @@ while [ "$SECONDS" -lt "$deadline" ]; do
         status=exited
         break
     fi
-    # Retried until it lands: there is no prompt to synchronise on that a shell
-    # wouldn't also print while still starting up, and re-running it costs nothing.
-    printf '%s\n' "$COMMAND" >&3
+    # Stay silent until the shell has printed a prompt (see PROMPT above), then retry
+    # until it lands: even after the prompt the first line can race the shell finishing
+    # its own startup and come back chewed up, and re-running it costs nothing.
+    if [ -n "$typed" ] || grep -qE "$PROMPT" "$LOG"; then
+        typed=yes
+        printf '%s\n' "$COMMAND" >&3
+    fi
     sleep 2
 done
+
+# Worth distinguishing: a boot that never got as far as a prompt is a broken image,
+# while one that printed a prompt and then ignored everything typed at it is a broken
+# console — and the two want to be debugged in completely different places.
+if [ "$status" = timeout ] && [ -z "$typed" ]; then
+    status="timeout, no shell prompt"
+fi
 
 if [ "$status" = ok ]; then
     echo ">> boot OK"
