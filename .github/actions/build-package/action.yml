@@ -50,7 +50,10 @@ runs:
         echo "package=$PACKAGE" >> $GITHUB_OUTPUT
         # packages/glibc/env.sh is in here for every package: they are compiled against
         # that glibc, so bumping its version has to rebuild all of them.
-        echo "build_script_sum=$(cat build.sh builder/base.sh builder/base.Containerfile builder/package.Containerfile builder/build-package.sh packages/glibc/env.sh $PKG/build.sh $PKG/env.sh | md5sum | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+        # The builder image reference is in here rather than the files behind it: it is
+        # already a content hash of builder/, so a changed dependency list rebuilds every
+        # package, which is what we want and what listing the files by hand used to do.
+        echo "build_script_sum=$(cat build.sh builder/build-package.sh packages/glibc/env.sh $PKG/build.sh $PKG/env.sh <(./tools/image-tags.sh builder) | md5sum | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
 
     - name: Cache
       id: cache-build

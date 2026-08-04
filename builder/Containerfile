@@ -1,0 +1,23 @@
+# The one builder image. Every package is compiled in this, and it is the only place
+# apt runs — see docs/build-container.md for why there used to be one image per package
+# and why there isn't any more.
+#
+# There is no ARG for the architecture: builder/deps.txt names no
+# architecture-suffixed package, because build-essential and g++ pull the right
+# binutils/gcc for the host on their own. Everything here builds natively, so the image
+# is built once per architecture and joined into a manifest list.
+FROM debian:sid
+
+COPY builder/deps.txt /deps.txt
+
+# One layer, so the image has one apt transaction in its history rather than 23. The sed
+# strips comments and blank lines; xargs turns what is left into the argument list.
+RUN apt-get update \
+    && sed -e 's/#.*//' -e '/^[[:space:]]*$/d' /deps.txt \
+       | xargs apt-get install -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY builder/build-package.sh /build.sh
+RUN chmod +x /build.sh
+
+WORKDIR /usr/local/src

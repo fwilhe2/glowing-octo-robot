@@ -2,10 +2,8 @@ VERSION="0.195"
 PACKAGE="elfutils-${VERSION}"
 TARBALL="$PACKAGE.tar.bz2"
 URL="https://sourceware.org/elfutils/ftp/${VERSION}/${TARBALL}"
-# Here only for libelf.so.1, which libbpf links against. Debian's source package is
-# `elfutils`, so the default BUILD_DEP is right; it does not pull the zstd headers the
-# configure below asks for.
-EXTRA_DEPS="libzstd-dev"
+SHA256="37629fdf7f1f3dc2818e138fca2b8094177d6c2d0f701d3bb650a561218dc026"
+# Here only for libelf.so.1, which libbpf links against.
 # The FTP directory holds one subdirectory per release rather than the tarballs
 # side by side, so look a level up.
 UPSTREAM_INDEX="https://sourceware.org/elfutils/ftp/"

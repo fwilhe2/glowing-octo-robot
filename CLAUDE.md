@@ -34,12 +34,13 @@ there.
 ```
 build.sh          the only build entry point — ./build.sh <package>
 packages/<pkg>/   env.sh + build.sh per package, and the tree its tarball unpacks into
-builder/          how a package is compiled: base + per-package images, and the
-                  container entrypoint that sets up the sysroot
+builder/          how a package is compiled: the one builder image, deps.txt (its
+                  entire contents), and the entrypoint that sets up the sysroot
 image/            how the staging tree becomes a disk: Containerfile, build-rootfs.sh,
                   and files/ — the /etc the image ships
 test/             everything CI runs to verify a build, plus known-missing-libs.txt
 tools/            local conveniences and maintenance, not part of a build
+docs/             design notes for work not done yet — proposals, not descriptions
 downloads/        source tarballs (gitignored)
 rootfs/           shared, cumulative staging tree every package installs into (gitignored)
 output/           built images, fetched CI artifacts, test console logs (gitignored)
@@ -81,15 +82,28 @@ stops making sense.
 
 ## How a package build works
 
-A package is exactly two files, `packages/<pkg>/env.sh` (version/tarball/apt knobs) and
+A package is exactly two files, `packages/<pkg>/env.sh` (version, tarball, checksum) and
 `packages/<pkg>/build.sh` (configure/compile/install only) — plus an entry in the `build` matrix
 in `.github/workflows/ci.yml`. Everything else is shared and should stay that way:
 
-- `builder/base.Containerfile` → `abstract-lfs-builder`, the Debian sid base with a generic toolchain.
-- `builder/package.Containerfile` → per-package builder, `apt build-dep $BUILD_DEP` + `$EXTRA_DEPS`.
-- `build.sh` (root) → the only driver: download, extract, assemble podman mounts, run.
+- `builder/Containerfile` + `builder/deps.txt` → the one builder image every package is
+  compiled in. `deps.txt` is its entire contents, one apt package per line; there is no
+  `apt build-dep` any more, and an `env.sh` says nothing about dependencies.
+- `tools/prep.sh` → the only step that touches the network: pull-or-build the builder and
+  sources images (content-hash tags from `tools/image-tags.sh`), then unpack the tarballs.
+- `build.sh` (root) → the only driver: prep, extract, assemble podman mounts, run.
 - `builder/build-package.sh` → container entrypoint: merged-`/usr` staging, sysroot flags,
   then `source /package-build.sh`.
+
+**The compile runs `--network=none`.** Prep has already fetched every tarball (verified
+against the `SHA256` in its `env.sh`) and got the builder image, so a build that reaches
+for the internet is a bug — and the container cannot. `docs/build-container.md` is the
+design note, including the phase not done yet.
+
+Adding a library to `builder/deps.txt` to make a build work is almost always the wrong
+fix: it is exactly how `test/known-missing-libs.txt` got its backlog. The bottom of
+`deps.txt` lists what is deliberately absent and why. Configure the dependency out
+instead.
 
 `packages/<pkg>/build.sh` is bind-mounted, not copied into the image, and is *sourced* with the
 unpacked source tree as the working directory. Install with `DESTDIR=/usr/local/rootfs`

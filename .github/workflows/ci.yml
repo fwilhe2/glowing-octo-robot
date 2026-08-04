@@ -6,7 +6,7 @@ on:
 # Every job below is matrixed on arch (amd64/arm64) and runs on a runner native to that
 # arch — nothing here cross-compiles, so a native runner is what makes `make defconfig`,
 # `gcc -print-multiarch` and friends pick the right target on their own (see
-# builder/base.sh, packages/kernel/build.sh, image/build-rootfs.sh). The `runner` value
+# packages/kernel/build.sh, image/build-rootfs.sh). The `runner` value
 # each matrix carries via `include` is the GitHub-hosted arm64 label as of this writing;
 # adjust it if your plan/org exposes it under a different name or you're pointing this
 # at self-hosted arm64 runners instead.
@@ -17,9 +17,19 @@ on:
 # build-amd64 and kernel-amd64. That costs a little wall-clock time but keeps the
 # workflow from having to duplicate every job definition per arch.
 
+# Prep is the only place in this workflow that is allowed to reach the internet. It
+# publishes the two images every job below consumes, both tagged by content hash
+# (tools/image-tags.sh), so a tag that already exists in the registry is pulled rather
+# than rebuilt and an unchanged dependency list costs one HEAD request. Every build job
+# after this runs its compile with --network=none. See docs/build-container.md.
 jobs:
-  base:
+  # One per architecture: the toolchain is compiled software and nothing here
+  # cross-compiles, so the tag carries the arch and each native runner pushes its own.
+  builder:
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -32,24 +42,38 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - run: |
-          echo todo
-    #     ./builder/base.sh
-    #     podman save --quiet -o ${{ runner.temp }}/myimage.tar localhost/abstract-lfs-builder
+      - name: Log in to ghcr.io
+        run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
 
-    # - name: Upload artifact
-    #   uses: actions/upload-artifact@v5
-    #   with:
-    #     name: myimage
-    #     path: ${{ runner.temp }}/myimage.tar
+      - run: ./tools/prep.sh --push builder
+
+  # Once for both architectures: the tarballs are the same bytes either way, so this is a
+  # manifest list built from a single COPY rather than 450 MB stored twice. It is also
+  # the copy of upstream that outlives upstream — see the doc.
+  sources:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to ghcr.io
+        run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
+
+      - run: ./tools/prep.sh --push sources
 
   # Everything else is compiled against this glibc rather than the Debian builder's, so
   # it has to be staged before the matrix below can start. The kernel is the exception:
   # it links no libc at all, so it runs alongside instead of queueing behind.
   glibc:
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: read
     needs:
-      - base
+      - builder
+      - sources
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +85,9 @@ jobs:
             runner: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to ghcr.io
+        run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
 
       - uses: ./.github/actions/build-package
         with:
@@ -70,8 +97,12 @@ jobs:
 
   kernel:
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: read
     needs:
-      - base
+      - builder
+      - sources
     strategy:
       fail-fast: false
       matrix:
@@ -84,6 +115,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Log in to ghcr.io
+        run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
+
       - uses: ./.github/actions/build-package
         with:
           package: kernel
@@ -92,6 +126,9 @@ jobs:
 
   build:
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: read
     needs:
       - glibc
 
@@ -130,16 +167,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # - name: Download artifact
-      #   uses: actions/download-artifact@v6
-      #   with:
-      #     name: myimage
-      #     path: ${{ runner.temp }}
-
-      # - name: Load image
-      #   run: |
-      #     podman load --input ${{ runner.temp }}/myimage.tar
-      #     podman image ls -a
+      - name: Log in to ghcr.io
+        run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
 
       - uses: ./.github/actions/build-package
         with:
