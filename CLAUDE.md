@@ -34,6 +34,7 @@ there.
 ```
 build.sh          the only build entry point — ./build.sh <package>
 packages/<pkg>/   env.sh + build.sh per package, and the tree its tarball unpacks into
+                  (or src/, for the few whose source is ours rather than upstream's)
 builder/          how a package is compiled: the one builder image, deps.txt (its
                   entire contents), and the entrypoint that sets up the sysroot
 image/            how the staging tree becomes a disk: Containerfile, build-rootfs.sh,
@@ -82,9 +83,10 @@ stops making sense.
 
 ## How a package build works
 
-A package is exactly two files, `packages/<pkg>/env.sh` (version, tarball, checksum) and
-`packages/<pkg>/build.sh` (configure/compile/install only) — plus an entry in the `build` matrix
-in `.github/workflows/ci.yml`. Everything else is shared and should stay that way:
+A package is normally exactly two files, `packages/<pkg>/env.sh` (version, tarball,
+checksum) and `packages/<pkg>/build.sh` (configure/compile/install only) — plus an entry in
+the `build` matrix in `.github/workflows/ci.yml`. Everything else is shared and should stay
+that way:
 
 - `builder/Containerfile` + `builder/deps.txt` → the one builder image every package is
   compiled in. `deps.txt` is its entire contents, one apt package per line; there is no
@@ -111,6 +113,42 @@ and `--prefix=/usr`.
 
 Everything is derived from `VERSION` in `env.sh`, and the weekly update workflow bumps
 that single line. Never hardcode a version anywhere else.
+
+### Packages whose source is in this repository
+
+Not every package has to come from a tarball. `LOCAL_SOURCE=1` in `env.sh` means the
+source is tracked in git at `packages/<pkg>/src/`, and the package has no `TARBALL`, `URL`
+or `SHA256` at all. `packages/flfsfetch/` is the worked example — a small neofetch-alike
+in one C file. Everything downstream of the source is unchanged: the same builder image,
+the same sysroot flags, the same `DESTDIR=/usr/local/rootfs`, the same entry in the `build`
+matrix, the same artifact.
+
+What the flag changes, in the four places that assume a tarball exists:
+
+| file | behaviour |
+| --- | --- |
+| `build.sh` | mounts `packages/<pkg>/src` as `/usr/local/src` instead of fetching and extracting |
+| `tools/fetch-sources.sh` | nothing to download or verify |
+| `tools/prep.sh` | nothing to vendor into the sources image |
+| `tools/image-tags.sh` | excluded from the `sources` tag, so bumping one does not invalidate a hash that describes tarballs |
+| `tools/check-updates.sh` | no upstream to compare against — `VERSION` is ours and means only what we say |
+
+**The source directory is bind-mounted read-only**, which is the one real constraint. For
+every other package `/usr/local/src` is a gitignored tree unpacked from a tarball and a
+build may scatter object files through it; here it is the working tree, and a build that
+wrote into it would turn a successful build into a dirty checkout. So the package's
+`build.sh` has to compile straight to `DESTDIR` — for one C file that is a single `gcc`
+invocation with no intermediate `.o` anywhere. Anything needing a real build directory
+should use one under `/tmp`, not the source tree.
+
+**The CI cache key has to include the source.** `.github/actions/build-package` hashes
+`env.sh` and `build.sh`, which is sufficient for an upstream package because a source
+change there means a new `VERSION` and so a new `env.sh`. A local package breaks that
+assumption: the source can change with both files untouched, and the cache would then
+serve the previous build's binary. The key hashes `$PKG/src` for exactly this reason.
+
+Nothing has to be done to get the binary into the image — `image/build-rootfs.sh` copies
+the whole staging tree and the trim removes nothing from `usr/bin`.
 
 ## The two things that break silently
 

@@ -68,6 +68,7 @@ add it to the CI matrix in `.github/workflows/ci.yml`:
   | `SHA256` | checksum of the tarball; nothing is ever used without matching it |
   | `MIRRORS` | optional extra URLs, tried in order when `URL` is unreachable |
   | `NO_SYSROOT` | set to `1` for packages that aren't compiled against our glibc |
+  | `LOCAL_SOURCE` | set to `1` when the source is in this repository rather than upstream — see below |
   | `UPSTREAM_*` | where to look for new releases, when the directory `URL` points into isn't it — see `tools/upstream.sh` |
 
   Everything is derived from `VERSION`, so bumping that one line is a complete update —
@@ -86,6 +87,19 @@ out — the bottom of `deps.txt` says what is deliberately absent and why, and
 Everything else — the builder image (`builder/Containerfile`), prep (`tools/prep.sh`),
 the fetch/extract/run dance (`build.sh`) and the merged-`/usr` staging
 (`builder/build-package.sh`) — is shared.
+
+### ...whose source is ours
+
+A package does not have to come from a tarball. `LOCAL_SOURCE=1` in `env.sh` means the
+source is tracked in this repository at `packages/<pkg>/src/`, so there is no `TARBALL`,
+`URL` or `SHA256`, nothing to download or vendor, and no upstream to check for releases.
+`packages/flfsfetch/` — a small neofetch-alike in one C file — is the worked example.
+
+Everything after the source is identical: the same builder image, the same sysroot flags,
+the same `DESTDIR`, the same CI matrix entry and artifact. The one constraint is that
+`packages/<pkg>/src` is mounted **read-only**, because it is a tracked working tree rather
+than a gitignored unpacked tarball — so `build.sh` compiles straight to `DESTDIR` instead
+of leaving object files behind.
 
 ## Checking runtime dependencies
 
