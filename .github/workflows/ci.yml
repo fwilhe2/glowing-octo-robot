@@ -187,6 +187,11 @@ jobs:
       - name: Check for unsatisfied symbol versions
         run: ./test/check-symbol-versions.sh rootfs
 
+      # Cheap, and it names the missing feature. test/container.sh proves a container
+      # actually runs, but only after four minutes of qemu and only as "crun exited 1".
+      - name: Check the kernel can run containers
+        run: ./test/kernel-caps.sh rootfs
+
       - run: mkdir -p output
 
       - name: Create disk image
