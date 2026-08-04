@@ -1,21 +1,22 @@
 # One builder image, vendored sources
 
-**Status: proposed, not implemented.** Everything below describes a build model this
-repository does not have yet. `README.md` and `CLAUDE.md` describe the one it does have —
-a builder image per package, tarballs fetched at build time. Read this as a plan.
+**Status: phases 1-3 implemented, phase 4 not.** The two artifacts, the checksums, the
+single builder image and the `--network=none` build all exist. Still open: pinning
+`debian:sid` to a snapshot, and trimming `builder/deps.txt` further now that it is a list
+somebody can actually read.
 
 The idea is to split a build into two phases with a hard line between them: **prep**,
 which is allowed to touch the network and produces two OCI artifacts, and **build**, which
 gets those artifacts and nothing else.
 
-## What is wrong with the current model
+## What was wrong with the model this replaced
 
-Three separate problems, which happen to have one shared answer.
+Three separate problems, which happened to have one shared answer.
 
-**The same apt work happens 46 times.** There are 23 packages and two architectures, so a
-CI run is 46 build jobs. Each one runs `builder/base.sh`, which builds `debian:sid` plus a
-~40-package toolchain layer, and then `builder/package.Containerfile`, which runs
-`apt-get update` and `apt build-dep`. Nothing is shared between jobs, so that is 46 full
+**The same apt work happened 46 times.** There are 23 packages and two architectures, so a
+CI run is 46 build jobs. Each one ran `builder/base.sh`, which built `debian:sid` plus a
+~40-package toolchain layer, and then `builder/package.Containerfile`, which ran
+`apt-get update` and `apt build-dep`. Nothing was shared between jobs, so that was 46 full
 toolchain installs per run. For most packages it dwarfs the compile. The `base` job in
 `ci.yml` is a stub (`run: echo todo`) with `podman save` and `upload-artifact` commented
 out underneath — an earlier attempt at this problem that stopped at passing the image

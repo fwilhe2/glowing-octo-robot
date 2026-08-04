@@ -6,8 +6,8 @@ my experimental linux from scratch (lfs) build, targeting qemu
 ```
 build.sh          the only build entry point — ./build.sh <package>
 packages/<pkg>/   env.sh + build.sh per package, and the tree its tarball unpacks into
-builder/          how a package is compiled: the base and per-package builder images,
-                  and the container entrypoint that sets up the sysroot
+builder/          how a package is compiled: the one builder image, deps.txt (its
+                  entire contents), and the entrypoint that sets up the sysroot
 image/            how the staging tree becomes a disk image: Containerfile,
                   build-rootfs.sh, and files/ — the /etc the image ships
 test/             everything CI runs to verify a build
@@ -65,8 +65,8 @@ add it to the CI matrix in `.github/workflows/ci.yml`:
   | `PACKAGE` | directory the tarball unpacks into |
   | `TARBALL` | tarball file name |
   | `URL` | where to download it (may use `$PKG`, the package directory name) |
-  | `BUILD_DEP` | Debian source package to take build-dependencies from (default: `$PKG`; empty to skip `build-dep` entirely) |
-  | `EXTRA_DEPS` | extra apt packages `build-dep` doesn't cover |
+  | `SHA256` | checksum of the tarball; nothing is ever used without matching it |
+  | `MIRRORS` | optional extra URLs, tried in order when `URL` is unreachable |
   | `NO_SYSROOT` | set to `1` for packages that aren't compiled against our glibc |
   | `UPSTREAM_*` | where to look for new releases, when the directory `URL` points into isn't it — see `tools/upstream.sh` |
 
@@ -77,9 +77,15 @@ add it to the CI matrix in `.github/workflows/ci.yml`:
   container by `builder/build-package.sh` with the unpacked source tree as the working
   directory; install with `DESTDIR=/usr/local/rootfs`.
 
-Everything else — the base image (`builder/base.Containerfile`), the per-package builder image
-(`builder/package.Containerfile`), the download/unpack/run dance (`build.sh`) and the
-merged-`/usr` staging (`builder/build-package.sh`) — is shared.
+A package says nothing about its build dependencies. There is one builder image for all of
+them and `builder/deps.txt` is the whole list of what it contains, one apt package per
+line. If a build wants something that isn't in there, prefer configuring the dependency
+out — the bottom of `deps.txt` says what is deliberately absent and why, and
+`test/known-missing-libs.txt` is what the opposite habit already cost.
+
+Everything else — the builder image (`builder/Containerfile`), prep (`tools/prep.sh`),
+the fetch/extract/run dance (`build.sh`) and the merged-`/usr` staging
+(`builder/build-package.sh`) — is shared.
 
 ## Checking runtime dependencies
 
@@ -275,7 +281,7 @@ fragment carries all four symbols:
 
 `DEBUG_INFO_BTF` is the one with a real price: it compiles the kernel with debug info
 and runs pahole over `vmlinux`, so the kernel job gets noticeably slower. `dwarves` is
-already in the kernel package's `EXTRA_DEPS`.
+already in `builder/deps.txt`.
 
 Nothing pulls images yet: `crun` runs an OCI *bundle*, and the tooling that turns a
 registry reference into one (skopeo, umoci, podman) is all Go. `crun spec` writes a

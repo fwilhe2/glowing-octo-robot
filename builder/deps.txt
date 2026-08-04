@@ -1,0 +1,130 @@
+# Everything the builder image installs, one apt package per line.
+#
+# This replaces `apt build-dep <debian-source-package>` per package. That was convenient
+# and wrong in three ways: nobody had ever seen the resulting list, it changed whenever
+# sid changed, and it installed every optional dependency Debian's own build wants — so
+# our configure scripts autodetected libraries we do not ship and the missing .so only
+# turned up when the binary was exec'd in qemu. `test/known-missing-libs.txt` is the
+# backlog that produced.
+#
+# So: this file is the whole contents of the builder image, and adding to it is a
+# reviewable diff. The bar for a new line is that some package's build actually needs it,
+# not that some Debian source package happens to list it.
+#
+# Lines are `#`-commented and blank-line separated; builder/Containerfile strips both.
+
+# ---------------------------------------------------------------------------------
+# Toolchain. build-essential pulls gcc, g++, make, libc6-dev and dpkg-dev, and those
+# pull the architecture-suffixed binutils/gcc packages on their own — which is why
+# nothing here has to know whether it is on x86-64-linux-gnu or aarch64-linux-gnu.
+build-essential
+g++
+binutils
+file
+patch
+perl
+gawk
+m4
+rsync
+cpio
+xz-utils
+bzip2
+zstd
+zip
+
+# Autotools, and the two other build systems in use: meson (dbus, kmod, pam, systemd)
+# and cmake (json-c).
+autoconf
+automake
+autopoint
+autotools-dev
+libtool
+gettext
+gettext-base
+pkgconf
+meson
+ninja-build
+cmake
+
+# Code generators and documentation tools the sources invoke during a build.
+bison
+flex
+libfl-dev
+gperf
+texinfo
+help2man
+groff-base
+rpcsvc-proto
+scdoc
+
+# systemd's meson templates are jinja2; nothing else needs python.
+python3
+python3-jinja2
+
+# systemd compiles its BPF programs with clang and embeds them as skeletons
+# (-Dbpf-framework). Without these the sandboxing options are silently disabled — the
+# same failure mode as not shipping libbpf. See CLAUDE.md.
+clang
+bpftool
+linux-bpf-dev
+
+# The kernel package: BTF needs pahole out of dwarves, and libssl is for the signing
+# tooling kbuild builds regardless of whether we sign anything.
+bc
+dwarves
+libssl-dev
+kmod
+
+# ---------------------------------------------------------------------------------
+# Development headers, only for libraries this repository also builds and ships. The
+# sysroot is glibc-only in CI, so everything else is compiled against Debian's headers
+# and resolved at runtime against ours by SONAME — which works exactly as long as we
+# ship the library. Every line here names a package under packages/.
+libacl1-dev
+libattr1-dev
+libblkid-dev
+libcap-dev
+libcrypt-dev
+libdbus-1-dev
+libelf-dev
+libexpat-dev
+libfdisk-dev
+libjson-c-dev
+libkmod-dev
+liblzma-dev
+libmount-dev
+libncurses-dev
+libpam0g-dev
+libsystemd-dev
+libzstd-dev
+uuid-dev
+zlib1g-dev
+
+# ---------------------------------------------------------------------------------
+# Deliberately absent, and the reason is always the same: our configure scripts would
+# find them, link against them, and we do not ship them. Do not add one of these to fix
+# a build — configure the dependency out instead, the way systemd's build.sh turns off
+# every one of them by name.
+#
+#   libselinux-dev libselinux1-dev  no policy in the image, nothing to enforce
+#   libseccomp-dev                  crun --disable-seccomp, systemd -Dseccomp=disabled
+#   libaudit-dev                    no auditd, and the kernel is built without AUDIT
+#   libapparmor-dev libcap-ng-dev   no userspace behind either
+#   libcryptsetup-dev               systemd -Dlibcryptsetup=disabled
+#   libgmp3-dev                     coreutils factor/expr bignum only
+#   libreadline-dev                 util-linux fdisk line editing only
+#   libfuse3-dev                    e2fsprogs fuse2fs only
+#   libsqlite3-dev                  util-linux --disable-liblastlog2
+#   libdb-dev                       pam_userdb, which image/files/etc/pam.d never calls
+#   libgd-dev                       glibc memusagestat, a profiling tool
+#   liblz4-dev                      zstd's CLI --format=lz4; the library does not need it
+#   libbz2-dev libcurl4-*-dev       systemd journal remote transports, all disabled
+#   libmicrohttpd-dev libgcrypt20-dev libgnutls28-dev
+#   libidn2-dev libiptc-dev libpcre2-dev libglib2.0-dev libxen-dev
+#   libtss2-dev libfido2-dev libp11-kit-dev libqrencode-dev libpwquality-dev
+#   libarchive-dev libpolkit-gobject-1-dev libxkbcommon-dev
+#
+# Also absent, as pure Debian packaging or documentation machinery that no upstream
+# build here invokes: debhelper and the whole dh-* family, po-debconf, po4a, quilt,
+# dwz, debugedit, docbook*, xsltproc, xmlto, asciidoctor, doxygen, graphviz, texlive
+# (bash's build-dep pulls in a gigabyte of it), ghostscript and man2html-base.

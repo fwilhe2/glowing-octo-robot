@@ -68,7 +68,7 @@ CONFIG_SECURITYFS=y
 # the line below it was a no-op on both arches. Settling that choice here is what makes
 # it real, and what makes this the expensive option it was always described as: the
 # kernel is compiled with full debug info and pahole runs over vmlinux (dwarves is in
-# this package's EXTRA_DEPS for exactly that). Only the .BTF section is installed; the
+# builder/deps.txt for exactly that). Only the .BTF section is installed; the
 # DWARF stays behind in the build tree.
 CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT=y
 # CONFIG_DEBUG_INFO_REDUCED is not set

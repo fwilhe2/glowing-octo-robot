@@ -5,15 +5,18 @@
 #
 # Everything package-specific lives in the package's own directory under packages/:
 #
-#   packages/<pkg>/env.sh     version, tarball URL, and optionally BUILD_DEP (the Debian
-#                             source package to take build-dependencies from, defaults to
-#                             the package directory name), EXTRA_DEPS (extra apt packages
-#                             build-dep doesn't cover) and NO_SYSROOT.
+#   packages/<pkg>/env.sh     version, tarball URL, its SHA256, and optionally NO_SYSROOT.
 #   packages/<pkg>/build.sh   the configure/compile/install commands, sourced inside the
 #                             container by builder/build-package.sh with the unpacked
 #                             source tree as the working directory.
 #
-# The tarball is downloaded to downloads/ and unpacked into the package's own directory.
+# A package no longer says anything about its build dependencies: there is one builder
+# image for all of them, and builder/deps.txt is the whole list of what it contains. See
+# docs/build-container.md.
+#
+# The tarball is fetched into downloads/ by tools/fetch-sources.sh, verified against that
+# SHA256, and unpacked into the package's own directory. The compile then runs with
+# --network=none: once prep is done, nothing about a build touches the network.
 #
 # Packages compile against our own glibc, not the builder image's: a tree that already
 # has glibc staged in it is bind-mounted read-only and passed to gcc as --sysroot (see
@@ -45,10 +48,6 @@ fi
 # env.sh may refer to $PKG when composing its download URL.
 source "$PKG_DIR/env.sh"
 
-# Unset means "same name as the package directory"; explicitly empty means "no Debian
-# source package to take build-dependencies from", so keep the two apart.
-BUILD_DEP="${BUILD_DEP-$PKG}"
-EXTRA_DEPS="${EXTRA_DEPS:-}"
 NO_SYSROOT="${NO_SYSROOT:-}"
 SYSROOT_DIR="${SYSROOT_DIR:-rootfs}"
 
@@ -70,12 +69,12 @@ if [ -z "$NO_SYSROOT" ]; then
                    --env SYSROOT=/usr/local/sysroot)
 fi
 
-./builder/base.sh
+mkdir -p rootfs output
 
-podman build -t "localhost/$PKG-lfs-builder" \
-    --build-arg "BUILD_DEP=$BUILD_DEP" \
-    --build-arg "EXTRA_DEPS=$EXTRA_DEPS" \
-    -f builder/package.Containerfile .
+# Pull or build the one image everything compiles in, and fetch the sources — the only
+# two steps here that need the network.
+./tools/prep.sh >/dev/null
+BUILDER=$(./tools/image-tags.sh builder)
 
 # The builder also has to *run* what it compiles: help2man asks a freshly built ptx for
 # its --help, ncurses runs its own tic. Those binaries are linked against our glibc, and
@@ -97,21 +96,15 @@ if [ -z "$NO_SYSROOT" ]; then
         if [ "$(basename "$path")" = "libc.so.6" ] && [ -d "$sysroot_abs/usr/lib/gconv" ]; then
             sysroot_mount+=(--volume "$sysroot_abs/usr/lib/gconv:$(dirname "$path")/gconv:ro")
         fi
-    done < <(podman run --rm "localhost/$PKG-lfs-builder" \
+    done < <(podman run --rm "$BUILDER" \
         sh -c 'dpkg -L libc6 | while read -r p; do [ -f "$p" ] && printf "%s\n" "$p"; done')
 fi
 
 # Tarballs are shared across packages' rebuilds and never belong to any one of them, so
 # they live in one gitignored directory rather than next to whichever package downloaded
-# them first.
-mkdir -p downloads
-
-if [ ! -f "downloads/$TARBALL" ]; then
-    echo "Downloading ${TARBALL}..."
-    wget -q -O "downloads/$TARBALL" "$URL"
-else
-    echo "${TARBALL} already exists, skipping download."
-fi
+# them first. prep.sh above already fetched every package's; this re-checks just ours, so
+# a tarball deleted or corrupted since then is caught here rather than half-extracted.
+./tools/fetch-sources.sh "$PKG"
 
 if [ ! -d "$PKG_DIR/$PACKAGE" ]; then
     echo "Extracting ${TARBALL}..."
@@ -120,9 +113,13 @@ else
     echo "Directory $PKG_DIR/$PACKAGE already exists, skipping extraction."
 fi
 
+# --network=none is the point of splitting prep out: the sources are on disk and the
+# toolchain is in the image, so a compile that reaches for the internet is a bug, and
+# this is what turns that from a claim into something it cannot do.
 podman run --rm \
+    --network=none \
     --volume "$PWD/$PKG_DIR/$PACKAGE":/usr/local/src \
     --volume "$PWD/$PKG_DIR/build.sh":/package-build.sh:ro \
     --volume "$PWD/rootfs":/usr/local/rootfs \
     "${sysroot_mount[@]}" \
-    "localhost/$PKG-lfs-builder" /build.sh
+    "$BUILDER" /build.sh
