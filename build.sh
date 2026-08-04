@@ -72,8 +72,10 @@ fi
 mkdir -p rootfs output
 
 # Pull or build the one image everything compiles in, and fetch the sources — the only
-# two steps here that need the network.
-./tools/prep.sh >/dev/null
+# two steps here that need the network. Its output is two lines and it is the only place
+# a build can spend minutes on something other than compiling, so let it through: a run
+# that silently rebuilt an image instead of pulling it should say so.
+./tools/prep.sh
 BUILDER=$(./tools/image-tags.sh builder)
 
 # The builder also has to *run* what it compiles: help2man asks a freshly built ptx for
