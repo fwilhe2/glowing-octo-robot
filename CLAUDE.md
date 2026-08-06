@@ -150,6 +150,20 @@ serve the previous build's binary. The key hashes `$PKG/src` for exactly this re
 Nothing has to be done to get the binary into the image — `image/build-rootfs.sh` copies
 the whole staging tree and the trim removes nothing from `usr/bin`.
 
+### Packages that compile nothing
+
+`packages/iana-etc/` is the worked example: upstream generates `/etc/services` and
+`/etc/protocols` from IANA's registries, so the tarball ships both files ready to install
+and `build.sh` is two `install` commands with no `configure` or `make` anywhere. Nothing
+about the machinery needs telling — the same builder image, the same
+`DESTDIR=/usr/local/rootfs`, the same matrix entry.
+
+The one thing it does differently is install outside `--prefix=/usr`. That is not a
+liberty: glibc hardcodes these paths (`_PATH_SERVICES` is `"/etc/services"`), which is why
+glibc's own install puts `/etc/rpc` there too. It is safe because `image/build-rootfs.sh`
+copies the staging tree in *before* it overlays `image/files`, so a name appearing in both
+would be won by `image/files` — and neither of these does.
+
 ## The two things that break silently
 
 **1. Compiling against the wrong glibc.** `builder/build-package.sh` exports
@@ -231,7 +245,9 @@ symlink into resolved's `/run` stub. The qemu scripts pass `-nic user,model=virt
 the NIC shows up as `ens3`, so match on the naming scheme rather than a fixed name.
 `test/network.sh` is the check — it boots systemd for real and logs in at the serial
 getty (`root`/`root`, from `image/files/etc/shadow`). Its in-guest commands are bash builtins,
-`networkctl` and `getent` only: there is no `grep`, `sed` or `awk` in the image.
+`networkctl` and `getent` only. That was forced when the image had no `grep`, `sed` or
+`awk`; those are packages now, but the tests still stick to builtins so a failure in the
+handshake means what it says.
 
 The OCI runtime is `crun` (constraint 3), plus `json-c` for `config.json`. crun is the
 only runtime written in C; runc (Go) and youki (Rust) would each mean a second toolchain

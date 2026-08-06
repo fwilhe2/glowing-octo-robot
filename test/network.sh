@@ -43,8 +43,10 @@ LOGIN_PASSWORD="${LOGIN_PASSWORD:-root}"
 # a marker must not appear in the command that produces it or we would match our own
 # input. The guest's shell strips the quotes; the patterns below are the joined string.
 #
-# The checks use nothing but bash builtins, networkctl and getent: the image ships no
-# grep, sed or awk, and bash's [[ ]] and /dev/tcp cover what they would have been for.
+# The checks use nothing but bash builtins, networkctl and getent. That started as a
+# constraint — the image had no grep, sed or awk — and is now a choice: bash's [[ ]]
+# and /dev/tcp cover what they would have been for, and a console handshake this
+# delicate is better off not depending on a package it is not testing.
 READY="SHELL-IS-UP"
 MARKER="NET-SMOKE-OK"
 QUIET="stty -echo; PS1="

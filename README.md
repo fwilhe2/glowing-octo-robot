@@ -242,8 +242,9 @@ is the check, and it runs in the `boot` CI job. It boots the image with systemd 
 answers), and a TCP connection to it is accepted (routing and the VMM's NAT work). The
 last two need the machine running the test to have internet access.
 
-The in-guest checks use bash builtins, `networkctl` and `getent` only: the image ships
-no `grep`, `sed` or `awk` yet.
+The in-guest checks use bash builtins, `networkctl` and `getent` only. That began as a
+constraint and is now a choice: `grep`, `sed` and `awk` are in the image, but a serial
+console handshake is better off not depending on a package it is not testing.
 
 ## Containers
 
@@ -314,8 +315,9 @@ friends actually took), `crun spec` plus a bind mount produces a bundle, and `cr
 starts a container whose `$$` is 1 and whose `$HOSTNAME` is the one the spec set — pid
 and uts namespaces that are demonstrably not the host's.
 
-The bundle is assembled with bash parameter expansion, because the image still ships no
-`grep`, `sed`, `awk` or `jq`. Two traps are worth knowing if you edit those checks: the
+The bundle is assembled with bash parameter expansion. The image ships no `jq`, and a
+JSON edit is not a job for `sed` either. Two traps are worth knowing if you edit those
+checks: the
 command spliced into `config.json` can contain no quotes of any kind, and `&` in the
 replacement half of `${var/pat/repl}` is a backreference to the whole match, so an `&&`
 chain silently corrupts the JSON.

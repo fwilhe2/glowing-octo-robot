@@ -44,8 +44,9 @@ LOGIN_PASSWORD="${LOGIN_PASSWORD:-root}"
 # that produces it. The guest's shell strips the quotes; the patterns below are the
 # joined string.
 #
-# In-guest commands are bash builtins and systemctl only — the image ships no grep, sed
-# or awk, so [[ ]] and command substitution stand in for them.
+# In-guest commands are bash builtins and systemctl only. grep, sed and awk are in the
+# image now, but [[ ]] and command substitution already cover this, and keeping the
+# handshake free of other packages means a failure here means what it says.
 READY="SHELL-IS-UP"
 STATE="SYSTEMD-STATE:"
 TAINT="SYSTEMD-TAINT:"

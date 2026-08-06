@@ -1,0 +1,5 @@
+VERSION="4.10"
+PACKAGE="sed-${VERSION}"
+TARBALL="$PACKAGE.tar.gz"
+URL="https://ftp.fau.de/gnu/sed/${TARBALL}"
+SHA256="4d179ffaf92ec4dcec541f7c032be1c3b9a1856f4970adb95a505221702f5277"

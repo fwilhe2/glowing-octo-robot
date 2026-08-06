@@ -146,9 +146,15 @@ jobs:
           - e2fsprogs
           - elfutils
           - expat
+          - findutils
           # Not an upstream project: packages/flfsfetch/src is this repository's own C,
           # built by the same machinery as everything else. See CLAUDE.md.
           - flfsfetch
+          - gawk
+          - grep
+          # Data, not code: IANA's registries as the /etc/services and /etc/protocols
+          # that nsswitch.conf has been naming all along. Its build.sh compiles nothing.
+          - iana-etc
           - json-c
           - kmod
           - libbpf
@@ -156,6 +162,7 @@ jobs:
           - libxcrypt
           - ncurses
           - pam
+          - sed
           - systemd
           - util-linux
           - xz
