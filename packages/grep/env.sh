@@ -1,0 +1,5 @@
+VERSION="3.12"
+PACKAGE="grep-${VERSION}"
+TARBALL="$PACKAGE.tar.gz"
+URL="https://ftp.fau.de/gnu/grep/${TARBALL}"
+SHA256="badda546dfc4b9d97e992e2c35f3b5c7f20522ffcbe2f01ba1e9cdcbe7644cdc"

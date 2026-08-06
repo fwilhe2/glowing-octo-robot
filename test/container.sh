@@ -22,8 +22,9 @@
 #      namespaces are demonstrably not the host's
 #
 # The bundle is built by hand. `crun spec` writes a complete, valid config.json, and
-# the only edits needed are patched in with bash parameter expansion — the image ships
-# no grep, sed, awk or jq, and none of them are needed for this.
+# the only edits needed are patched in with bash parameter expansion. The image has no
+# jq, and none of it is needed for this — grep and sed are there now, but a JSON edit
+# is not a job for either.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
