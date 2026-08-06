@@ -30,6 +30,13 @@ mkdir -p usr/bin bin sbin boot
 mkdir -p {dev,etc,home,lib}
 mkdir -p {mnt,opt,proc,srv,sys}
 mkdir -p var/{lib,lock,log,spool}
+# journald's Storage=auto keeps the journal in /run — volatile, gone at reboot — unless
+# /var/log/journal exists, and creating it is the entire switch. Nothing else does:
+# systemd's tmpfiles snippet for it is `z`, which adjusts a directory that is already
+# there rather than creating one. The mode and group are left alone here because the
+# systemd-journal group does not exist yet in this container; systemd-tmpfiles fixes
+# both at boot, after systemd-sysusers has created it.
+mkdir -p var/log/journal
 install -d -m 0750 root
 install -d -m 1777 tmp
 mkdir -p usr/{lib,share}
@@ -110,6 +117,14 @@ rm -rf usr/share/man usr/share/doc usr/share/info usr/share/xml
 # loaded, and share/i18n is the *source* form that localedef would compile if it were.
 rm -rf usr/share/locale usr/share/i18n usr/share/gettext
 
+# systemd's message catalogue, same reasoning one level down. It ships seventeen
+# .catalog files and sixteen of them are translations, selected by locale — which in a
+# C-locale image can never be the selected one. Dropping them leaves systemd.catalog,
+# the English source, which `journalctl -x` can and does reach. Matching on the
+# language infix rather than a list of languages, so a new translation upstream is
+# dropped too instead of quietly reappearing.
+find usr/lib/systemd/catalog -name 'systemd.*.catalog' -delete 2>/dev/null || true
+
 # Shell completions for shells that are not in the image (bash's own live in
 # share/bash-completion, which is only read by the bash-completion package we do not
 # ship), and polkit rules with no polkitd to enforce them.
@@ -143,6 +158,28 @@ cat > etc/ld.so.conf <<EOF
 /usr/lib/$multiarch
 EOF
 ldconfig -r "$IMAGE" || true
+
+# The other index the image needs generated rather than installed. The .catalog files
+# above are the source form; what journalctl actually opens is a compiled database at
+# /var/lib/systemd/catalog/database, and nothing was building it — so any `journalctl
+# -x`, and anything else resolving a MESSAGE_ID, answered "Failed to find catalog
+# entry" for every message in the image.
+#
+# It has to be *our* journalctl: this container has no systemd of its own, and a
+# Debian one would be writing a database for a different version to read. That binary
+# is compiled against our glibc, and its RUNPATH is an absolute /usr/lib/systemd, which
+# resolves inside this container to the container's copy — so invoke our loader by hand
+# and hand it the image's library directories. --library-path is searched ahead of
+# DT_RUNPATH, which is exactly what makes the override take. Same-arch only, which this
+# script already assumes.
+#
+# Not tolerant of failure the way ldconfig above is: an empty catalog is the state this
+# is fixing, and it should not be able to come back silently.
+catalog_ld="$IMAGE/lib64/$ld_so"
+[ -x "$catalog_ld" ] || catalog_ld="$IMAGE/usr/lib/$ld_so"
+"$catalog_ld" --library-path "$IMAGE/usr/lib:$IMAGE/usr/lib/systemd" \
+    "$IMAGE/usr/bin/journalctl" --root="$IMAGE" --update-catalog
+test -s "$IMAGE/var/lib/systemd/catalog/database"
 
 chown -R root:root etc
 

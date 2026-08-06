@@ -199,6 +199,26 @@ happens at build time, in `packages/systemd/build.sh` (some fifty components off
 Because `rootfs/` is cumulative, a component that stops being built stays staged locally
 until the tree is deleted; only CI starts clean.
 
+Two things in the image are *generated* rather than installed, and both are silent when
+they are missing. `ldconfig` is the known one. The other is systemd's message catalogue:
+`usr/lib/systemd/catalog/*.catalog` is only the source form, and what `journalctl -x`
+opens is a compiled `/var/lib/systemd/catalog/database` that nothing was building — every
+`MESSAGE_ID` lookup answered *Failed to find catalog entry*. `build-rootfs.sh` runs
+`journalctl --root="$IMAGE" --update-catalog`, and it has to be **our** journalctl: the
+image container has no systemd, and a Debian one would write a database for a different
+version to read. Ours is compiled against our glibc and its RUNPATH is an absolute
+`/usr/lib/systemd` that resolves to the *container's* copy, so the invocation calls our
+loader by hand with `--library-path "$IMAGE/usr/lib:$IMAGE/usr/lib/systemd"` —
+`--library-path` is searched ahead of `DT_RUNPATH`, which is what makes the override
+take. The sixteen translated catalogs are trimmed for the same reason as `share/locale`:
+a C-locale image can never select one.
+
+Persistent logging is one `mkdir`: journald's `Storage=auto` keeps the journal in `/run`
+unless `/var/log/journal` exists, and systemd's tmpfiles snippet for it is `z`, which
+adjusts a directory that is already there rather than creating one. Mode and group are
+left to tmpfiles at boot — the `systemd-journal` group does not exist yet while the image
+is being assembled, and `systemd-sysusers` is ordered before `systemd-tmpfiles-setup`.
+
 The kernel is a normal package (`packages/kernel/`, `defconfig` + `kvm_guest.config` +
 `container.config` + `vm.config`) staged at `rootfs/boot/bzImage`, so a CI run is self-contained. `test/boot.sh` runs `/bin/bash` as
 PID 1 by default, not systemd: it isolates "the kernel booted and the loader resolved a
