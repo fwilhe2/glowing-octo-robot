@@ -1,0 +1,11 @@
+# util-linux builds runuser(1) alongside su(1), so it is in the image whether or not
+# anything calls it, and it needs its own PAM service for the same reason su does.
+#
+# runuser is root-only by design — it is su without the authentication, for a caller
+# that is already root. So the auth stack is pam_rootok or nothing: uid 0 passes,
+# everyone else is denied rather than prompted, because there is no password this
+# program would ever check.
+auth       sufficient pam_rootok.so
+auth       required   pam_deny.so
+account    required   pam_unix.so
+session    required   pam_unix.so

@@ -1,2 +1,14 @@
 NAME="Florian's Linux From Scratch"
 ID=flfs
+# PRETTY_NAME is what almost everything actually displays, and its absence was visible
+# in two places at once: agetty printed the bare fallback "Linux" above the login
+# prompt, and flfsfetch fell back to NAME. os-release(5) says consumers should use
+# PRETTY_NAME and only fall back to NAME, so shipping just NAME meant relying on the
+# fallback everywhere.
+PRETTY_NAME="Florian's Linux From Scratch"
+HOME_URL="https://github.com/fwilhe2/glowing-octo-robot"
+ANSI_COLOR="0;36"
+# Deliberately no VERSION, VERSION_ID or BUILD_ID: there is no release or build
+# numbering to put in them, and os-release(5) treats all three as optional. An invented
+# value would be worse than an absent one — consumers can tell "not versioned" from
+# "version 1", but not from a number that means nothing.

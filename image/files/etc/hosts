@@ -1,0 +1,18 @@
+# nsswitch.conf names `files` for hosts, and until now the file it names did not exist.
+# systemd-resolved and nss-myhostname both synthesize localhost and the local hostname,
+# so this is not the only answer for either — it is the answer that does not need a
+# daemon, which matters for anything resolving before systemd-resolved is up or on a
+# boot where it is not running at all.
+127.0.0.1       localhost
+::1             localhost ip6-localhost ip6-loopback
+
+# 127.0.1.1, not 127.0.0.1: the hostname in /etc/hostname belongs to a machine whose
+# real address comes from DHCP and changes, so it gets its own loopback address rather
+# than sharing localhost's. Keep this in step with /etc/hostname.
+127.0.1.1       flfs
+
+# The IPv6 multicast entries every distribution ships. Nothing in the image sends to
+# them, but they are what makes `getent hosts ip6-allnodes` answer the same here as
+# anywhere else.
+ff02::1         ip6-allnodes
+ff02::2         ip6-allrouters

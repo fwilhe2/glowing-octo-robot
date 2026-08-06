@@ -1,0 +1,22 @@
+# systemd's per-user manager. user@.service carries `PAMName=systemd-user`, so without
+# this file the service falls through to pam.d/other — which is pam_deny — and
+# user@0.service fails the moment anyone logs in, taking `systemctl is-system-running`
+# to `degraded` with it.
+#
+# There is no auth stack, and that is correct rather than an omission: logind has
+# already authenticated the user by the time it starts a manager for them, and this
+# service never sees a password. PAM only gets asked whether the account is still valid
+# and to set the session up.
+account    required   pam_unix.so
+session    required   pam_unix.so
+
+# pam_systemd.so must NOT be listed here. It is the module that asks logind to register
+# a session, and logind is what started this service — including it makes the user
+# manager wait on the daemon waiting on it. systemd's own packaging omits it for the
+# same reason.
+#
+# pam_loginuid.so is the other module the distributions put in this stack, and it is
+# left out on purpose: it writes /proc/self/loginuid, which only exists with
+# CONFIG_AUDIT, and packages/kernel/build.sh turns audit off (there is no audit
+# userspace here). The module handles that by returning PAM_IGNORE, so it would work —
+# it would just never do anything.

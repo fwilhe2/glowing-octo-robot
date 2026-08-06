@@ -54,6 +54,13 @@ mkdir -p var/{lib,lock,log,spool}
 # both at boot, after systemd-sysusers has created it.
 mkdir -p var/log/journal
 install -d -m 0750 root
+# The unprivileged account's home. Nothing in the image would create it on first login —
+# pam_mkhomedir is not in image/files/etc/pam.d and there is no shadow-utils here — so a
+# missing directory means bash starts in a working directory that does not exist. The
+# ownership is numeric because the names do not exist in *this* container, only in the
+# /etc being shipped; 1000:1000 is what image/files/etc/passwd says.
+install -d -m 0700 home/user
+chown 1000:1000 home/user
 install -d -m 1777 tmp
 mkdir -p usr/{lib,share}
 
@@ -79,7 +86,40 @@ ln -sfn ../run var/run
 
 cp -r /files/* .
 
+# os-release(5) says the file belongs in /usr/lib, with /etc/os-release as a symlink to
+# it: /usr/lib is the vendor's copy that ships with the OS, and /etc is where an
+# administrator would override it. Keeping the real file under /usr also means it
+# survives on a system booted with an empty /etc, which is the direction stateless
+# images go. image/files/etc/os-release stays the source of truth in the repository —
+# this just puts it where the spec says at assembly time. Both flavours: a container
+# image is asked what it is at least as often as a disk is.
+install -D -m 644 etc/os-release usr/lib/os-release
+ln -sfn ../usr/lib/os-release etc/os-release
+
 if [ "$flavour" = ext4 ]; then
+    # systemd ships two shell drop-ins and systemd-tmpfiles symlinks both into
+    # /etc/profile.d at every boot, so /etc/profile now sources them. One stays masked.
+    #
+    # It used to be masked out of necessity: 80-systemd-osc-context.sh shells out to
+    # `sed` to escape $PWD on every single prompt, and there was no sed in the image, so
+    # the console would have printed "command not found" between every command. #66
+    # packaged sed, so that reason is gone and this is now a choice — the remaining one
+    # being that the drop-in wraps every prompt in OSC 3008 context sequences, and the
+    # serial console they land on is not a terminal here, it is the input the boot tests
+    # parse. Turning it on changes what test/systemd.sh, network.sh and container.sh
+    # read, which is a change to be judged on its own rather than to arrive inside
+    # something else. (The console-handshake note further down in CLAUDE.md is what that
+    # fragility has already cost once.)
+    #
+    # Removing the symlink is not enough, because tmpfiles would put it back; masking the
+    # tmpfiles snippet with a symlink to /dev/null is the documented way to switch one
+    # off, and the snippet's own header says so. Both halves are needed: the mask stops it
+    # coming back, the rm takes out the copy already staged. The oci flavour needs neither
+    # — the subtractions below delete etc/tmpfiles.d and systemd's drop-ins outright.
+    mkdir -p etc/tmpfiles.d
+    ln -sfn /dev/null etc/tmpfiles.d/20-systemd-osc-context.conf
+    rm -f etc/profile.d/80-systemd-osc-context.sh
+
     mkdir -p etc/systemd/system
     ln -sf /usr/lib/systemd/system/multi-user.target etc/systemd/system/default.target
 
@@ -282,7 +322,14 @@ fi
 
 chown -R root:root etc
 
-chmod 644 etc/passwd etc/group etc/os-release etc/nsswitch.conf etc/ld.so.conf
+# os-release is not in this list: it is a symlink now, and the install -m 644 above
+# already set the mode on the real file under /usr/lib.
+chmod 644 etc/passwd etc/group etc/hosts etc/profile etc/nsswitch.conf etc/ld.so.conf
+
+# Password hashes must not be world-readable, and that is not a property of the disk
+# image: the container flavour ships the same /etc/shadow, and there are two hashes in it
+# now. Hence out here rather than in the ext4 block where it used to sit.
+chmod 600 etc/shadow
 
 if [ "$flavour" = ext4 ]; then
     chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
@@ -290,8 +337,6 @@ if [ "$flavour" = ext4 ]; then
     chmod 644 etc/fstab etc/hostname etc/pam.d/* \
               etc/systemd/network/*.network \
               etc/systemd/system/dbus.service.d/*.conf
-    # Password hashes must not be world-readable.
-    chmod 600 etc/shadow
 fi
 
 du -sh "$IMAGE"

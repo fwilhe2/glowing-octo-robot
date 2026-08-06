@@ -190,7 +190,9 @@ the accepted backlog so new regressions stand out. Run it before booting.
 
 `image/Containerfile` + `image/build-rootfs.sh` turn `rootfs/` into `output/rootfs.ext4`:
 directory skeleton, `image/files/etc` copied in as the shipped `/etc` (hostname `flfs`,
-credentials from `image/files/etc/shadow`), `/sbin/init` → systemd, the trim (below),
+credentials from `image/files/etc/shadow` — `root`/`root` and `user`/`user`, the latter
+uid 1000 with its home created by `build-rootfs.sh` because nothing in the image would
+make one on first login), `/sbin/init` → systemd, the trim (below),
 `ld.so.conf` + `ldconfig`, permission fixups, `mkfs.ext4 -d`. Changes to the shipped `/etc` go
 in `image/files/`, not into
 `rootfs/` — and `image/files` is `COPY`ed into the builder image rather than bind-mounted, so
@@ -288,6 +290,35 @@ crash-loops without one — and it enables itself through `.target.wants` symlin
 unit directory, so nothing in `image/files` enables it. Sessions on top of that need
 `pam_systemd.so`, which is why systemd is built `-Dpam=enabled` and why
 `image/files/etc/pam.d/login` references it.
+
+**`image/files/etc/pam.d/other` is `pam_deny`, so a PAM service with no file of its own is
+denied rather than defaulted.** That is the right policy and an easy trap: the service
+that needs one is not always obvious from the package that installs it. `user@.service`
+carries `PAMName=systemd-user`, so a missing `pam.d/systemd-user` fails every login's user
+manager and leaves the system `degraded`; util-linux's `su` and `runuser` each want their
+own. `other` runs `pam_warn` before `pam_deny` so the next one says which service it was in
+the journal instead of failing mutely.
+
+`/etc/profile` exists to source `/etc/profile.d`, not for its own sake — systemd installs
+shell drop-ins there and `systemd-tmpfiles` recreates the symlinks at every boot from
+`/usr/lib/tmpfiles.d/20-systemd-*.conf`, so deleting one from the image does not stick.
+Masking the tmpfiles snippet with a symlink to `/dev/null` is what switches one off, and
+`build-rootfs.sh` does that for `80-systemd-osc-context.sh`. Both halves are needed — the
+mask stops tmpfiles restoring it, the `rm` removes the copy already staged. The reason is
+no longer that it shells out to `sed` on every prompt, which was true before `sed` was a
+package; it is that the drop-in wraps every prompt in OSC 3008 sequences, and the serial
+console is not a terminal here but the input `test/systemd.sh`, `test/network.sh` and
+`test/container.sh` parse. Unmasking it is a change to what those tests read, so it wants
+its own commit rather than a ride inside another one.
+
+`nsswitch.conf` may only name modules that are actually in the image as
+`libnss_<name>.so.2`; a name with no module silently loses that source. glibc installs
+`files`/`dns`, systemd installs `systemd`/`myhostname`/`resolve`. `hosts` uses
+`resolve [!UNAVAIL=return] files myhostname dns`, where the `[!UNAVAIL=return]` is
+load-bearing: a NOTFOUND from resolved is final, but resolved not running has to fall
+through to `/etc/hosts`. `services` and `protocols` name `files` and nothing else, which
+is the whole answer now that `iana-etc` ships both; `ethers` and `networks` name a file
+neither glibc nor any package installs, and nothing in the image asks them.
 
 Networking is systemd end to end: `image/files/etc/systemd/network/20-wired.network` (DHCP on
 `en*`/`eth*`), networkd handing the lease to resolved, and `image/files/etc/resolv.conf` as a

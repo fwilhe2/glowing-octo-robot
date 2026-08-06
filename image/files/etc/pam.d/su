@@ -1,0 +1,15 @@
+# util-linux's su(1). Without this file su falls through to pam.d/other and is denied
+# outright, whoever runs it — which is invisible today only because root is the single
+# account in /etc/passwd.
+
+# root does not get asked for the target user's password. pam_rootok succeeds for uid 0
+# and `sufficient` ends the auth stack there; everyone else falls through to pam_unix
+# and has to know the password.
+auth       sufficient pam_rootok.so
+auth       required   pam_unix.so
+account    required   pam_unix.so
+password   required   pam_unix.so
+session    required   pam_unix.so
+# Registers the new session with logind, exactly as pam.d/login does — optional for the
+# same reason: losing session tracking should not cost the ability to run su.
+session    optional   pam_systemd.so
