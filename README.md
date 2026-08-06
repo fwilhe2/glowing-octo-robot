@@ -8,8 +8,8 @@ build.sh          the only build entry point — ./build.sh <package>
 packages/<pkg>/   env.sh + build.sh per package, and the tree its tarball unpacks into
 builder/          how a package is compiled: the one builder image, deps.txt (its
                   entire contents), and the entrypoint that sets up the sysroot
-image/            how the staging tree becomes a disk image: Containerfile,
-                  build-rootfs.sh, and files/ — the /etc the image ships
+image/            how the staging tree becomes an image — a bootable disk or an OCI
+                  image: Containerfile, build-rootfs.sh, and files/ — the /etc it ships
 test/             everything CI runs to verify a build
 tools/            local conveniences and maintenance, not part of a build
 docs/             design notes for work not done yet — proposals, not descriptions
@@ -51,6 +51,8 @@ produces binaries that can't start.
 
 `image/Containerfile` / `image/build-rootfs.sh` then turn `rootfs/` into `output/rootfs.ext4`
 (see the `rootfs` job in `.github/workflows/ci.yml`), which `./tools/boot-qemu.sh` boots.
+The same script also writes `output/flfs-oci.tar`, the same userspace as a container image
+— see [The OCI image](#the-oci-image).
 
 ## Adding a package
 
@@ -166,6 +168,47 @@ nothing at build time and leaves every boot `degraded`. When it fails it prints
 reason land in the CI log. It also asserts systemd's `Tainted` property is
 empty, which catches image-assembly mistakes no unit ever fails over — an unmerged
 `/usr/sbin`, a `/var/run` that is a real directory.
+
+## The OCI image
+
+The same staging tree also comes out as a container image, `output/flfs-oci.tar`:
+
+```sh
+podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output \
+    rootfs-builder /usr/local/bin/build-rootfs.sh oci
+podman load -i output/flfs-oci.tar
+podman run --rm -it localhost/flfs:latest
+```
+
+and the `rootfs` CI job uploads it as `oci-image-<arch>` next to `rootfs.ext4-<arch>`.
+
+It is the disk image minus the two things a container gets from somewhere else: the
+kernel, which is the host's, and systemd, which the runtime replaces. `/bin/bash` is the
+entrypoint, so `podman run -it` is a shell and anything after the image name is passed to
+it (`podman run flfs -c 'flfsfetch'`). Everything else is the same userspace, assembled by
+the same script from the same tree — `image/build-rootfs.sh` takes `ext4` or `oci` and
+expresses the container as *subtractions*, so the two cannot drift apart the way two
+scripts would. Dropping systemd means its unit tree, udev, its drop-in directories and its
+PAM and NSS modules, plus every binary linking the private `libsystemd-shared` (found by
+reading their `NEEDED` entries rather than by keeping a list); `libsystemd.so.0` and
+`libudev.so.1` stay, because they are the client libraries other packages link against.
+Also gone is the `/etc` only a booted machine reads: `fstab`, `shadow`, the networkd
+configuration, `resolv.conf`. A runtime provides hostname, hosts and resolv.conf itself.
+
+Nothing new is needed to write it. An OCI archive is a tar of five files — a layer, a
+config and a manifest, each named after its own sha256, plus an `index.json` and a version
+marker — so `build-rootfs.sh` writes them with `tar`, `gzip` and `sha256sum` rather than
+pulling buildah or skopeo into the build container.
+
+```sh
+./test/oci.sh output/flfs-oci.tar
+```
+
+loads it and runs it, which is the cheapest verification in this repo — no qemu, no boot.
+That is also its limit: a container runs on the *host's* kernel, so this says nothing
+about `packages/kernel` and does not replace the boot tests. It is a check on the image
+we produce; [Containers](#containers) below is the unrelated question of the runtime the
+*disk* image ships.
 
 ## What the image leaves out
 

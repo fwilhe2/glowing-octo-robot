@@ -37,8 +37,8 @@ packages/<pkg>/   env.sh + build.sh per package, and the tree its tarball unpack
                   (or src/, for the few whose source is ours rather than upstream's)
 builder/          how a package is compiled: the one builder image, deps.txt (its
                   entire contents), and the entrypoint that sets up the sysroot
-image/            how the staging tree becomes a disk: Containerfile, build-rootfs.sh,
-                  and files/ — the /etc the image ships
+image/            how the staging tree becomes an image, disk or OCI: Containerfile,
+                  build-rootfs.sh, and files/ — the /etc the image ships
 test/             everything CI runs to verify a build, plus known-missing-libs.txt
 tools/            local conveniences and maintenance, not part of a build
 docs/             design notes for work not done yet — proposals, not descriptions
@@ -65,6 +65,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/systemd.sh output/rootfs.ext4 rootfs/boot/bzImage  # no failed units
 ./test/network.sh output/rootfs.ext4 rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
 ./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage  # crun starts a container
+./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ```
 
@@ -181,6 +182,29 @@ in `image/files/`, not into
 `rootfs/` — and `image/files` is `COPY`ed into the builder image rather than bind-mounted, so
 editing it means `podman build -f image/Containerfile` again before `podman run`, or the
 image is assembled from the old copy.
+
+`build-rootfs.sh` takes the output as its argument, `ext4` (the default) or `oci`, and the
+same run of the same script produces `output/flfs-oci.tar` for the second. **The container
+flavour is written as subtractions from the disk image, in one block**, for the same reason
+`vm.config` is written as subtractions from defconfig: two scripts would drift, and the
+skeleton, loader path, trim and `ldconfig` are identical either way. What it subtracts is
+the kernel and systemd — the two things a container gets from the host and the runtime —
+which means systemd's unit tree, udev, its drop-in directories, its PAM and NSS modules,
+and every binary whose `NEEDED` names the private `libsystemd-shared` (derived by running
+`readelf`, so a version bump that adds another tool needs no edit), plus the `/etc` only a
+booted machine reads. `libsystemd.so.0` and `libudev.so.1` **stay**: they are the client
+libraries other packages link against, and `dbus-daemon` is one of them. In the three
+directories systemd shares with software we might ship later (`/etc/profile.d`, `/etc/ssh`,
+`/etc/xdg`) the block deletes dangling symlinks and then the directory only if that emptied
+it, rather than removing a future openssh package's config along with systemd's drop-in.
+
+The OCI archive is assembled by hand — a gzipped layer, a config and a manifest as blobs
+named after their own sha256, plus `index.json` and `oci-layout` — because that is the
+entire format and `tar`/`gzip`/`sha256sum` are already in the container. Do not add buildah
+or skopeo to `image/Containerfile` for this. `test/oci.sh` is the check: `podman load`
+proves the layout is well formed and running it proves the userspace starts, in a second,
+without qemu. It is *not* a substitute for the boot tests — the container runs on the
+host's kernel, so nothing about `packages/kernel` is exercised.
 
 All of that happens on a *copy* at `/usr/local/image` inside the container, not on the
 bind-mounted staging tree. It has to: `rootfs/` is simultaneously the image's input and the
