@@ -165,12 +165,39 @@ fix: it is exactly how `test/known-missing-libs.txt` got its backlog. The bottom
 `deps.txt` lists what is deliberately absent and why. Configure the dependency out
 instead.
 
+That rule is about *libraries a package links against*, and it is worth being clear about
+what it is not: **a build-time interpreter is fine, an interpreter in the shipped image is
+not.** The builder image's size is not a consideration — perl is already in `deps.txt`
+because glibc and the kernel need it, and a package whose `configure` is perl or python is
+admissible on those grounds alone. What the image must never gain is a perl or python
+*script*; today it has none, not even glibc's `mtrace`, which lands here as the POSIX-shell
+variant, and `bash` is the only interpreter it ships. So the thing to check when packaging
+something like OpenSSL is not what built it but what its `make install` leaves in
+`DESTDIR` — helper scripts land there and ship as dead files unless `build.sh` or the trim
+removes them.
+
 `packages/<pkg>/build.sh` is bind-mounted, not copied into the image, and is *sourced* with the
 unpacked source tree as the working directory. Install with `DESTDIR=/usr/local/rootfs`
 and `--prefix=/usr`.
 
-Everything is derived from `VERSION` in `env.sh`, and the weekly update workflow bumps
-that single line. Never hardcode a version anywhere else.
+`PACKAGE`, `TARBALL` and `URL` are all derived from `VERSION` in `env.sh`. Never hardcode
+a version anywhere else.
+
+**`SHA256` is the exception, and it is a sharp one.** It cannot be derived — it is a hash
+of bytes that exist only upstream — so a version bump is *two* lines, and
+`tools/bump-version.sh <pkg> <version>` is what writes both: it rewrites `VERSION`, fetches
+the tarball the new `URL` names, pins what it actually received, and reads the result back
+through `fetch-sources.sh` to prove the pin describes the file. Use it rather than editing
+`VERSION` by hand.
+
+A bump that changes `VERSION` alone leaves the previous release's checksum in place and
+`fetch-sources.sh` refuses the new tarball — correctly, since a name and a hash that
+disagree is exactly what it exists to catch. The failure is in the `sources` job, before
+anything is built, and it reads as *CHECKSUM MISMATCH* rather than as anything about the
+version. `.github/workflows/update-packages.yml` opened one such pull request per package
+before it was taught to call the script; the checksum only became part of `env.sh` when the
+vendored sources image arrived, which is why the workflow's one-line `sed` was right when
+it was written and silently wrong afterwards.
 
 ### Packages whose source is in this repository
 
