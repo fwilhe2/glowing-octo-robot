@@ -263,11 +263,22 @@ ldconfig -r "$IMAGE" || true
 #
 # Not tolerant of failure the way ldconfig above is: an empty catalog is the state this
 # is fixing, and it should not be able to come back silently.
-catalog_ld="$IMAGE/lib64/$ld_so"
-[ -x "$catalog_ld" ] || catalog_ld="$IMAGE/usr/lib/$ld_so"
-"$catalog_ld" --library-path "$IMAGE/usr/lib:$IMAGE/usr/lib/systemd" \
-    "$IMAGE/usr/bin/journalctl" --root="$IMAGE" --update-catalog
-test -s "$IMAGE/var/lib/systemd/catalog/database"
+#
+# Disk flavour only, and this is one of the two places where "the trim is identical for
+# both" stops being true. The subtractions block above has already deleted
+# usr/lib/systemd — the .catalog source files with it — and every binary linking
+# libsystemd-shared, which is exactly how journalctl goes. So there is nothing to
+# compile, nothing left to read the result, and the loader invocation below fails with
+# a message that names neither: run explicitly, ld.so reports a program it cannot open
+# through the same "cannot open shared object file" it uses for libraries, so a missing
+# journalctl reads as a missing library of journalctl's.
+if [ "$flavour" = ext4 ]; then
+    catalog_ld="$IMAGE/lib64/$ld_so"
+    [ -x "$catalog_ld" ] || catalog_ld="$IMAGE/usr/lib/$ld_so"
+    "$catalog_ld" --library-path "$IMAGE/usr/lib:$IMAGE/usr/lib/systemd" \
+        "$IMAGE/usr/bin/journalctl" --root="$IMAGE" --update-catalog
+    test -s "$IMAGE/var/lib/systemd/catalog/database"
+fi
 
 chown -R root:root etc
 
