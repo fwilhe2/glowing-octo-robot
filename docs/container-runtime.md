@@ -30,8 +30,8 @@ The only part that is genuinely a lot of new surface, because it drags in TLS.
 
 | need | status | package |
 | --- | --- | --- |
-| HTTPS | missing | **mbedtls** (see below — *not* openssl) |
-| HTTP client | missing | **curl**, `--with-mbedtls --without-openssl` |
+| HTTPS | missing | **mbedtls** preferred, OpenSSL admissible — see [Which TLS](#which-tls) |
+| HTTP client | missing | **curl**, against whichever of the two |
 | CA trust store | missing | a Mozilla CA bundle as a data file |
 | JSON on the command line | library only | **jq**, or a small helper on the `json-c` already shipped |
 | digest verification | present | coreutils `sha256sum` |
@@ -116,36 +116,59 @@ shared. Either set `DNSStubListenerExtra=` so resolved also listens on the bridg
 and point the container's `/etc/resolv.conf` there, or write the upstream servers into
 the container directly.
 
-## TLS without perl
+## Which TLS
 
-OpenSSL is the obvious choice and it is the wrong one here: its `Configure` is perl, and
-this tree does not add perl-built packages.
+An earlier version of this document ruled OpenSSL out because its `Configure` is perl.
+That was the wrong rule, and it is worth stating the right one plainly, because it changes
+which options are on the table:
 
-**mbedTLS** instead. It builds with CMake, which `builder/deps.txt` already carries for
-`json-c`; it needs no perl and no python as long as the *release tarball* is used rather
-than a git checkout, where the generated-source scripts matter; curl supports it directly
-with `--with-mbedtls`; and it is roughly 400 KB across `libmbedtls`/`libmbedx509`/
-`libmbedcrypto` against OpenSSL's ~5 MB of libcrypto and libssl. It covers exactly what
-a registry pull needs — TLS 1.2/1.3 client, SNI, chain verification against a CA bundle —
-and little else, which suits an image whose whole build ends in a trim.
+> **A build-time interpreter is fine. An interpreter in the shipped image is not.**
+> `builder/deps.txt` is builder-side only, and its size is not a consideration — perl is
+> already at `builder/deps.txt:25` because glibc and the kernel need it. What the image
+> must not gain is a perl (or python) *script*, and today it has none, not even glibc's
+> `mtrace`, which lands here as the POSIX-shell variant.
 
-Losing the `openssl` CLI costs nothing: blob digests come from coreutils `sha256sum`.
+By that rule **OpenSSL is admissible.** Perl builds it — `Configure`, and the perlasm
+generators that emit its assembly — but nothing perl survives into what runs.
+`libcrypto.so`, `libssl.so` and the `openssl` binary are C and link no interpreter.
 
-Alternatives, if mbedTLS disappoints:
+One caveat, and it is the only place the rule actually bites: `make install` drops a
+couple of perl *helper scripts* into the tree — `c_rehash` in `bindir`, and the `misc`
+scripts (`CA.pl`, `tsget`) — which would ship as dead files with no interpreter to run
+them. They need removing in the package's `build.sh` or in the trim. Two lines, but check
+which ones a given release installs rather than trusting this paragraph.
 
-- **wolfSSL** — autotools, C, no perl, supported by curl. Licensed GPLv2-or-commercial,
-  a different posture from the rest of the tree.
-- **GnuTLS** — no perl, but pulls nettle *and* gmp, and `libgmp.so.10` is on
+So the choice is now decided on merits rather than by disqualification, and the merits
+still favour **mbedTLS** for the job in this document:
+
+- **Size.** Roughly 400 KB across `libmbedtls`/`libmbedx509`/`libmbedcrypto` against
+  OpenSSL's ~5 MB of libcrypto and libssl. The image has a budget (`test/size-budget.txt`)
+  and this tier is otherwise the most expensive thing proposed here.
+- **Surface.** It covers what a registry pull needs — TLS 1.2/1.3 client, SNI, chain
+  verification against a CA bundle — and little else, which suits an image whose build
+  ends in a trim.
+- **Build.** CMake, which `builder/deps.txt` already carries for `json-c`, and no
+  generated-source step as long as the *release tarball* is used rather than a git
+  checkout.
+- curl supports it directly with `--with-mbedtls`.
+
+**OpenSSL is now the reasonable second choice rather than an excluded one**, and it wins
+on things mbedTLS cannot match: it is curl's best-tested backend by a distance, it is what
+every other consumer of TLS in a distribution expects to find, and `libcrypto` is what a
+future package (openssh, say) is most likely to want already present. If this image ever
+grows a second TLS consumer, revisit — carrying mbedTLS *and* OpenSSL would be the worst
+of both.
+
+Losing the `openssl` CLI costs nothing today: blob digests come from coreutils
+`sha256sum`.
+
+The other alternatives, unchanged except that "no perl" is no longer what recommends them:
+
+- **wolfSSL** — autotools, C, supported by curl. Licensed GPLv2-or-commercial, a
+  different posture from the rest of the tree.
+- **GnuTLS** — pulls nettle *and* gmp, and `libgmp.so.10` is on
   `test/known-missing-libs.txt` as deliberately absent. Heavier than the job needs.
-- **LibreSSL** — check its tarball before committing. OpenSSL-derived, and it may carry
-  some of the same generation machinery.
-
-Worth recording so it is not re-litigated: perl is already at `builder/deps.txt:25`, in
-the toolchain block, because glibc and the kernel need it, and it is not leaving. But
-`deps.txt` is builder-side only — the shipped image contains no perl script at all, not
-even glibc's `mtrace`, which lands here as the POSIX-shell variant. The rule is therefore
-about not adding packages whose *own* build needs perl, and every package proposed in
-this document satisfies it.
+- **LibreSSL** — OpenSSL-derived, so the same install-side script check applies.
 
 ## The package list
 
