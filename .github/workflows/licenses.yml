@@ -1,0 +1,23 @@
+name: Licenses
+
+# Every package declares an SPDX license and every one of them is DFSG-free. The bar and
+# the reasoning are in test/dfsg-licenses.txt.
+#
+# Its own workflow rather than a step inside ci.yml, for one reason: it needs nothing
+# built. A package whose license is unacceptable should be answered in seconds, on the
+# branch that adds it, rather than after the forty minutes of compiling that would come
+# first if this lived in the middle of the build.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  licenses:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - run: ./test/check-licenses.sh
