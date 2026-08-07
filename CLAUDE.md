@@ -249,7 +249,13 @@ version to read. Ours is compiled against our glibc and its RUNPATH is an absolu
 loader by hand with `--library-path "$IMAGE/usr/lib:$IMAGE/usr/lib/systemd"` —
 `--library-path` is searched ahead of `DT_RUNPATH`, which is what makes the override
 take. The sixteen translated catalogs are trimmed for the same reason as `share/locale`:
-a C-locale image can never select one.
+a C-locale image can never select one. It runs for the `ext4` flavour only — the
+subtractions have taken both the catalog sources and journalctl itself by then — which is
+the general rule for **anything added below the subtractions block: it runs against a
+tree systemd has been removed from, so it has to say which flavour it is for.** The
+failure does not look like one. Invoked explicitly, `ld.so` reports a program it cannot
+open with the same *cannot open shared object file* it uses for libraries, so a deleted
+`journalctl` reads as a missing library of journalctl's.
 
 Persistent logging is one `mkdir`: journald's `Storage=auto` keeps the journal in `/run`
 unless `/var/log/journal` exists, and systemd's tmpfiles snippet for it is `z`, which
