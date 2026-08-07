@@ -20,14 +20,20 @@
 # ships, and the check prints the line to add.
 #
 # The numbers are the size of the assembled tree measured in a real CI build plus about
-# 8% of headroom. Apparent tree size, not blocks used, so they mean the same thing on
-# every row — what each image then costs in its own container is reported separately
+# 8% of headroom — the ext4 rows from a build that measured 101.0 MiB on amd64 and
+# 152.6 MiB on arm64. Apparent tree size, not blocks used, so they mean the same thing on
+# every row; what each image then costs in its own container is reported separately
 # (`disk` for the ext4, `archive` for the gzipped OCI layer) and is not budgeted.
 #
-# arm64's rows are higher than amd64's for one reason: its kernel is. With CONFIG_MODULES
-# off, kconfig resolves arm64 defconfig's many `=m` symbols to `y` rather than `n`, so
-# ~40% more is built into the image — see the vm.config discussion in CLAUDE.md.
+# arm64's ceiling is half again amd64's, and the kernel is only 21 MiB of that 51 MiB
+# gap: with CONFIG_MODULES off, kconfig resolves arm64 defconfig's many `=m` symbols to
+# `y` rather than `n`, so ~40% more is built in — see the vm.config discussion in
+# CLAUDE.md. The other 30 MiB is userspace, and most of that is not code but padding.
+# The aarch64 linker defaults to 64 KiB pages, so every shared object is aligned to a
+# 64 KiB boundary between its LOAD segments; glibc's 253 gconv modules are a few tens of
+# KiB of tables each and cost 18.8 MiB on arm64 against 7.7 MiB on amd64. Nothing grew
+# there — the same files are simply more expensive to ship on that architecture.
 #
 # flavour  arch   MiB
 ext4       amd64  110
-ext4       arm64  135
+ext4       arm64  165
