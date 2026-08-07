@@ -3,6 +3,22 @@ set -euo pipefail
 
 set -x
 
+# Two things come out of the same staging tree, and the argument says which:
+#
+#   ext4  a bootable disk for qemu — output/rootfs.ext4, the real output of this repo
+#   oci   a container image — output/flfs-oci.tar, the same userspace with the parts
+#         that only mean something to a machine that boots taken back out
+#
+# They are one script rather than two because everything that is hard-won here — the
+# merged-/usr skeleton, the loader path, the trim, ldconfig — is identical for both.
+# The container flavour is expressed as *subtractions* from the disk image, in one
+# block below, the same way vm.config is expressed as subtractions from defconfig.
+flavour=${1:-ext4}
+case "$flavour" in
+    ext4|oci) ;;
+    *) echo "usage: ${0##*/} [ext4|oci]" >&2; exit 2 ;;
+esac
+
 # The staging tree is an input, not the image. Everything below — the /etc we ship, the
 # stripping, the pruning — happens on a copy in the container's own filesystem, so that
 # rootfs/ stays exactly what the package builds put there. It has to: rootfs/ is also
@@ -15,8 +31,8 @@ IMAGE=/usr/local/image
 # — never cross-arch — so the host's own uname tells us which ELF interpreter and
 # multiarch library directory the toolchain baked into the binaries it just produced.
 case "$(uname -m)" in
-    x86_64)  ld_so=ld-linux-x86-64.so.2  ; multiarch=x86_64-linux-gnu  ;;
-    aarch64) ld_so=ld-linux-aarch64.so.1 ; multiarch=aarch64-linux-gnu ;;
+    x86_64)  ld_so=ld-linux-x86-64.so.2  ; multiarch=x86_64-linux-gnu  ; oci_arch=amd64 ;;
+    aarch64) ld_so=ld-linux-aarch64.so.1 ; multiarch=aarch64-linux-gnu ; oci_arch=arm64 ;;
     *) echo "error: unsupported build architecture: $(uname -m) (expected x86_64 or aarch64)" >&2
        exit 1 ;;
 esac
@@ -63,11 +79,13 @@ ln -sfn ../run var/run
 
 cp -r /files/* .
 
-mkdir -p etc/systemd/system
-ln -sf /usr/lib/systemd/system/multi-user.target etc/systemd/system/default.target
+if [ "$flavour" = ext4 ]; then
+    mkdir -p etc/systemd/system
+    ln -sf /usr/lib/systemd/system/multi-user.target etc/systemd/system/default.target
 
-# The kernel execs /sbin/init; point it at systemd.
-ln -sf /usr/lib/systemd/systemd sbin/init
+    # The kernel execs /sbin/init; point it at systemd.
+    ln -sf /usr/lib/systemd/systemd sbin/init
+fi
 
 # Binaries carry an ELF interpreter path baked in by the toolchain — /lib64/ld-linux-
 # x86-64.so.2 on amd64, /lib/ld-linux-aarch64.so.1 on arm64. With merged-/usr, lib64 and
@@ -79,6 +97,76 @@ if [ ! -e "lib64/$ld_so" ]; then
         mkdir -p lib64
         ln -sf "/${loader#./}" "lib64/$ld_so"
     fi
+fi
+
+# ---------------------------------------------------------------------------------
+# The container flavour, as subtractions. A container gets its kernel from the host and
+# its PID 1 from the runtime, so both of ours are dead weight — and worse than dead,
+# because a systemd that cannot run is still a systemd someone will try to run. This
+# runs before the trim so the strip pass below has less to walk.
+if [ "$flavour" = oci ]; then
+    # The kernel. The host's is the one the container will be running on.
+    rm -rf boot
+
+    # systemd, in the four places it installs itself: its own tree (36 MB of units,
+    # generators, the executor and the private libsystemd-shared/-core), udev, the
+    # drop-in directories it owns, and its PAM/NSS modules. nsswitch.conf here lists
+    # only `files` and `dns`, so its NSS modules were never loaded even in the disk
+    # image; they would simply dangle now that libsystemd-shared is gone.
+    rm -rf usr/lib/systemd usr/lib/udev usr/share/factory usr/share/user-tmpfiles.d
+    rm -rf usr/lib/sysusers.d usr/lib/tmpfiles.d usr/lib/environment.d usr/lib/binfmt.d
+    rm -rf usr/lib/credstore etc/credstore etc/credstore.encrypted usr/lib/pam.d
+    rm -rf etc/systemd etc/udev etc/tmpfiles.d etc/user-tmpfiles.d
+    rm -f  usr/lib/security/pam_systemd.so usr/lib/security/pam_systemd_loadkey.so
+    rm -f  usr/lib/libnss_systemd.so.2 usr/lib/libnss_resolve.so.2 \
+           usr/lib/libnss_myhostname.so.2
+
+    # libsystemd.so.0 and libudev.so.1 stay: they are the public client libraries other
+    # packages link against — dbus-daemon has libsystemd.so.0 in its NEEDED — and
+    # removing them would break binaries we are keeping. What is gone is systemd the
+    # system, not its API.
+
+    # Its command-line tools, found rather than listed: systemctl, journalctl, udevadm,
+    # loginctl and the forty-odd systemd-* binaries all link the private
+    # libsystemd-shared we just deleted, and nothing else in the tree does. Deriving
+    # the list means a version bump that adds another one needs no edit here.
+    while IFS= read -r bin; do
+        if readelf -d "$bin" 2>/dev/null | grep -q 'libsystemd-\(shared\|core\)'; then
+            rm -f "$bin"
+        fi
+    done < <(find usr/bin -maxdepth 1 -type f)
+
+    # And the symlinks that pointed into all of that: /sbin/init, halt, poweroff,
+    # reboot, shutdown, resolvconf, run0, the mount.* helpers — plus, in the three
+    # directories systemd shares with software we do not ship *yet*, its shell
+    # integration snippets (/etc/profile.d), its ssh proxy drop-in (/etc/ssh) and its
+    # user-unit directory (/etc/xdg). Those three hold nothing else today, but deleting
+    # them outright is how a future openssh package loses its config; dropping the links
+    # that now point at nothing, and then the directory if that emptied it, doesn't.
+    #
+    # Targets are resolved against the tree rather than with `readlink -f`, which would
+    # resolve an absolute one against the *builder container's* root and conclude that
+    # /usr/lib/systemd/systemd still exists. Twice, because these come in chains
+    # (systemd-umount → systemd-mount).
+    shared="etc/profile.d etc/ssh etc/xdg"
+    for _ in 1 2; do
+        while IFS= read -r link; do
+            target=$(readlink "$link")
+            case "$target" in
+                /*) target=".$target" ;;
+                *)  target="$(dirname "$link")/$target" ;;
+            esac
+            [ -e "$target" ] || rm -f "$link"
+        done < <(find usr/bin $shared -type l 2>/dev/null)
+    done
+    find $shared -depth -type d -empty -delete 2>/dev/null || true
+
+    # The /etc that only a booted machine reads: a root filesystem to mount, a password
+    # to type at a login prompt that isn't there, a NIC for networkd to configure. The
+    # runtime supplies hostname, hosts and resolv.conf — ours pointed into resolved's
+    # /run stub, which nothing will ever create here.
+    rm -f etc/fstab etc/shadow etc/hostname etc/resolv.conf
+    rm -rf etc/pam.d
 fi
 
 # ---------------------------------------------------------------------------------
@@ -183,14 +271,125 @@ test -s "$IMAGE/var/lib/systemd/catalog/database"
 
 chown -R root:root etc
 
-chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
-          etc/systemd/system/dbus.service.d
-chmod 644 etc/passwd etc/group etc/fstab etc/os-release \
-          etc/nsswitch.conf etc/hostname etc/ld.so.conf etc/pam.d/* \
-          etc/systemd/network/*.network \
-          etc/systemd/system/dbus.service.d/*.conf
-# Password hashes must not be world-readable.
-chmod 600 etc/shadow
+chmod 644 etc/passwd etc/group etc/os-release etc/nsswitch.conf etc/ld.so.conf
+
+if [ "$flavour" = ext4 ]; then
+    chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
+              etc/systemd/system/dbus.service.d
+    chmod 644 etc/fstab etc/hostname etc/pam.d/* \
+              etc/systemd/network/*.network \
+              etc/systemd/system/dbus.service.d/*.conf
+    # Password hashes must not be world-readable.
+    chmod 600 etc/shadow
+fi
 
 du -sh "$IMAGE"
-/sbin/mkfs.ext4 -L root -d "$IMAGE" /usr/local/output/rootfs.ext4 1G
+
+if [ "$flavour" = ext4 ]; then
+    /sbin/mkfs.ext4 -L root -d "$IMAGE" /usr/local/output/rootfs.ext4 1G
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------------
+# The OCI image, written out by hand. An oci-archive is a tar of a directory holding
+# five things: the layer, the config and the manifest as blobs named after their own
+# sha256, an index.json naming the manifest, and an `oci-layout` version marker. That
+# is the entire format, which is why nothing here needs buildah, skopeo or a podman
+# inside the container — `podman load -i` and `skopeo copy oci-archive:...` read what
+# this writes. (The image itself still ships no such tooling: see docs/container-runtime.md.)
+layout=/tmp/oci
+rm -rf "$layout" /tmp/layer.tar
+mkdir -p "$layout/blobs/sha256"
+
+blob() {  # <file> <extension-less name it should have> → prints "<digest> <size>"
+    local src=$1 digest size
+    digest=$(sha256sum "$src" | cut -d' ' -f1)
+    size=$(stat -c %s "$src")
+    mv "$src" "$layout/blobs/sha256/$digest"
+    echo "$digest $size"
+}
+
+# One layer, holding the whole tree. --sort and a forced uid/gid keep the bytes from
+# depending on directory order or on whether podman ran rootless; every file in the
+# image is root-owned either way. The descriptor names the *compressed* blob while
+# rootfs.diff_ids in the config names the uncompressed one, so both get hashed.
+tar --create --format=pax --sort=name --numeric-owner --owner=0 --group=0 \
+    --directory "$IMAGE" . > /tmp/layer.tar
+diff_id=$(sha256sum /tmp/layer.tar | cut -d' ' -f1)
+gzip -9n < /tmp/layer.tar > /tmp/layer.tar.gz
+rm -f /tmp/layer.tar
+read -r layer_digest layer_size < <(blob /tmp/layer.tar.gz)
+
+# Entrypoint bash, no Cmd: `podman run -it flfs` is a shell, and anything after the
+# image name is passed to it (`podman run flfs -c uptime`). PATH has to be spelled out
+# — with no /etc/profile read and no shell login, an empty one in the config leaves the
+# runtime's default, which lists directories a merged-/usr image does not have.
+cat > /tmp/config.json <<EOF
+{
+  "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "architecture": "$oci_arch",
+  "os": "linux",
+  "config": {
+    "Env": ["PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/root"],
+    "Entrypoint": ["/bin/bash"],
+    "WorkingDir": "/root",
+    "Labels": {
+      "org.opencontainers.image.title": "flfs",
+      "org.opencontainers.image.description": "Florian's Linux From Scratch, without the kernel and systemd"
+    }
+  },
+  "rootfs": {
+    "type": "layers",
+    "diff_ids": ["sha256:$diff_id"]
+  },
+  "history": [
+    {
+      "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+      "created_by": "image/build-rootfs.sh oci"
+    }
+  ]
+}
+EOF
+read -r config_digest config_size < <(blob /tmp/config.json)
+
+cat > /tmp/manifest.json <<EOF
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "config": {
+    "mediaType": "application/vnd.oci.image.config.v1+json",
+    "digest": "sha256:$config_digest",
+    "size": $config_size
+  },
+  "layers": [
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:$layer_digest",
+      "size": $layer_size
+    }
+  ]
+}
+EOF
+read -r manifest_digest manifest_size < <(blob /tmp/manifest.json)
+
+# ref.name is the tag `podman load` gives what it reads: localhost/flfs:latest.
+cat > "$layout/index.json" <<EOF
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.index.v1+json",
+  "manifests": [
+    {
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "digest": "sha256:$manifest_digest",
+      "size": $manifest_size,
+      "platform": { "architecture": "$oci_arch", "os": "linux" },
+      "annotations": { "org.opencontainers.image.ref.name": "flfs:latest" }
+    }
+  ]
+}
+EOF
+echo '{"imageLayoutVersion": "1.0.0"}' > "$layout/oci-layout"
+
+tar --create --directory "$layout" oci-layout index.json blobs \
+    > /usr/local/output/flfs-oci.tar
+ls -l /usr/local/output/flfs-oci.tar
