@@ -114,8 +114,24 @@ instead.
 unpacked source tree as the working directory. Install with `DESTDIR=/usr/local/rootfs`
 and `--prefix=/usr`.
 
-Everything is derived from `VERSION` in `env.sh`, and the weekly update workflow bumps
-that single line. Never hardcode a version anywhere else.
+`PACKAGE`, `TARBALL` and `URL` are all derived from `VERSION` in `env.sh`. Never hardcode
+a version anywhere else.
+
+**`SHA256` is the exception, and it is a sharp one.** It cannot be derived — it is a hash
+of bytes that exist only upstream — so a version bump is *two* lines, and
+`tools/bump-version.sh <pkg> <version>` is what writes both: it rewrites `VERSION`, fetches
+the tarball the new `URL` names, pins what it actually received, and reads the result back
+through `fetch-sources.sh` to prove the pin describes the file. Use it rather than editing
+`VERSION` by hand.
+
+A bump that changes `VERSION` alone leaves the previous release's checksum in place and
+`fetch-sources.sh` refuses the new tarball — correctly, since a name and a hash that
+disagree is exactly what it exists to catch. The failure is in the `sources` job, before
+anything is built, and it reads as *CHECKSUM MISMATCH* rather than as anything about the
+version. `.github/workflows/update-packages.yml` opened one such pull request per package
+before it was taught to call the script; the checksum only became part of `env.sh` when the
+vendored sources image arrived, which is why the workflow's one-line `sed` was right when
+it was written and silently wrong afterwards.
 
 ### Packages whose source is in this repository
 

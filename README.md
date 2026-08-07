@@ -73,8 +73,11 @@ add it to the CI matrix in `.github/workflows/ci.yml`:
   | `LOCAL_SOURCE` | set to `1` when the source is in this repository rather than upstream — see below |
   | `UPSTREAM_*` | where to look for new releases, when the directory `URL` points into isn't it — see `tools/upstream.sh` |
 
-  Everything is derived from `VERSION`, so bumping that one line is a complete update —
-  which is what the update workflow below relies on.
+  `PACKAGE`, `TARBALL` and `URL` are all derived from `VERSION`. `SHA256` is not — it is
+  a hash of bytes only upstream has — so an update is those two lines, and
+  `./tools/bump-version.sh <package> <version>` writes both: it rewrites `VERSION`,
+  fetches the new tarball from `URL` and pins what it actually got. That is what the
+  update workflow below uses.
 
 * `build.sh` — only the configure/compile/install commands. It is sourced inside the
   container by `builder/build-package.sh` with the unpacked source tree as the working

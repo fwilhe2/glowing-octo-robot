@@ -79,10 +79,17 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
 
-          # env.sh derives PACKAGE, TARBALL and URL from VERSION, so this one line is
-          # the whole update. Anything else the new version needs — a configure flag,
-          # a patch — is for the human reviewing the failing build to add.
-          sed -i -E "s|^VERSION=.*|VERSION=\"$LATEST\"|" "packages/$PKG/env.sh"
+          # Two lines of env.sh, not one. PACKAGE, TARBALL and URL are all derived from
+          # VERSION, but SHA256 is a hash of bytes that only exist upstream, so
+          # bump-version.sh fetches the new tarball and writes the checksum as well.
+          # Rewriting VERSION alone — which is what this did until the vendored sources
+          # image made env.sh carry a checksum at all — leaves the previous release's
+          # SHA256 in place, and every pull request this workflow opens then dies in the
+          # `sources` job on a mismatch, before building anything.
+          #
+          # Anything else the new version needs — a configure flag, a patch — is still
+          # for the human reviewing the failing build to add.
+          ./tools/bump-version.sh "$PKG" "$LATEST"
           git diff --exit-code "packages/$PKG/env.sh" && { echo "error: nothing changed in packages/$PKG/env.sh" >&2; exit 1; }
 
           git commit -am "Update $PKG to $LATEST"
