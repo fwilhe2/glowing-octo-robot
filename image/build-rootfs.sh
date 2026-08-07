@@ -203,8 +203,12 @@ if [ "$flavour" = oci ]; then
 
     # The /etc that only a booted machine reads: a root filesystem to mount, a password
     # to type at a login prompt that isn't there, a NIC for networkd to configure. The
-    # runtime supplies hostname, hosts and resolv.conf — ours pointed into resolved's
-    # /run stub, which nothing will ever create here.
+    # runtime supplies hostname and resolv.conf — ours pointed into resolved's /run stub,
+    # which nothing will ever create here.
+    #
+    # /etc/hosts stays. A runtime bind-mounts its own over it, so it is not what the
+    # container will read, but a static localhost mapping is correct either way and a
+    # missing file is not — `podman run --network=none` mounts nothing.
     rm -f etc/fstab etc/shadow etc/hostname etc/resolv.conf
     rm -rf etc/pam.d
 fi
@@ -326,17 +330,16 @@ chown -R root:root etc
 # already set the mode on the real file under /usr/lib.
 chmod 644 etc/passwd etc/group etc/hosts etc/profile etc/nsswitch.conf etc/ld.so.conf
 
-# Password hashes must not be world-readable, and that is not a property of the disk
-# image: the container flavour ships the same /etc/shadow, and there are two hashes in it
-# now. Hence out here rather than in the ext4 block where it used to sit.
-chmod 600 etc/shadow
-
 if [ "$flavour" = ext4 ]; then
     chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
               etc/systemd/system/dbus.service.d
     chmod 644 etc/fstab etc/hostname etc/pam.d/* \
               etc/systemd/network/*.network \
               etc/systemd/system/dbus.service.d/*.conf
+    # Password hashes must not be world-readable. Only reachable for this flavour: the
+    # subtractions above delete etc/shadow outright, a container having no login to
+    # authenticate.
+    chmod 600 etc/shadow
 fi
 
 du -sh "$IMAGE"
