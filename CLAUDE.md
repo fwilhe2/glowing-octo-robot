@@ -299,6 +299,16 @@ manager and leaves the system `degraded`; util-linux's `su` and `runuser` each w
 own. `other` runs `pam_warn` before `pam_deny` so the next one says which service it was in
 the journal instead of failing mutely.
 
+Having that file is only half of it: **`pam.d/systemd-user` has to include
+`pam_systemd.so`**, however much it looks like the one module that cannot belong there.
+`systemd --user` exits immediately unless `$XDG_RUNTIME_DIR` is set and nothing in
+`user@.service` sets it, so that module — which puts `/run/user/UID` into the PAM
+environment — is the only thing standing between a login and a failed `user@0.service`.
+It does not ask logind for a session that logind is waiting on, because `pam_systemd`
+special-cases `PAM_SERVICE=systemd-user` and registers the class `manager` instead. The
+symptom of leaving it out is `degraded` with *Trying to run as user instance, but
+$XDG_RUNTIME_DIR is not set* in the journal, which names neither PAM nor the file.
+
 `/etc/profile` exists to source `/etc/profile.d`, not for its own sake — systemd installs
 shell drop-ins there and `systemd-tmpfiles` recreates the symlinks at every boot from
 `/usr/lib/tmpfiles.d/20-systemd-*.conf`, so deleting one from the image does not stick.
