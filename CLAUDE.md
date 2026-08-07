@@ -222,7 +222,8 @@ entire format and `tar`/`gzip`/`sha256sum` are already in the container. Do not 
 or skopeo to `image/Containerfile` for this. `test/oci.sh` is the check: `podman load`
 proves the layout is well formed and running it proves the userspace starts, in a second,
 without qemu. It is *not* a substitute for the boot tests — the container runs on the
-host's kernel, so nothing about `packages/kernel` is exercised.
+host's kernel, so nothing about `packages/kernel` is exercised. `tools/publish-oci.sh`
+pushes both architectures to ghcr.io as one manifest list; see the CI section.
 
 All of that happens on a *copy* at `/usr/local/image` inside the container, not on the
 bind-mounted staging tree. It has to: `rootfs/` is simultaneously the image's input and the
@@ -437,7 +438,27 @@ image from it — `output/rootfs.ext4` is the real output.
 ## CI
 
 `.github/workflows/ci.yml`: `base` → `glibc` (and `kernel` in parallel) → `build` matrix →
-`rootfs` → `boot`. Each package job uses `.github/actions/build-package`, which stages a
-glibc-only sysroot via `SYSROOT_DIR=sysroot` so each package artifact contains only its
-own files, and caches on a hash that deliberately includes `glibc/env.sh` — a glibc bump
-must rebuild everything.
+`rootfs` → `boot` → `publish-oci`. Each package job uses `.github/actions/build-package`,
+which stages a glibc-only sysroot via `SYSROOT_DIR=sysroot` so each package artifact
+contains only its own files, and caches on a hash that deliberately includes
+`glibc/env.sh` — a glibc bump must rebuild everything.
+
+`publish-oci` is the only job that writes anything the world can see, and the only one
+**gated to `main`** (`if: github.ref == 'refs/heads/main'`), which has a consequence worth
+knowing before touching it: a pull request cannot exercise it. Green CI on a branch says
+nothing about whether publishing works, so changes to it or to `tools/publish-oci.sh` want
+verifying by hand — the script runs anywhere, `REGISTRY=` points it at a local registry,
+and the artifacts it reads are downloadable from any run.
+
+It pushes `flfs:<commit>-<arch>` for each architecture and then a manifest list at
+`flfs:<commit>` and `flfs:latest`. One job rather than a push step per `rootfs` matrix leg,
+because the list can only be assembled once both architectures exist; a single amd64 runner
+is enough, since loading and pushing a foreign-arch image never runs it. It needs `boot`
+rather than `rootfs`: the OCI and ext4 images are the same userspace from the same staging
+tree, so a disk that fails to boot is not a container to publish, whatever `test/oci.sh`
+made of it in isolation. The gate on `main` is about `latest` — the commit tags would be
+harmless from a branch, but `latest` has one holder.
+
+Both archives carry the same `ref.name` annotation and so both `podman load` as
+`localhost/flfs:latest`; the script tags and pushes each before loading the next, which is
+the only thing keeping the list from being one architecture twice.

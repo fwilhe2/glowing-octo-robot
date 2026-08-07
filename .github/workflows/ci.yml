@@ -367,3 +367,39 @@ jobs:
         with:
           name: boot-console-log-${{ matrix.arch }}
           path: output/*.log
+
+  # The container image, published where it can be pulled from rather than only attached
+  # to a run as an artifact. One job rather than a push step in each `rootfs` matrix leg,
+  # because the useful thing to publish is a *manifest list* covering both architectures,
+  # and that can only be assembled once both exist. Loading and pushing a foreign-arch
+  # image needs no emulation — nothing here runs it — so this can be one amd64 runner.
+  #
+  # `needs: boot`, not `needs: rootfs`: the OCI and ext4 images are the same userspace
+  # out of the same staging tree, so the boot job failing means the thing about to be
+  # published is broken, whatever test/oci.sh made of it in isolation.
+  #
+  # Only on main. The per-arch tags are commit-scoped and would be harmless from a
+  # branch, but `latest` is a name with one holder, and a branch build taking it is how
+  # `podman pull` starts serving something nobody merged.
+  publish-oci:
+    runs-on: ubuntu-26.04
+    needs:
+      - boot
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Both, unmerged: tools/publish-oci.sh reads them at the per-artifact paths this
+      # leaves behind, artifacts/oci-image-<arch>/flfs-oci.tar.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: oci-image-*
+          path: artifacts
+
+      - name: Log in to ghcr.io
+        run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
+
+      - run: ./tools/publish-oci.sh

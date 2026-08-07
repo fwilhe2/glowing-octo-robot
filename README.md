@@ -171,7 +171,19 @@ empty, which catches image-assembly mistakes no unit ever fails over — an unme
 
 ## The OCI image
 
-The same staging tree also comes out as a container image, `output/flfs-oci.tar`:
+The same staging tree also comes out as a container image. Every commit on `main` that
+gets through the boot tests is published to ghcr.io, for both architectures under one
+name:
+
+```sh
+podman run --rm -it ghcr.io/fwilhe2/glowing-octo-robot/flfs:latest
+```
+
+`latest` is a manifest list, so that pulls the amd64 or arm64 image to match the machine
+it runs on. Every commit also keeps a tag of its own — `flfs:<commit>`, and
+`flfs:<commit>-amd64` / `flfs:<commit>-arm64` to ask for one architecture on purpose.
+
+To build it instead of pulling it, `output/flfs-oci.tar`:
 
 ```sh
 podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output \
@@ -180,7 +192,11 @@ podman load -i output/flfs-oci.tar
 podman run --rm -it localhost/flfs:latest
 ```
 
-and the `rootfs` CI job uploads it as `oci-image-<arch>` next to `rootfs.ext4-<arch>`.
+The `rootfs` CI job also uploads it as `oci-image-<arch>` next to `rootfs.ext4-<arch>`,
+which is what the `publish-oci` job pushes: it waits for `boot`, because the two images
+are the same userspace and a disk that will not boot is not a container worth publishing.
+`tools/publish-oci.sh` is the whole of it, and runs by hand against any registry —
+`REGISTRY=` to point it elsewhere, `TAG=` to name it something other than the commit.
 
 It is the disk image minus the two things a container gets from somewhere else: the
 kernel, which is the host's, and systemd, which the runtime replaces. `/bin/bash` is the
