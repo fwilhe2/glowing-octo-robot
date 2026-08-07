@@ -1,5 +1,36 @@
 # glowing-octo-robot
-my experimental linux from scratch (lfs) build, targeting qemu
+
+A **pragmatic, automated Linux From Scratch**, targeting virtual machines: source
+tarballs in, a bootable disk image and a container image out, rebuilt and version-checked
+by CI rather than by hand.
+
+## What this is
+
+A **minimal but genuinely useful general-purpose Linux stack**, built from source and kept
+current. Minimal is the means, not the point — the image is small because nothing
+unnecessary was added, not because something useful was taken away.
+
+*Pragmatic* is what separates it from LFS proper:
+
+* **No self-hosted toolchain.** Real LFS bootstraps gcc and binutils through several
+  passes to escape the host. That is a step further than this needs to go. The Debian
+  builder image *is* the toolchain — deliberately and permanently, not as a stepping
+  stone. The single exception is glibc, which is built here and compiled against, because
+  a version skew there silently produces binaries that cannot start.
+* **Modern and established, both.** Every choice should be one a competent engineer would
+  defend today: not the crusty option a decade of inertia settled on, and not whatever
+  turned up on GitHub last month. This is neither a re-creation of Debian oldstable nor a
+  showcase for new things.
+* **Opinionated where it matters.** systemd, glibc, GNU coreutils and bash are fixed.
+  `bash` is the only interpreter the image contains and is meant to stay that way.
+  Everything is DFSG-free and says which license it is under.
+
+Running as a node in a Kubernetes cluster is an eventual target — *an* aim rather than
+*the* aim. It should be a reasonable general-purpose Linux first.
+
+Non-goals, so they do not have to be re-argued: real hardware (virtual machines only —
+qemu today, rust-vmm/Firecracker-style VMMs next), a self-hosted toolchain, and any
+substitute for the four components above.
 
 ## Layout
 
@@ -56,8 +87,28 @@ The same script also writes `output/flfs-oci.tar`, the same userspace as a conta
 
 ## Adding a package
 
-Create a directory under `packages/` named after the package with two files in it, and
-add it to the CI matrix in `.github/workflows/ci.yml`:
+Packaging is the easy part; choosing is where the mistakes are. Before writing any of the
+below, answer these in the pull request, where they can be argued with:
+
+* **Is it maintained, or just old?** A last release in 2011 is a red flag, not a sign of
+  stability. Check what distributions ship today.
+* **Is it established?** Something Debian, Fedora and Alpine all carry has had more
+  scrutiny than this project can apply. Forty GitHub stars and one contributor has not.
+* **Is there a more modern option that is equally established?** Both halves matter — the
+  answer to "what does everyone use" is sometimes a decade stale, and the answer to "what
+  is newest" almost always wrong.
+* **What does it drag in?** A dependency is a decision about the image; see
+  [Checking runtime dependencies](#checking-runtime-dependencies) for what happens when it
+  goes unasked, and `test/size-budget.txt` for what it costs.
+* **Does it need an interpreter at runtime?** `bash` is the only one the image has. A
+  package that would add perl, python or a JavaScript runtime needs a case that it is
+  unavoidable. What the *builder* needs is unconstrained — perl is already in
+  `builder/deps.txt` — so the thing to check is what `make install` leaves in `DESTDIR`.
+* **Is it DFSG-free?** Every package declares `LICENSE=` and CI rejects anything not on
+  the list; see [Licensing](#licensing).
+
+Then create a directory under `packages/` named after the package with two files in it,
+and add it to the CI matrix in `.github/workflows/ci.yml`:
 
 * `env.sh` — the source tarball, plus optional knobs:
 
@@ -68,6 +119,7 @@ add it to the CI matrix in `.github/workflows/ci.yml`:
   | `TARBALL` | tarball file name |
   | `URL` | where to download it (may use `$PKG`, the package directory name) |
   | `SHA256` | checksum of the tarball; nothing is ever used without matching it |
+  | `LICENSE` | SPDX expression for what the tarball ships; must be DFSG-free — see [Licensing](#licensing) |
   | `MIRRORS` | optional extra URLs, tried in order when `URL` is unreachable |
   | `NO_SYSROOT` | set to `1` for packages that aren't compiled against our glibc |
   | `LOCAL_SOURCE` | set to `1` when the source is in this repository rather than upstream — see below |
@@ -102,6 +154,34 @@ the same `DESTDIR`, the same CI matrix entry and artifact. The one constraint is
 `packages/<pkg>/src` is mounted **read-only**, because it is a tracked working tree rather
 than a gitignored unpacked tarball — so `build.sh` compiles straight to `DESTDIR` instead
 of leaving object files behind.
+
+## Licensing
+
+Every package declares what it is under, as an SPDX expression in its `env.sh`:
+
+```sh
+LICENSE="BSD-3-Clause OR GPL-2.0-only"              # upstream offers a choice
+LICENSE="LGPL-2.1-or-later AND GPL-2.0-or-later"    # library and tools differ
+```
+
+```sh
+./test/check-licenses.sh
+```
+
+checks that every package declares one and that every identifier is on
+`test/dfsg-licenses.txt`. It runs in its own workflow rather than inside the build,
+because it needs nothing compiled — an unacceptable license should be answered in seconds
+on the branch that adds it, not after forty minutes of building.
+
+**The bar is the Debian Free Software Guidelines**, because Debian has already argued
+every one of these to a conclusion. A license Debian ships in `main` can be added to the
+list; one that exists only in `non-free` means the package does not belong here. That
+rules out the non-commercial, field-of-use-restricted and "shall be used for Good, not
+Evil" varieties without further discussion.
+
+What the check proves is that a declaration exists and is free. It does **not** prove the
+declaration is true — nothing opens the tarball. Reading the license off `COPYING` is a
+packaging step, done once, and worth redoing when a version bump crosses a relicensing.
 
 ## Checking runtime dependencies
 

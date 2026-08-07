@@ -1,5 +1,6 @@
 VERSION="1.0"
 PACKAGE="flfsfetch-${VERSION}"
+LICENSE="MIT"
 # No TARBALL, URL or SHA256: this package's source is in this repository, under
 # packages/flfsfetch/src, and LOCAL_SOURCE is what tells the build machinery so. There is
 # nothing to download, nothing to vendor into the sources image, and no upstream to check

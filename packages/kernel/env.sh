@@ -3,6 +3,7 @@ PACKAGE="linux-${VERSION}"
 TARBALL="$PACKAGE.tar.xz"
 URL="https://cdn.kernel.org/pub/linux/kernel/v${VERSION%%.*}.x/${TARBALL}"
 SHA256="995dd7188d924662b94b48fd6fb783587267590e5b8bb33dade2c771e7d855c1"
+LICENSE="GPL-2.0-only WITH Linux-syscall-note"
 # Debian's linux source package pulls in a whole distro kernel toolchain (and its
 # build-dep list breaks whenever sid moves), so list what this build actually needs.
 # The kernel is freestanding — it links against no libc at all, and kbuild builds its

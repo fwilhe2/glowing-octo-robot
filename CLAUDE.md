@@ -2,9 +2,32 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-An experimental Linux From Scratch build targeting qemu: source tarballs in, a bootable
-`output/rootfs.ext4` out. `README.md` is the user-facing documentation; this file covers
-what is easy to get wrong when changing things.
+A **pragmatic, automated Linux From Scratch**: source tarballs in, a bootable
+`output/rootfs.ext4` and a container image out. `README.md` is the user-facing
+documentation; this file covers what is easy to get wrong when changing things.
+
+## What this is, and what it is not
+
+The goal is a **minimal but genuinely useful general-purpose Linux stack**, built from
+source, automatically, and kept current. Minimal is a means here, not the point: the
+image should be small because nothing unnecessary was added, not because something useful
+was removed.
+
+**Pragmatic** is the load-bearing word, and it separates this from LFS proper:
+
+- **No self-hosted toolchain.** Real LFS bootstraps gcc and binutils through several
+  passes to escape the host. That is a step too far for what this is for. The Debian
+  builder image is the toolchain, deliberately and permanently — it is a solid, current,
+  well-maintained choice, and *not* a stepping stone to something else. The one place
+  the host is escaped is glibc, because a version skew there silently produces binaries
+  that cannot start; everything else links against Debian's and that is fine.
+- **Modern and established, both.** Every technology choice should be one a competent
+  engineer would defend in 2026 — neither the crusty option that a decade of inertia
+  chose, nor whatever appeared on GitHub last month. This is not an exercise in
+  recreating Debian oldstable, and it is not a place to chase novelty.
+- **Useful, not merely bootable.** An eventual target is running as a node in a
+  Kubernetes cluster, but that is *an* aim, not *the* aim — the image should be a
+  reasonable general-purpose Linux, and features are judged on whether they serve that.
 
 ## Project constraints
 
@@ -12,7 +35,7 @@ These are fixed decisions, not preferences. Do not propose or implement changes 
 violate them, even when a request asks for simplification — if a simplification would
 require breaking one, say so and offer an alternative that keeps it.
 
-1. **The stack is systemd + glibc + GNU coreutils.** Never swap in musl, busybox,
+1. **The stack is systemd + glibc + GNU coreutils + bash.** Never swap in musl, busybox,
    toybox, dinit/OpenRC/runit/s6, or any other substitute, and never drop a component to
    make something build or boot. If I ask for a simplification that implies dropping part
    of this stack, treat it as out of scope and push back.
@@ -25,6 +48,37 @@ require breaking one, say so and offer an alternative that keeps it.
 4. **Networking has to work end to end.** A booted image needs working interfaces,
    addressing (systemd-networkd/systemd-resolved), DNS and outbound connectivity — not just
    a kernel that has the drivers.
+5. **No new interpreters in the image.** `bash` is the one it has, and that is the budget.
+   A package that would put perl, python, lua or a JavaScript runtime into `rootfs/`
+   needs an argument that it is unavoidable, not merely convenient — and "we could write
+   this bit in python" is never that argument. What the *builder* needs is unconstrained:
+   perl is already in `builder/deps.txt`, and a package whose `configure` is perl or
+   python is fine. The rule is about what ships. Watch `make install`, which is where an
+   interpreted helper script sneaks into `DESTDIR`.
+6. **Every package is DFSG-free, and says so.** `LICENSE=` in `env.sh`, as an SPDX
+   expression, checked by `test/check-licenses.sh` against `test/dfsg-licenses.txt` in its
+   own workflow. Debian's guidelines are the bar because Debian has already argued every
+   one of these to a conclusion. A license that only exists in `non-free` means the
+   package does not belong here, however good it is.
+
+## Adding a package: the questions to ask first
+
+Packaging is the easy part. Choosing is where the mistakes are, so before writing an
+`env.sh`, answer these — in the pull request, where they can be disagreed with:
+
+- **Is it still maintained, or is it just old?** A last release in 2011 is a red flag, not
+  a sign of stability. Check what the distributions actually ship today.
+- **Is it established?** Something Debian, Fedora and Alpine all ship has been through
+  more scrutiny than this project can apply. A GitHub project with forty stars and one
+  contributor has not, whatever its README claims.
+- **Is there a more modern option that is equally established?** Both halves matter. The
+  default answer to "what does everyone use" is often right and sometimes a decade stale;
+  the answer to "what is newest" is almost always wrong.
+- **What does it drag in?** A dependency is a decision about the image, not an
+  implementation detail — see `test/known-missing-libs.txt` for what happens when that
+  goes unasked. Size is a real cost too, and `test/size-budget.txt` will say so.
+- **Does it need an interpreter at runtime?** See constraint 5. This is the one that most
+  often disqualifies an otherwise reasonable choice.
 
 ## Layout
 
@@ -61,6 +115,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/check-rootfs-deps.sh rootfs      # unresolved NEEDED entries
 ./test/check-symbol-versions.sh rootfs  # symbol versions no shipped library defines
 ./test/kernel-caps.sh rootfs            # kernel config vs what a container needs
+./test/check-licenses.sh                # every package declares a DFSG-free license
 ./tools/check-updates.sh [pkg...] # what upstream has released since the pinned VERSION
 ./test/boot.sh output/rootfs.ext4 rootfs/boot/bzImage   # headless boot smoke test
 ./test/systemd.sh output/rootfs.ext4 rootfs/boot/bzImage  # no failed units

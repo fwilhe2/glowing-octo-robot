@@ -1,0 +1,56 @@
+# Licenses a package in this image is allowed to be under, as SPDX identifiers.
+#
+# `test/check-licenses.sh` fails a build where a package declares no LICENSE, or declares
+# one that is not on this list. Adding a line here is the decision that a license is
+# acceptable, and it should take a moment's thought rather than a moment's typing.
+#
+# The bar is the Debian Free Software Guidelines. Debian has argued every one of these to
+# a conclusion over decades, which is a better foundation than anything this repository
+# would invent, and `https://wiki.debian.org/DFSGLicenses` is the reference. If a license
+# is in Debian *main*, it belongs here; if it is only in `non-free`, it does not, whatever
+# else can be said for it.
+#
+# What that rules out, so it does not have to be rediscovered: anything non-commercial,
+# anything field-of-use restricted, anything requiring registration or notification to
+# use, the JSON license ("shall be used for Good, not Evil"), the SSPL and the BSL. None
+# of these are close calls.
+#
+# A `LICENSE=` in an env.sh is an SPDX *expression* — `AND`, `OR`, `WITH` and parentheses
+# are understood — because most of these packages are not under one license. `AND` means
+# the package ships components under each; `OR` means upstream offers a choice.
+#
+# One thing this check cannot do: it verifies that a declaration is *free*, not that it is
+# *true*. Nothing here reads the tarball. Getting the declaration right is a packaging
+# step, done once, against the COPYING file the tarball actually ships.
+
+# --- permissive ---------------------------------------------------------------------
+MIT
+X11                     # MIT plus the "not to be used in advertising" clause; ncurses
+BSD-2-Clause
+BSD-3-Clause
+BSD-4-Clause-UC         # the UC advertising clause, which Berkeley rescinded in 1999
+ISC
+Zlib
+0BSD                    # BSD Zero Clause, i.e. no conditions at all; liblzma
+Apache-2.0
+AFL-2.1                 # Academic Free License; one half of dbus's dual license
+
+# --- copyleft -----------------------------------------------------------------------
+GPL-2.0-only
+GPL-2.0-or-later
+GPL-3.0-or-later
+LGPL-2.0-only
+LGPL-2.1-only
+LGPL-2.1-or-later
+LGPL-3.0-or-later
+EUPL-1.2                # European Union Public Licence; parts of util-linux
+
+# --- exceptions, used on the right of a WITH ----------------------------------------
+Linux-syscall-note      # what keeps userspace off the kernel's GPL
+
+# --- references, for a license with no SPDX identifier ------------------------------
+# A LicenseRef- is an admission that something needs a human decision, not a way to get
+# past this check. Each one needs a note here saying what it actually is.
+LicenseRef-IANA         # IANA's protocol registries: published for anyone to use, but
+                        # the tarball carries no license text of its own. See
+                        # packages/iana-etc/env.sh — this one is not settled.

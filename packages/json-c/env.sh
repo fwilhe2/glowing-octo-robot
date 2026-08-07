@@ -6,6 +6,7 @@ TARBALL="$PACKAGE.tar.gz"
 # (json-c-0.19-20260627/) that a VERSION bump has no way to guess.
 URL="https://s3.amazonaws.com/json-c_releases/releases/${TARBALL}"
 SHA256="37ad0249902e301bd9052bf712e511fcc6acff4ecaad4b5900aad9ce564e26de"
+LICENSE="MIT"
 # Debian's json-c build-deps pull in doxygen and the rest of the documentation
 # toolchain for a library that is one .so; cmake is all this build actually needs.
 # The bucket answers 403 to a listing, so take versions from the tags instead...

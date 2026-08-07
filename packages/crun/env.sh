@@ -5,6 +5,7 @@ TARBALL="$PACKAGE.tar.gz"
 # pre-generated libocispec parser sources, so nothing has to run autogen.sh.
 URL="https://github.com/containers/crun/releases/download/${VERSION}/${TARBALL}"
 SHA256="eb8fe73ffe44d868b14bb94fa6c295bd57e8bf023de43b61579da826c07cc406"
+LICENSE="GPL-2.0-or-later AND LGPL-2.1-or-later"
 # Debian's crun build-deps install libseccomp-dev, libcriu-dev and libprotobuf-c-dev,
 # and crun's configure autodetects every one of them — which is the "linked against a
 # library only the builder image has" trap. List what this build actually links.
