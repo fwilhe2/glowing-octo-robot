@@ -255,6 +255,32 @@ jobs:
           name: rootfs-dir-${{ matrix.arch }}
           path: rootfs
 
+      # A few hundred bytes each, kept so two runs can be diffed directly rather than
+      # through two job summaries.
+      - name: Upload size reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rootfs-size-${{ matrix.arch }}
+          path: output/rootfs-size-*.txt
+
+      # Last, deliberately: every other check in this job asks whether the image works,
+      # and a bigger one works fine right up until it doesn't fit. These ask how big each
+      # got, against ceilings in test/size-budget.txt that have to be raised on purpose.
+      # They run after the uploads so that failing one still leaves the images and the
+      # breakdowns to look at, and they put those breakdowns in the job summary, which is
+      # where "what grew?" gets answered.
+      #
+      # The disk first, being the real output of this repo — and `always()` on the second
+      # so that an overage in the first still reports the other image's number rather than
+      # hiding it until the next run.
+      - name: Measure the disk image
+        run: ./test/rootfs-size.sh ext4
+
+      - name: Measure the OCI image
+        if: always()
+        run: ./test/rootfs-size.sh oci
+
       - name: Upload rootfs.ext4
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

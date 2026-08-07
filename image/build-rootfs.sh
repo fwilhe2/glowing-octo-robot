@@ -344,8 +344,61 @@ fi
 
 du -sh "$IMAGE"
 
+# ---------------------------------------------------------------------------------
+# What the image weighs, written down. This is the only place the *assembled* tree
+# exists — rootfs/ is the input, still carrying the headers and static libraries the
+# trim above removed — so if the number is not taken here it cannot be taken at all.
+# test/rootfs-size.sh is what reads this back, compares the total against the budget in
+# test/size-budget.txt and prints the breakdown.
+#
+# One report per flavour, and the flavour is in the filename: the two images share every
+# line of this script up to here and are nothing like the same size, so a single path
+# would mean whichever ran last describing both.
+#
+# Apparent bytes rather than blocks: it measures what the tree contains instead of what
+# one filesystem's rounding makes of it, which keeps the number comparable across the two
+# architectures, across a change to mkfs, and between a disk and a tar. What each flavour
+# then costs in its own container — `disk` for the ext4, `archive` for the OCI — is
+# appended below, once the thing that answers it has run.
+report=/usr/local/output/rootfs-size-$flavour.txt
+{
+    echo "# assembled $flavour image tree, sizes in bytes. Written by image/build-rootfs.sh."
+    echo "total $(du -sb "$IMAGE" | cut -f1)"
+
+    # Two depths: enough to separate usr/lib from usr/share from usr/bin, which is where
+    # growth actually shows up, without listing every subdirectory of usr/share. The
+    # empty directories of the skeleton are noise at this resolution, hence the floor.
+    #
+    # Both loops read from a process substitution rather than a pipeline on purpose:
+    # `find | sort | head` under `set -o pipefail` fails the script with 141, because
+    # head exits at line 25 and sort dies of SIGPIPE writing line 26. Inside <(...) that
+    # status is nobody's business.
+    while read -r bytes path; do
+        [ "$path" = "$IMAGE" ] && continue
+        [ "$bytes" -ge 65536 ] || continue
+        echo "dir $bytes ${path#"$IMAGE"/}"
+    done < <(du -b --max-depth=2 "$IMAGE" | sort -rn)
+
+    # And the individual files, because one new 20 MB binary and 20 MB spread over a
+    # thousand files are the same total and completely different problems.
+    while read -r bytes path; do
+        echo "file $bytes ${path#"$IMAGE"/}"
+    done < <(find "$IMAGE" -type f -printf '%s %p\n' | sort -rn | head -n 25)
+} > "$report"
+
 if [ "$flavour" = ext4 ]; then
     /sbin/mkfs.ext4 -L root -d "$IMAGE" /usr/local/output/rootfs.ext4 1G
+
+    # What that came to once the filesystem's own metadata, journal and block rounding are
+    # counted: the number that says whether 1G is still the right size for the disk.
+    fs=$(/sbin/dumpe2fs -h /usr/local/output/rootfs.ext4 2>/dev/null)
+    block_count=$(echo "$fs" | grep '^Block count:'  | tr -dc '0-9')
+    block_free=$( echo "$fs" | grep '^Free blocks:'  | tr -dc '0-9')
+    block_size=$( echo "$fs" | grep '^Block size:'   | tr -dc '0-9')
+    echo "disk $(( (block_count - block_free) * block_size ))" >> "$report"
+    echo "capacity $(( block_count * block_size ))" >> "$report"
+
+    cat "$report"
     exit 0
 fi
 
@@ -452,3 +505,11 @@ echo '{"imageLayoutVersion": "1.0.0"}' > "$layout/oci-layout"
 tar --create --directory "$layout" oci-layout index.json blobs \
     > /usr/local/output/flfs-oci.tar
 ls -l /usr/local/output/flfs-oci.tar
+
+# The container flavour's answer to `disk`: what a registry stores and a `podman pull`
+# moves is the gzipped layer, not the tree. Appended here rather than above for the same
+# reason `disk` is appended after mkfs — the number does not exist until the thing that
+# produces it has run.
+echo "archive $(stat -c %s /usr/local/output/flfs-oci.tar)" >> "$report"
+
+cat "$report"
