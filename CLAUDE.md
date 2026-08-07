@@ -110,6 +110,17 @@ fix: it is exactly how `test/known-missing-libs.txt` got its backlog. The bottom
 `deps.txt` lists what is deliberately absent and why. Configure the dependency out
 instead.
 
+That rule is about *libraries a package links against*, and it is worth being clear about
+what it is not: **a build-time interpreter is fine, an interpreter in the shipped image is
+not.** The builder image's size is not a consideration — perl is already in `deps.txt`
+because glibc and the kernel need it, and a package whose `configure` is perl or python is
+admissible on those grounds alone. What the image must never gain is a perl or python
+*script*; today it has none, not even glibc's `mtrace`, which lands here as the POSIX-shell
+variant, and `bash` is the only interpreter it ships. So the thing to check when packaging
+something like OpenSSL is not what built it but what its `make install` leaves in
+`DESTDIR` — helper scripts land there and ship as dead files unless `build.sh` or the trim
+removes them.
+
 `packages/<pkg>/build.sh` is bind-mounted, not copied into the image, and is *sourced* with the
 unpacked source tree as the working directory. Install with `DESTDIR=/usr/local/rootfs`
 and `--prefix=/usr`.
