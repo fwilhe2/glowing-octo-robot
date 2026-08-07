@@ -37,3 +37,5 @@
 # flavour  arch   MiB
 ext4       amd64  110
 ext4       arm64  165
+oci        amd64  80
+oci        arm64  100
