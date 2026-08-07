@@ -3,6 +3,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  pull-requests: write
+
 # Every job below is matrixed on arch (amd64/arm64) and runs on a runner native to that
 # arch — nothing here cross-compiles, so a native runner is what makes `make defconfig`,
 # `gcc -print-multiarch` and friends pick the right target on their own (see
@@ -42,6 +45,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Collect Workflow Telemetry
+        uses: fwilhe2/workflow-telemetry-action@master
+
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
 
@@ -57,6 +63,9 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Collect Workflow Telemetry
+        uses: fwilhe2/workflow-telemetry-action@master
 
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
@@ -86,6 +95,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Collect Workflow Telemetry
+        uses: fwilhe2/workflow-telemetry-action@master
+
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
 
@@ -114,6 +126,9 @@ jobs:
             runner: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Collect Workflow Telemetry
+        uses: fwilhe2/workflow-telemetry-action@master
 
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
@@ -177,6 +192,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Collect Workflow Telemetry
+        uses: fwilhe2/workflow-telemetry-action@master
+
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
 
@@ -201,6 +219,9 @@ jobs:
             runner: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Collect Workflow Telemetry
+        uses: fwilhe2/workflow-telemetry-action@master
 
       # Only this arch's packages: every package-<name>-<arch> artifact this run
       # produced matches the pattern, which is glibc, kernel and the whole build
@@ -310,6 +331,9 @@ jobs:
             runner: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Collect Workflow Telemetry
+        uses: fwilhe2/workflow-telemetry-action@master
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
