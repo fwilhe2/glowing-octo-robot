@@ -1,1 +1,7 @@
 root:x:0:
+# The user's own group, and only that. The groups worth joining — systemd-journal for
+# reading the whole journal, wheel, adm — are all declared `g <name> - -` in systemd's
+# sysusers.d, meaning their GIDs are allocated at first boot rather than fixed. Naming
+# one here would mean guessing a number that sysusers is entitled to choose, so
+# supplementary groups belong in a runtime step, not in the shipped file.
+user:x:1000:

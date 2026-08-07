@@ -1,4 +1,15 @@
+# The fallback for any PAM service with no file of its own. Denying by default is the
+# right policy, but denying *silently* is what let user@.service's missing systemd-user
+# stack go unnoticed: the service just failed, with nothing saying PAM was the reason.
+#
+# pam_warn logs the service name, user and tty to syslog before pam_deny refuses, so a
+# service that is missing a file says so in the journal instead of failing mutely. It
+# only ever logs — the denial is still pam_deny's.
+auth       required   pam_warn.so
 auth       required   pam_deny.so
+account    required   pam_warn.so
 account    required   pam_deny.so
+password   required   pam_warn.so
 password   required   pam_deny.so
+session    required   pam_warn.so
 session    required   pam_deny.so

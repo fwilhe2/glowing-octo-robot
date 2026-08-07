@@ -1,0 +1,35 @@
+# systemd's per-user manager. user@.service carries `PAMName=systemd-user`, so without
+# this file the service falls through to pam.d/other — which is pam_deny — and
+# user@0.service fails the moment anyone logs in, taking `systemctl is-system-running`
+# to `degraded` with it.
+#
+# There is no auth stack, and that is correct rather than an omission: logind has
+# already authenticated the user by the time it starts a manager for them, and this
+# service never sees a password. PAM only gets asked whether the account is still valid
+# and to set the session up.
+account    required   pam_unix.so
+session    required   pam_unix.so
+
+# pam_systemd.so is required here, and the recursion it looks like it would cause does
+# not happen. `systemd --user` refuses to start without $XDG_RUNTIME_DIR — src/core/main.c
+# exits with "Trying to run as user instance, but $XDG_RUNTIME_DIR is not set." — and
+# nothing else in user@.service sets it. This module is what does: it puts /run/user/UID
+# into the PAM environment the manager inherits.
+#
+# What keeps it from asking logind for a session that logind is waiting on is inside
+# pam_systemd itself, which special-cases this exact stack: when PAM_SERVICE is
+# "systemd-user" it sets the session class to manager/manager-early and the type to
+# unspecified (src/login/pam_systemd.c), which is the class logind hands back without
+# starting another user manager for it. Upstream ships the same line in
+# src/login/systemd-user.in for the same reason.
+#
+# Optional rather than required, as upstream has it: a failure here should cost the
+# session registration, not the user manager. It does mean a broken pam_systemd.so shows
+# up as the missing-$XDG_RUNTIME_DIR error rather than as a PAM failure.
+session    optional   pam_systemd.so
+
+# pam_loginuid.so is the other module the distributions put in this stack, and it is
+# left out on purpose: it writes /proc/self/loginuid, which only exists with
+# CONFIG_AUDIT, and packages/kernel/build.sh turns audit off (there is no audit
+# userspace here). The module handles that by returning PAM_IGNORE, so it would work —
+# it would just never do anything.
