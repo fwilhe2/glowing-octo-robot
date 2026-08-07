@@ -1,0 +1,33 @@
+# How big each assembled image is allowed to be, per flavour and architecture, in MiB.
+#
+# `test/rootfs-size.sh` fails a build that goes over. This is not a measurement and not a
+# target — it is a ceiling somebody chose, and the only reason it is in git is so that
+# crossing it takes a commit. Nothing else in CI notices an image getting bigger: every
+# check here asks whether the image *works*, and a fatter one works fine right up until
+# it doesn't fit.
+#
+# When a build fails against this, exactly one of two things happened:
+#
+#   - something started shipping files nobody asked for — a package that grew a new data
+#     directory, a trim rule in image/build-rootfs.sh that stopped matching after a
+#     version bump. The breakdown the script prints says which directory and which files.
+#     Take it back out; do not raise the number.
+#   - the image genuinely got bigger for a reason you wanted. Raise the number here, in
+#     the same commit as the change that needed it, so the diff carries both.
+#
+# An image with no line here is an image nothing is watching, so that is an error rather
+# than a pass: a new flavour or a new architecture has to be given a ceiling before it
+# ships, and the check prints the line to add.
+#
+# The numbers are the size of the assembled tree measured in a real CI build plus about
+# 8% of headroom. Apparent tree size, not blocks used, so they mean the same thing on
+# every row — what each image then costs in its own container is reported separately
+# (`disk` for the ext4, `archive` for the gzipped OCI layer) and is not budgeted.
+#
+# arm64's rows are higher than amd64's for one reason: its kernel is. With CONFIG_MODULES
+# off, kconfig resolves arm64 defconfig's many `=m` symbols to `y` rather than `n`, so
+# ~40% more is built into the image — see the vm.config discussion in CLAUDE.md.
+#
+# flavour  arch   MiB
+ext4       amd64  110
+ext4       arm64  135

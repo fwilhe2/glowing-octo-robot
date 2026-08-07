@@ -40,6 +40,7 @@ builder/          how a package is compiled: the one builder image, deps.txt (it
 image/            how the staging tree becomes an image, disk or OCI: Containerfile,
                   build-rootfs.sh, and files/ — the /etc the image ships
 test/             everything CI runs to verify a build, plus known-missing-libs.txt
+                  and size-budget.txt
 tools/            local conveniences and maintenance, not part of a build
 docs/             design notes for work not done yet — proposals, not descriptions
 downloads/        source tarballs (gitignored)
@@ -66,6 +67,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/network.sh output/rootfs.ext4 rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
 ./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage  # crun starts a container
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
+./test/rootfs-size.sh [ext4|oci]  # image size vs test/size-budget.txt, and where it went
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ```
 
