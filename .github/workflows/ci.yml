@@ -194,6 +194,13 @@ jobs:
 
       - name: Collect Workflow Telemetry
         uses: fwilhe2/workflow-telemetry-action@master
+        with:
+          # This matrix is ~54 jobs a run and usually hits its build cache,
+          # so the median job is ~16s. Installing forkstat for a process
+          # trace costs about 5s of that, and a trace of a cache hit says
+          # nothing. Resource metrics need no setup and still get collected.
+          # The long jobs (kernel, glibc, boot, rootfs) keep full tracing.
+          proc_trace_enable: false
 
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
