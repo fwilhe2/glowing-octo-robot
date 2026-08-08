@@ -46,7 +46,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@ad1bcd7e32483343d5699a862c07b97ef1ee0ffb # v3.0.0
+        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        with:
+          # Text rather than mermaid, which is about the run summary page and
+          # not about any one job. GitHub renders every mermaid block in its own
+          # sandboxed iframe against viewscreen.githubusercontent.com, and the
+          # run page concatenates all 77 jobs' summaries: at ~11 blocks a job
+          # that is ~860 iframes on one page, which no browser stays responsive
+          # through. Sparklines in a markdown table cost the page nothing and
+          # carry the same shape, peak and mean at lower resolution.
+          #
+          # Set on every telemetry step in this workflow for that one reason —
+          # the cost is the page they share, so they share the setting.
+          charts: sparkline
 
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
@@ -65,7 +77,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@ad1bcd7e32483343d5699a862c07b97ef1ee0ffb # v3.0.0
+        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        with:
+          charts: sparkline # see the builder job
 
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
@@ -96,7 +110,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@ad1bcd7e32483343d5699a862c07b97ef1ee0ffb # v3.0.0
+        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        with:
+          charts: sparkline # see the builder job
 
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
@@ -128,7 +144,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@ad1bcd7e32483343d5699a862c07b97ef1ee0ffb # v3.0.0
+        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        with:
+          charts: sparkline # see the builder job
 
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
@@ -201,9 +219,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@ad1bcd7e32483343d5699a862c07b97ef1ee0ffb # v3.0.0
+        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
         with:
-          # This matrix is ~54 jobs a run and usually hits its build cache,
+          charts: sparkline # see the builder job
+
+          # This matrix is 66 jobs a run and usually hits its build cache,
           # so the median job is ~16s. Installing forkstat for a process
           # trace costs about 5s of that, and a trace of a cache hit says
           # nothing. Resource metrics need no setup and still get collected.
@@ -236,7 +256,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@ad1bcd7e32483343d5699a862c07b97ef1ee0ffb # v3.0.0
+        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        with:
+          charts: sparkline # see the builder job
 
       # Only this arch's packages: every package-<name>-<arch> artifact this run
       # produced matches the pattern, which is glibc, kernel and the whole build
@@ -348,7 +370,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@ad1bcd7e32483343d5699a862c07b97ef1ee0ffb # v3.0.0
+        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        with:
+          charts: sparkline # see the builder job
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
