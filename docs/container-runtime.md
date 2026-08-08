@@ -22,17 +22,24 @@ Userspace has `crun` itself, `json-c` underneath it, `mount` and `nsenter` from
 util-linux, `sha256sum` from coreutils, `acl` and `attr` for extended attributes, `zlib`
 and `zstd`, and systemd-networkd/resolved for anything declarative.
 
+**Issue #77 landed most of two of the four tiers below**, on its own merits rather than
+as a step towards this: `iproute2` and `libmnl` are here, and so are `curl`, `openssl` and
+a CA bundle. The tables below are marked accordingly. What that leaves is the parts that
+are this document's actual work — an unpacker, a driver, a registry client, and the
+netfilter half of the networking — rather than the packaging underneath them.
+
 ## The four capabilities
 
 ### 1. Pull an image from a registry
 
-The only part that is genuinely a lot of new surface, because it drags in TLS.
+The only part that was genuinely a lot of new surface, because it drags in TLS — and
+it is now in the image, put there by issue #77 for the sake of a machine you can debug.
 
 | need | status | package |
 | --- | --- | --- |
-| HTTPS | missing | **mbedtls** preferred, OpenSSL admissible — see [Which TLS](#which-tls) |
-| HTTP client | missing | **curl**, against whichever of the two |
-| CA trust store | missing | a Mozilla CA bundle as a data file |
+| HTTPS | present | **openssl**, 3.5 LTS — see [Which TLS](#which-tls) |
+| HTTP client | present | **curl**, built `--with-openssl` |
+| CA trust store | present | **ca-certificates**, Debian's snapshot of Mozilla's roots |
 | JSON on the command line | library only | **jq**, or a small helper on the `json-c` already shipped |
 | digest verification | present | coreutils `sha256sum` |
 
@@ -43,11 +50,17 @@ media types, pick the platform out of the index, then `GET` the config blob and 
 layer blob and verify every digest. A couple of hundred lines of bash around `curl` and
 `jq`.
 
-**This tier should be built last, and it is reasonable never to build it.** Everything
-below works on layers already on disk. Deferring pull defers mbedtls, curl and the CA
-bundle together — which is most of the new attack surface in this document — and a
-rootfs brought in over a second virtio disk gives real `docker run` ergonomics in the
-meantime.
+**The packaging half of this tier is done; the registry client is not.** What remains is
+the bash above `curl` — the token dance, the manifest, the digest checks — and that is
+still the last thing to build, because everything below works on layers already on disk
+and a rootfs brought in over a second virtio disk gives real `docker run` ergonomics in
+the meantime.
+
+The attack-surface argument that used to say "defer this" has been overtaken rather than
+answered: TLS and an HTTP client are in the image now, so the cost has been paid. What
+has *not* been paid is the part that was always the sharper end of it — fetching and
+running arbitrary images off the internet, which is what the seccomp note at the bottom
+of this document is about.
 
 ### 2. Unpack layers
 
@@ -98,17 +111,17 @@ The pleasant surprise is how much systemd already covers.
 `[DHCPServer]` hands out addresses on it — that is the DHCP server that would otherwise
 have to be packaged or written.
 
-**veth plumbing needs one.** Creating a veth pair per container and moving one end into
-the container's netns is netlink work, and no tool in the image speaks netlink;
-`networkctl` only queries. That is **iproute2** — C, `libmnl` for the `tc`/`devlink`
-paths, and it will find the already-shipped `elfutils` for its BPF bits. The right
-insertion point is an OCI `createRuntime` hook in `config.json`: the netns exists by
+**veth plumbing needed one, and it is here.** Creating a veth pair per container and
+moving one end into the container's netns is netlink work, and nothing in the image spoke
+netlink; `networkctl` only queries. **iproute2** landed with issue #77 — `ip link add ...
+type veth`, `ip link set ... netns` — along with the **libmnl** underneath it. The right
+insertion point is still an OCI `createRuntime` hook in `config.json`: the netns exists by
 then and the container process has not started.
 
-**NAT and `-p` need three small ones.** `libmnl` → `libnftnl` → `nftables`, all C, all
-small next to what this tree already builds. That covers both the masquerade rule for
-outbound and DNAT for published ports. Plus `net.ipv4.ip_forward=1`, which systemd-sysctl
-applies from a drop-in.
+**NAT and `-p` need two more small ones.** `libnftnl` → `nftables`, both C, both small,
+and `libmnl` beneath them is already a package. That covers the masquerade rule for
+outbound and DNAT for published ports. Plus `net.ipv4.ip_forward=1` as a systemd-sysctl
+drop-in in `image/files/etc/sysctl.d/`, which is now a directory that exists.
 
 **DNS is a configuration decision, not a package.** resolved's stub listener at
 `127.0.0.53` is unreachable from inside a container netns, because loopback is not
@@ -135,35 +148,48 @@ generators that emit its assembly — but nothing perl survives into what runs.
 One caveat, and it is the only place the rule actually bites: `make install` drops a
 couple of perl *helper scripts* into the tree — `c_rehash` in `bindir`, and the `misc`
 scripts (`CA.pl`, `tsget`) — which would ship as dead files with no interpreter to run
-them. They need removing in the package's `build.sh` or in the trim. Two lines, but check
-which ones a given release installs rather than trusting this paragraph.
+them. 3.5.7 installs exactly those three and `packages/openssl/build.sh` deletes them;
+check the list again on a version bump rather than trusting this paragraph.
 
-So the choice is now decided on merits rather than by disqualification, and the merits
-still favour **mbedTLS** for the job in this document:
+**Settled: OpenSSL, on the 3.5 LTS branch.** This document argued for mbedTLS, mostly on
+size — roughly 1.5 MB across `libmbedtls`/`libmbedx509`/`libtfpsacrypto` against
+OpenSSL's ~5 MB. Issue #77 left the choice open and it went the other way, on the *modern
+and established* test in `CLAUDE.md`:
 
-- **Size.** Roughly 400 KB across `libmbedtls`/`libmbedx509`/`libmbedcrypto` against
-  OpenSSL's ~5 MB of libcrypto and libssl. The image has a budget (`test/size-budget.txt`)
-  and this tier is otherwise the most expensive thing proposed here.
-- **Surface.** It covers what a registry pull needs — TLS 1.2/1.3 client, SNI, chain
-  verification against a CA bundle — and little else, which suits an image whose build
-  ends in a trim.
-- **Build.** CMake, which `builder/deps.txt` already carries for `json-c`, and no
-  generated-source step as long as the *release tarball* is used rather than a git
-  checkout.
-- curl supports it directly with `--with-mbedtls`.
+- **Established** is not a tie. mbedTLS is established *in embedded firmware*, which is a
+  different population from the one this image belongs to. Every general-purpose Linux
+  distribution ships OpenSSL as its TLS library, and "what does everyone use" is the right
+  answer often enough that the burden is on the alternative.
+- **The second consumer decides it.** The argument below — revisit if the image grows one
+  — is really an argument for not choosing the library that loses that comparison, since
+  carrying both is the worst outcome and openssh is the obvious next candidate.
+  `libcrypto` is what it will look for.
+- **Size is a means here, not the point.** `CLAUDE.md` says so about the image as a whole:
+  it should be small because nothing unnecessary was added. 3.5 MB of difference buys the
+  library every other piece of software expects, which is not nothing.
+- **Modern** does not separate them. OpenSSL 3.5 is a current LTS with TLS 1.3 and ML-KEM
+  key exchange; mbedTLS 4.x is current too, and its 3.6 LTS — the branch curl's mbedTLS
+  backend is best tested against — is the older of the two.
 
-**OpenSSL is now the reasonable second choice rather than an excluded one**, and it wins
-on things mbedTLS cannot match: it is curl's best-tested backend by a distance, it is what
-every other consumer of TLS in a distribution expects to find, and `libcrypto` is what a
-future package (openssh, say) is most likely to want already present. If this image ever
-grows a second TLS consumer, revisit — carrying mbedTLS *and* OpenSSL would be the worst
-of both.
+The caveats above are real and `packages/openssl/build.sh` handles them: `no-docs` keeps
+the perl pod renderer out of the build, and the three installed perl scripts (`c_rehash`,
+`CA.pl`, `tsget`) are deleted from `DESTDIR`. `packages/curl/build.sh` deletes
+`curl-config` for the same reason — `#!/bin/sh`, and this image has no `/bin/sh`.
 
-Losing the `openssl` CLI costs nothing today: blob digests come from coreutils
-`sha256sum`.
+The `openssl` CLI *is* shipped, which this document previously said was unnecessary.
+Blob digests still come from coreutils `sha256sum`; `openssl s_client` and `openssl x509`
+earn their megabyte on a machine whose whole point is being logged into.
 
-The other alternatives, unchanged except that "no perl" is no longer what recommends them:
+There is one coupling worth knowing before bumping it, spelled out in
+`packages/openssl/env.sh`: curl is compiled against the *builder image's* OpenSSL headers
+and resolved against ours at runtime by SONAME, so the shipped major version has to stay
+in step with Debian sid's. `packages/openssl/env.sh` holds the update check to the 3.5
+series for that reason as much as for the LTS support window.
 
+The alternatives, for the record:
+
+- **mbedTLS** — the case above, and a good one; it lost on population rather than on
+  merit.
 - **wolfSSL** — autotools, C, supported by curl. Licensed GPLv2-or-commercial, a
   different posture from the rest of the tree.
 - **GnuTLS** — pulls nettle *and* gmp, and `libgmp.so.10` is on
@@ -172,16 +198,20 @@ The other alternatives, unchanged except that "no perl" is no longer what recomm
 
 ## The package list
 
-Nine new packages, of which only curl and mbedtls are more than an afternoon:
+Four left of the original nine, none of them more than an afternoon. Issue #77 took the
+expensive tier and half the networking one:
 
 ```
 tar  gzip                              unpack       cheap, and unblocks everything else
-libmnl  libnftnl  nftables  iproute2   networking   small, all C
+libnftnl  nftables                     networking   small, all C
 jq                                     config       or a json-c helper instead
-mbedtls  curl  + a CA bundle           pull         the expensive tier — defer it
+
+done: libmnl  iproute2                 networking   #77
+      openssl  curl  ca-certificates   pull         #77
 ```
 
-Plus one bash driver and a `createRuntime` hook script.
+Plus one bash driver, a registry client and a `createRuntime` hook script — which are now
+the bulk of what is left, the packaging having stopped being the interesting part.
 
 ## Migration
 
@@ -194,11 +224,11 @@ Each phase is independently useful, and CI stays green throughout.
    end of this phase `run <local-image> <cmd>` works, with no networking beyond the
    loopback-only netns `crun spec` already produces. This is the phase that delivers most
    of the ergonomics.
-3. **Networking.** `libmnl`/`libnftnl`/`nftables`/`iproute2`, the `br0` netdev, the
-   `createRuntime` hook, masquerade, `-p`, and the resolved stub listener. Verified by a
-   `test/` script in the shape of `test/network.sh` — outbound TCP and DNS from inside a
-   container, and a published port reachable from the host side.
-4. **Pull.** `mbedtls`, `curl`, the CA bundle, and the registry client.
+3. **Networking.** `libnftnl`/`nftables` (`libmnl` and `iproute2` are done), the `br0`
+   netdev, the `createRuntime` hook, masquerade, `-p`, and the resolved stub listener.
+   Verified by a `test/` script in the shape of `test/network.sh` — outbound TCP and DNS
+   from inside a container, and a published port reachable from the host side.
+4. **Pull.** The registry client. `openssl`, `curl` and `ca-certificates` are done.
 
 Phases 1 and 2 are worth doing even if 3 and 4 never happen.
 
@@ -210,14 +240,16 @@ Phases 1 and 2 are worth doing even if 3 and 4 never happen.
   once the tool pulls and runs arbitrary images off the internet. Docker's default
   seccomp profile is a large part of what `docker run` means. **Packaging `libseccomp`
   should probably land before phase 4** — it also lets systemd stop being built
-  `-Dseccomp=disabled`.
+  `-Dseccomp=disabled`. Now the sharpest open item here: the packaging that made pulling
+  possible has landed, and this has not.
 - **The image is 1 GiB and fixed** (`image/build-rootfs.sh:159`). An image store lives in
   `/var` and two pulled images will fill it. Either the image grows or containers get a
   second virtio disk; the second is tidier and matches the VM-only constraint.
-- **The CA bundle has no update story.** It is the one artifact here that is neither
-  compiled from a pinned tarball nor written by hand, and a stale trust store fails
-  confusingly. It should probably go through the same `SHA256`-pinned path as any other
-  source.
+- ~~**The CA bundle has no update story.**~~ Settled: it goes through exactly the same
+  `SHA256`-pinned path as any other source. Debian's `ca-certificates` is a native package
+  versioned by the date its `certdata.txt` was snapshotted, so `tools/upstream.sh` scrapes
+  the pool directory and `tools/check-updates.sh` reports a new snapshot the way it
+  reports any other release. A stale trust store now shows up as a pull request.
 - **jq versus a json-c helper is unsettled.** jq is one more package but is immediately
   useful for everything else; a helper is ~200 lines against a library already shipped,
   and avoids putting a programming language in the image. Phase 2 forces the decision.

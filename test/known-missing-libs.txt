@@ -8,6 +8,14 @@
 # Fixing one means either adding a package that provides the library, or configuring
 # the package that wants it to build without that optional dependency. Delete the line
 # once it's fixed.
+#
+# One thing to know before adding a package that might want one of these: a line here
+# allowlists the *library*, not the consumer named in the comment beside it. A new
+# package that links libselinux gets filed under the entry below and the build passes,
+# and the binary is just as broken as it would have been without this file — see the
+# libselinux note in packages/iproute2/build.sh, where that nearly shipped an `ip` that
+# could not start. If a package you are adding could plausibly link something on this
+# list, read the binary's NEEDED rather than this check's exit status.
 
 # ---------------------------------------------------------------------------------
 # Degraded but not fatal: only the named tools break, and none are on the boot path.

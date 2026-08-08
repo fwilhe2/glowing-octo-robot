@@ -34,8 +34,26 @@
 # KiB of tables each and cost 18.8 MiB on arm64 against 7.7 MiB on amd64. Nothing grew
 # there — the same files are simply more expensive to ship on that architecture.
 #
+# Raised for issue #77, in two steps and for two reasons, both of them "the image
+# genuinely got bigger for a reason you wanted":
+#
+#   +4  iproute2, iputils and libmnl. Measured locally at 2.9 MiB on the disk image and
+#       3.7 MiB on the container one, against a tree with them taken back out.
+#   +12 openssl, curl and ca-certificates. Measured the same way at 10.6 MiB, identically
+#       for both flavours; libcrypto.so.3 alone is 6.8 MiB of it.
+#
+# The arm64 rows are raised by half again, the same ratio their userspace already stands
+# at against amd64's, and for the same reason — see the paragraph below.
+#
+# Measured on a local tree rather than in CI, so treat the arm64 rows in particular as
+# an estimate until a run confirms them. Worth knowing while doing that: repeating an
+# image build on the same staging tree is exactly reproducible, but two trees differing
+# only in files that were deleted from one produced ~0.9 MiB of difference in
+# directories neither touched — image/build-rootfs.sh strips in parallel with
+# `xargs -P`, and the batching depends on find's order.
+#
 # flavour  arch   MiB
-ext4       amd64  110
-ext4       arm64  165
-oci        amd64  80
-oci        arm64  100
+ext4       amd64  126
+ext4       arm64  186
+oci        amd64  96
+oci        arm64  121

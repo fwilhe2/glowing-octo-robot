@@ -57,9 +57,13 @@ groff-base
 rpcsvc-proto
 scdoc
 
-# systemd's meson templates are jinja2; nothing else needs python.
+# systemd's meson templates are jinja2, and ca-certificates turns Mozilla's certdata.txt
+# into PEM with a python script that parses the certificates it finds. Builder-side only:
+# what the image may not gain is an interpreter, and neither of those ships anything but
+# its output. See CLAUDE.md.
 python3
 python3-jinja2
+python3-cryptography
 
 # systemd compiles its BPF programs with clang and embeds them as skeletons
 # (-Dbpf-framework). Without these the sandboxing options are silently disabled — the
@@ -68,11 +72,11 @@ clang
 bpftool
 linux-bpf-dev
 
-# The kernel package: BTF needs pahole out of dwarves, and libssl is for the signing
-# tooling kbuild builds regardless of whether we sign anything.
+# The kernel package: BTF needs pahole out of dwarves. libssl-dev used to be here too,
+# for the signing tooling kbuild builds whether or not anything is signed; it has moved
+# down to the section below, now that openssl is a package we ship.
 bc
 dwarves
-libssl-dev
 kmod
 
 # ---------------------------------------------------------------------------------
@@ -92,9 +96,16 @@ libfdisk-dev
 libjson-c-dev
 libkmod-dev
 liblzma-dev
+libmnl-dev
 libmount-dev
 libncurses-dev
 libpam0g-dev
+# ...and the sharpest case of that SONAME argument: curl compiles against sid's OpenSSL
+# headers and links -lssl -lcrypto, so what it asks for at runtime is libssl.so.3 and
+# libcrypto.so.3 — which our packages/openssl answers, as long as it stays on a 3.x
+# release. See the note in packages/openssl/env.sh. Also still what kbuild's signing
+# tooling wants.
+libssl-dev
 libsystemd-dev
 libzstd-dev
 uuid-dev
