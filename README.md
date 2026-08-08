@@ -373,20 +373,68 @@ own to go wrong.
 Interfaces a container runtime creates (`veth*`, `docker0`, `cni*`, `podman*`) do not
 match that file on purpose: whatever brings them up configures them.
 
+Configuring the network is one thing; being able to look at it from inside the guest is
+another, and for a long time the image could not. `iproute2` is what fixed that —
+`ip addr`, `ip route`, `ip link`, plus `ss`, `bridge` and `tc` — because `networkctl`
+only reports what networkd was asked to do and cannot read a route out of the kernel or
+create a link. The alternative is net-tools, and it is not a close call: `ifconfig`
+predates most of what rtnetlink can express and cannot see multiple addresses on an
+interface, policy routing or namespaces. `iputils` supplies `ping`, `arping` and
+`tracepath`, and `image/files/etc/sysctl.d/50-ping-group-range.conf` opens the datagram
+ICMP socket to unprivileged users so `ping` works for the `user` account without being
+setuid.
+
 ```sh
 ./test/network.sh output/rootfs.ext4 rootfs/boot/bzImage
 ```
 
 is the check, and it runs in the `boot` CI job. It boots the image with systemd as PID
 1 — networkd and resolved are the things under test, so a raw shell would prove nothing
-— logs in at the serial getty and asserts three layers in order: the link is
-`routable` (DHCP answered), `getent hosts example.com` resolves (the resolved stub
-answers), and a TCP connection to it is accepted (routing and the VMM's NAT work). The
-last two need the machine running the test to have internet access.
+— logs in at the serial getty and asserts two rounds of checks.
 
-The in-guest checks use bash builtins, `networkctl` and `getent` only. That began as a
+The first round asks whether the *system* has a network: the link is `routable` (DHCP
+answered), `getent hosts example.com` resolves (the resolved stub answers), and a TCP
+connection to it is accepted (routing and the VMM's NAT work). The second asks whether
+someone logged in could use it: `ip` shows a global address and a default route, `ping`
+opens an ICMP socket, and `curl https://example.com` verifies a certificate chain and
+makes a request. Splitting them keeps "the network is broken" and "the tools are broken"
+apart. Everything past the first check needs the machine running the test to have
+internet access.
+
+The first round uses bash builtins, `networkctl` and `getent` only. That began as a
 constraint and is now a choice: `grep`, `sed` and `awk` are in the image, but a serial
-console handshake is better off not depending on a package it is not testing.
+console handshake is better off not depending on a package it is not testing. The second
+round is where that rule is deliberately broken, since those tools are the thing under
+test — it still parses their output with `[[ ]]`.
+
+## TLS and the trust store
+
+`curl` is the HTTP client, `openssl` is what it speaks TLS with, and `ca-certificates` is
+the list of roots it verifies against. All three arrived together, because none of them
+is useful alone.
+
+The TLS backend was an open question — `docs/container-runtime.md` preferred mbedTLS on
+size, at roughly 1.5 MB against OpenSSL's 5. It is settled on OpenSSL, on the *modern and
+established* test at the top of this file. mbedTLS is established in embedded firmware;
+OpenSSL is what a general-purpose Linux has, and the next thing here to want TLS will
+look for `libcrypto` and expect to find it. Carrying two TLS libraries is the outcome
+worth avoiding, so the one to carry is the one that scales. Its `Configure` being perl was
+never a disqualification: a build-time interpreter is fine, and what the rule forbids is
+an interpreter *in the image* — which is why `packages/openssl/build.sh` deletes
+`c_rehash`, `CA.pl` and `tsget` from `DESTDIR`, and `packages/curl/build.sh` deletes
+`curl-config`, all four being scripts with no interpreter here to run them.
+
+The roots come from Debian's `ca-certificates`, which is a snapshot of Mozilla's
+`certdata.txt` plus the python that turns it into PEM — the same source Buildroot,
+OpenWrt, Void and Gentoo build their bundles from. The python runs in the builder and
+what ships is a text file: `/etc/ssl/certs/ca-certificates.crt`, one concatenated bundle
+rather than a hashed `CApath` directory, since building that directory is what `c_rehash`
+was for. `/etc/ssl/cert.pem` is a symlink to it, so OpenSSL's own default finds it too.
+
+`openssl` is pinned to the 3.5 LTS branch and `packages/openssl/env.sh` says why at
+length. The short version: curl is compiled against the builder image's OpenSSL headers,
+so it asks for `libcrypto.so.3` at runtime and ours has to be the library that answers —
+which makes a major-version bump something to do deliberately rather than automatically.
 
 ## Containers
 

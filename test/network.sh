@@ -18,11 +18,22 @@
 # That means logging in at the serial getty first, with the credentials the image ships
 # in image/files/etc/shadow.
 #
-# The three checks are layered so that a failure says where it broke: a routable link
-# means DHCP answered, `getent hosts` means the systemd-resolved stub that
-# /etc/resolv.conf points at answers, and opening a TCP connection means routing and
-# the VMM's NAT work. The last two need the machine running this to have internet
-# access — with qemu's user-mode networking the guest reaches the outside through it.
+# The checks come in two rounds, layered so that a failure says where it broke.
+#
+# The first round asks whether the *system* has a network, using nothing the image had to
+# grow a package for: a routable link means DHCP answered, `getent hosts` means the
+# systemd-resolved stub that /etc/resolv.conf points at answers, and opening a TCP
+# connection means routing and the VMM's NAT work.
+#
+# The second asks whether anyone logged in could *see and use* it, which is what issue
+# #77 was about: `ip` reads the address and route back out of the kernel rather than out
+# of networkd's opinion of them, `ping` proves an ICMP socket opens, and `curl` proves
+# TLS — name resolution, a chain verified against the shipped CA bundle, and a request.
+# Splitting them means "the network is broken" and "the tools are broken" cannot be
+# mistaken for one another.
+#
+# Everything past the first check needs the machine running this to have internet access
+# — with qemu's user-mode networking the guest reaches the outside through it.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -43,19 +54,41 @@ LOGIN_PASSWORD="${LOGIN_PASSWORD:-root}"
 # a marker must not appear in the command that produces it or we would match our own
 # input. The guest's shell strips the quotes; the patterns below are the joined string.
 #
-# The checks use nothing but bash builtins, networkctl and getent. That started as a
-# constraint — the image had no grep, sed or awk — and is now a choice: bash's [[ ]]
+# The first round uses nothing but bash builtins, networkctl and getent. That started as
+# a constraint — the image had no grep, sed or awk — and is now a choice: bash's [[ ]]
 # and /dev/tcp cover what they would have been for, and a console handshake this
-# delicate is better off not depending on a package it is not testing.
+# delicate is better off not depending on a package it is not testing. The second round
+# is the one place that rule is deliberately broken, because the tools *are* what it is
+# testing; it still parses their output with [[ ]] rather than reaching for grep.
 READY="SHELL-IS-UP"
 MARKER="NET-SMOKE-OK"
+TOOLS_MARKER="NET-TOOLS-OK"
 QUIET="stty -echo; PS1="
 PROBE="echo SHELL-IS'-UP'"
 CHECK="[[ \$(networkctl --no-pager) == *routable* ]] \
 && getent hosts $HOST >/dev/null \
 && (exec 3<>/dev/tcp/$HOST/$PORT) \
 && echo NET-SMOKE'-OK'"
-DIAGNOSE="networkctl --no-pager status; resolvectl --no-pager status; cat /etc/resolv.conf"
+# -oneline so the address and its flags land on one line for [[ ]] to match, and -4 so
+# the link-local IPv6 address a NIC has whether or not anything configured it cannot
+# satisfy this on its own.
+#
+# ping goes to the loopback address rather than $HOST on purpose: qemu's user-mode
+# networking only forwards ICMP when the *host* kernel lets an unprivileged process open
+# a datagram ICMP socket, which is a property of the machine running the test and not of
+# the image. 127.0.0.1 asks the question this test can answer — that the binary runs and
+# gets its socket — and leaves reachability to the TCP and TLS checks either side of it.
+#
+# curl carries the whole TLS stack on its back: resolving the name, verifying the chain
+# against /etc/ssl/certs/ca-certificates.crt, and speaking HTTP over it. -f so an HTTP
+# error status is a failure rather than a zero-length body, -sS so only errors print.
+TOOLS_CHECK="[[ \$(ip -4 -oneline address show scope global) == *inet* ]] \
+&& [[ \$(ip -4 route show default) == default* ]] \
+&& ping -c1 -W5 127.0.0.1 >/dev/null \
+&& curl -fsS -o /dev/null https://$HOST/ \
+&& echo NET-TOOLS'-OK'"
+DIAGNOSE="networkctl --no-pager status; resolvectl --no-pager status; cat /etc/resolv.conf
+ip -4 address show; ip -4 route show"
 
 # Defaults to the host's own architecture — CI runs this on a matching amd64 or arm64
 # runner, so it never has to be told. Override with ARCH=amd64|arm64 to point at the
@@ -205,3 +238,18 @@ until grep -qaF "$MARKER" "$LOG"; do
 done
 
 echo ">> network OK: link routable, $HOST resolved, TCP connection to $HOST:$PORT accepted"
+echo ">> checking the tools a person logged in here would reach for"
+
+# Round two. Nothing above needs retrying to reach here, so anything this round is
+# waiting for is a TLS handshake or a slow name lookup rather than a lease — but a few
+# more attempts cost nothing next to failing a CI run on one dropped packet.
+until grep -qaF "$TOOLS_MARKER" "$LOG"; do
+    [ "$SECONDS" -lt "$deadline" ] || \
+        fail "ip, ping or curl failed (the network itself is up — see the console below)"
+    grep -qaE "$DIED" "$LOG" && fail "the guest died"
+    kill -0 "$qemu_pid" 2>/dev/null || fail "qemu exited"
+    printf '%s\n' "$TOOLS_CHECK" >&3
+    sleep 5
+done
+
+echo ">> tools OK: ip shows the lease and a default route, ping runs, curl https://$HOST verified"

@@ -155,8 +155,12 @@ jobs:
           - acl
           - attr
           - bash
+          # Data again, and from a distribution rather than an upstream: Mozilla's root
+          # certificates as Debian snapshots and parses them. Nothing to compile.
+          - ca-certificates
           - coreutils
           - crun
+          - curl
           - dbus
           - e2fsprogs
           - elfutils
@@ -179,6 +183,7 @@ jobs:
           - libmnl
           - libxcrypt
           - ncurses
+          - openssl
           - pam
           - sed
           - systemd

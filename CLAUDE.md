@@ -47,14 +47,19 @@ require breaking one, say so and offer an alternative that keeps it.
    configured away.
 4. **Networking has to work end to end.** A booted image needs working interfaces,
    addressing (systemd-networkd/systemd-resolved), DNS and outbound connectivity — not just
-   a kernel that has the drivers.
+   a kernel that has the drivers. And it has to be *usable* from inside the guest, which
+   is a separate claim and was false for a long time: `ip`, `ping` and `curl` (with TLS
+   and a trust store behind it) are what make the difference between a machine that has a
+   network and one somebody can debug.
 5. **No new interpreters in the image.** `bash` is the one it has, and that is the budget.
    A package that would put perl, python, lua or a JavaScript runtime into `rootfs/`
    needs an argument that it is unavoidable, not merely convenient — and "we could write
    this bit in python" is never that argument. What the *builder* needs is unconstrained:
    perl is already in `builder/deps.txt`, and a package whose `configure` is perl or
    python is fine. The rule is about what ships. Watch `make install`, which is where an
-   interpreted helper script sneaks into `DESTDIR`.
+   interpreted helper script sneaks into `DESTDIR` — iproute2's `routel` is python,
+   OpenSSL's `c_rehash`/`CA.pl`/`tsget` are perl, and curl's `curl-config` is `#!/bin/sh`,
+   which this image does not have either. Each package's `build.sh` deletes its own.
 6. **Every package is DFSG-free, and says so.** `LICENSE=` in `env.sh`, as an SPDX
    expression, checked by `test/check-licenses.sh` against `test/dfsg-licenses.txt` in its
    own workflow. Debian's guidelines are the bar because Debian has already argued every
@@ -132,7 +137,12 @@ run them in the background rather than blocking on a foreground call.
 
 `build.sh` skips the download when the tarball is already in downloads/ and skips the
 extract when `packages/<pkg>/<PACKAGE>/` already exists, so a rebuild after editing only
-`packages/<pkg>/build.sh` re-runs just the compile.
+`packages/<pkg>/build.sh` re-runs just the compile. The extraction is
+`--strip-components=1` into a directory `build.sh` names, rather than into whatever
+directory the tarball happens to contain: `$PACKAGE` is derived from `$VERSION`, so the
+unpacked tree is versioned even when upstream's is not. Debian's `ca-certificates` unpacks
+to a bare `ca-certificates/`, and without this a version bump would find the previous
+snapshot already sitting there and quietly skip the extraction.
 
 `rootfs/` is a *shared, cumulative* staging tree (gitignored) — every package installs
 into the same directory and nothing removes stale files, so after a version bump or a
@@ -269,6 +279,18 @@ is only discovered when the binary is exec'd in qemu. Prefer configuring the dep
 out (`--without-selinux`, `-Dx11_autolaunch=disabled`) over adding a package to satisfy it.
 `test/check-rootfs-deps.sh` reports all of them at once; `test/known-missing-libs.txt` allowlists
 the accepted backlog so new regressions stand out. Run it before booting.
+
+**And the version of that which the check cannot catch: a library that is already on the
+allowlist.** `known-missing-libs.txt` says "these are accepted", not "these are accepted
+for glibc's nscd" — so a *new* package picking up an allowlisted library is reported as
+part of the backlog and the build passes. iproute2 is the worked example: `libselinux-dev`
+is in deps.txt's deliberately-absent list, but `libblkid-dev` pulls it into the image
+anyway, and iproute2's configure links `ip` and `ss` against it with no `--without-selinux`
+to pass. Since `libselinux.so.1` is already allowlisted for nscd, the first sign would
+have been `ip` not starting in qemu. The fix is in `packages/iproute2/build.sh`: hide the
+library from `$PKG_CONFIG`, then `readelf` the installed binary and fail the build if it
+came back. **When packaging something that might reach for an allowlisted library, check
+the binary rather than the check.**
 
 ## Image assembly and boot
 
@@ -420,10 +442,37 @@ Networking is systemd end to end: `image/files/etc/systemd/network/20-wired.netw
 symlink into resolved's `/run` stub. The qemu scripts pass `-nic user,model=virtio-net-pci`;
 the NIC shows up as `ens3`, so match on the naming scheme rather than a fixed name.
 `test/network.sh` is the check — it boots systemd for real and logs in at the serial
-getty (`root`/`root`, from `image/files/etc/shadow`). Its in-guest commands are bash builtins,
-`networkctl` and `getent` only. That was forced when the image had no `grep`, `sed` or
-`awk`; those are packages now, but the tests still stick to builtins so a failure in the
-handshake means what it says.
+getty (`root`/`root`, from `image/files/etc/shadow`) — and it runs **two rounds**, which is
+the thing to preserve when adding to it. The first asks whether the system has a network
+and uses bash builtins, `networkctl` and `getent` only. That was forced when the image had
+no `grep`, `sed` or `awk`; those are packages now, but the round still sticks to builtins
+so a failure in the handshake means what it says. The second asks whether someone logged
+in could use it — `ip` for the address and route, `ping`, and `curl` over TLS — and is the
+one place that rule is deliberately broken, because those tools are what it is testing.
+Keeping them apart is what separates "the network is broken" from "the tools are broken".
+
+`ping` goes to `127.0.0.1` there, not to a real host. qemu's user-mode networking only
+forwards ICMP when the *host* kernel lets an unprivileged process open a datagram ICMP
+socket, which is a property of the machine running the test rather than of the image — so
+an outbound ping is a flaky check of something the TCP and TLS probes either side of it
+already cover. In the guest, `image/files/etc/sysctl.d/50-ping-group-range.conf` is what
+lets a non-root account ping at all: nothing here is setuid, and a `CAP_NET_RAW` file
+capability would have to survive both `mkfs.ext4 -d` and the OCI layer tar.
+
+`ip` and friends come from `iproute2`, which wants `libmnl` — without it its configure
+sets `HAVE_MNL:=n` and silently drops half the tool set. Its `make install` puts a python
+`routel` next to `ip`; `packages/iproute2/build.sh` deletes it (constraint 5).
+
+TLS is `openssl` (3.5 LTS), `curl` built `--with-openssl`, and `ca-certificates` — Debian's
+snapshot of Mozilla's roots, concatenated into `/etc/ssl/certs/ca-certificates.crt` with
+`/etc/ssl/cert.pem` symlinked to it, which is the bundle curl is compiled to look for and
+OpenSSL's own default. There is no hashed `CApath`, deliberately: building one is what
+`c_rehash` is for, and `c_rehash` is perl. **The OpenSSL version is coupled to the builder
+image's**, and this is the sharp edge: curl compiles against sid's `libssl-dev` and asks
+for `libcrypto.so.3`/`libssl.so.3` at runtime, which ours answers only while it stays on a
+3.x release. `packages/openssl/env.sh` holds `tools/check-updates.sh` to the 3.5 series
+for that reason, and `test/check-symbol-versions.sh` is what would catch the other
+direction — a curl that wanted a symbol version our older OpenSSL does not define.
 
 The OCI runtime is `crun` (constraint 3), plus `json-c` for `config.json`. crun is the
 only runtime written in C; runc (Go) and youki (Rust) would each mean a second toolchain

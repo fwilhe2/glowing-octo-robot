@@ -34,6 +34,8 @@ Zlib
 0BSD                    # BSD Zero Clause, i.e. no conditions at all; liblzma
 Apache-2.0
 AFL-2.1                 # Academic Free License; one half of dbus's dual license
+curl                    # MIT plus the advertising clause, i.e. X11 in all but wording;
+                        # SPDX gives it its own identifier because the text differs
 
 # --- copyleft -----------------------------------------------------------------------
 GPL-2.0-only
@@ -44,6 +46,7 @@ LGPL-2.1-only
 LGPL-2.1-or-later
 LGPL-3.0-or-later
 EUPL-1.2                # European Union Public Licence; parts of util-linux
+MPL-2.0                 # Mozilla Public License; certdata.txt, the root certificate list
 
 # --- exceptions, used on the right of a WITH ----------------------------------------
 Linux-syscall-note      # what keeps userspace off the kernel's GPL
