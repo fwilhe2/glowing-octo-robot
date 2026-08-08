@@ -125,9 +125,23 @@ else
     # rather than half-extracted.
     ./tools/fetch-sources.sh "$PKG"
 
+    # Into a directory this script names, rather than whichever one the tarball happens
+    # to contain: $PACKAGE is derived from $VERSION, so the unpacked tree is versioned
+    # even when upstream's is not. Debian's ca-certificates unpacks to a bare
+    # `ca-certificates/`, and with that as $PACKAGE a version bump would find the
+    # previous snapshot already sitting there, skip the extraction and build the old
+    # certificates under the new version number. --strip-components=1 is a no-op for
+    # every other package here: each of their tarballs has exactly one top-level
+    # directory, named $PACKAGE already.
     if [ ! -d "$PKG_DIR/$PACKAGE" ]; then
         echo "Extracting ${TARBALL}..."
-        tar -xf "downloads/$TARBALL" -C "$PKG_DIR"
+        # Assembled under another name and moved into place, so that an interrupted
+        # extraction leaves nothing for the next run to mistake for a finished one.
+        staging="$PKG_DIR/.extracting"
+        rm -rf "$staging"
+        mkdir -p "$staging"
+        tar -xf "downloads/$TARBALL" -C "$staging" --strip-components=1
+        mv "$staging" "$PKG_DIR/$PACKAGE"
     else
         echo "Directory $PKG_DIR/$PACKAGE already exists, skipping extraction."
     fi

@@ -13,5 +13,7 @@ output
 # CI's scratch directory for downloaded artifacts.
 artifacts
 
-# Unpacked source trees, e.g. packages/bash/bash-5.3/
+# Unpacked source trees, e.g. packages/bash/bash-5.3/, and the directory build.sh
+# assembles one in before moving it into place.
 /packages/*/*-[0-9]*/
+/packages/*/.extracting/
