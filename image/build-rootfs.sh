@@ -155,6 +155,12 @@ if [ "$flavour" = oci ]; then
     # image; they would simply dangle now that libsystemd-shared is gone.
     rm -rf usr/lib/systemd usr/lib/udev usr/share/factory usr/share/user-tmpfiles.d
     rm -rf usr/lib/sysusers.d usr/lib/tmpfiles.d usr/lib/environment.d usr/lib/binfmt.d
+    # sysctl.d is systemd-sysctl's, and a container has no business setting kernel
+    # parameters — the ones it can see belong to the host or to its own namespace, and
+    # nothing in here would apply them either way. That covers ours as well as systemd's:
+    # image/files/etc/sysctl.d/50-ping-group-range.conf is the guest's opt-in to
+    # unprivileged ICMP sockets, and a runtime decides that for a container.
+    rm -rf usr/lib/sysctl.d etc/sysctl.d
     rm -rf usr/lib/credstore etc/credstore etc/credstore.encrypted usr/lib/pam.d
     rm -rf etc/systemd etc/udev etc/tmpfiles.d etc/user-tmpfiles.d
     rm -f  usr/lib/security/pam_systemd.so usr/lib/security/pam_systemd_loadkey.so

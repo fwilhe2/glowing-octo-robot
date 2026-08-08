@@ -170,10 +170,13 @@ jobs:
           # Data, not code: IANA's registries as the /etc/services and /etc/protocols
           # that nsswitch.conf has been naming all along. Its build.sh compiles nothing.
           - iana-etc
+          - iproute2
+          - iputils
           - json-c
           - kmod
           - libbpf
           - libcap
+          - libmnl
           - libxcrypt
           - ncurses
           - pam

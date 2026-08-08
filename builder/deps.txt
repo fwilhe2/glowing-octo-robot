@@ -92,6 +92,7 @@ libfdisk-dev
 libjson-c-dev
 libkmod-dev
 liblzma-dev
+libmnl-dev
 libmount-dev
 libncurses-dev
 libpam0g-dev
