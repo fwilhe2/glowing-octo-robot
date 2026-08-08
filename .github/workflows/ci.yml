@@ -230,6 +230,24 @@ jobs:
           # The long jobs (kernel, glibc, boot, rootfs) keep full tracing.
           proc_trace_enable: false
 
+          # And the summary those metrics would be written to is dropped, which
+          # is about the run page rather than about this job. Every mermaid
+          # block the action emits becomes its own iframe against
+          # viewscreen.githubusercontent.com, and the run summary page
+          # concatenates all 77 jobs' summaries: at ~11 blocks each that is
+          # ~860 iframes on one page, which no browser stays responsive
+          # through. Dropping the 66 jobs that have the least to say leaves
+          # ~130 — the builder, sources, glibc, kernel, rootfs and boot jobs,
+          # where the numbers are worth having.
+          #
+          # This is a stopgap and should not outlive its cause. Nothing here
+          # consumes the metrics once the summary is off, so these jobs now
+          # collect and discard them. The fix is upstream in the action, which
+          # is being taught to render the same data as text — sparklines in a
+          # markdown table, no iframes at all — at which point this line comes
+          # back out and the pin moves instead.
+          job_summary: false
+
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
 
