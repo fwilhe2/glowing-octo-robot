@@ -19,7 +19,10 @@
 # setuid, and file capabilities would not survive the image build in any case. That
 # leaves ping working for root, and for everyone else through the datagram ICMP socket
 # image/files/etc/sysctl.d/50-ping-group-range.conf enables.
-meson setup --prefix /usr \
+#
+# --buildtype=release: meson's default is `debug`, which is -O0. See "the three things
+# that break silently" in CLAUDE.md.
+meson setup --prefix /usr --buildtype=release \
   -DUSE_IDN=false \
   -DUSE_GETTEXT=false \
   -DBUILD_MANS=false \

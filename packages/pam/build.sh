@@ -3,7 +3,9 @@
 # libeconf, NIS) and the docs toolchain.
 # -Dlibdir=lib: meson otherwise defaults to the Debian multiarch path, which would put
 # libpam.so.0 and the PAM modules where login can't find them.
-meson setup --prefix /usr -Dlibdir=lib \
+# --buildtype=release: meson's default is `debug`, which is -O0. See "the three things
+# that break silently" in CLAUDE.md.
+meson setup --prefix /usr --buildtype=release -Dlibdir=lib \
   -Ddocs=disabled -Daudit=disabled -Dselinux=disabled \
   -Deconf=disabled -Dnis=disabled -Dexamples=false \
   build
