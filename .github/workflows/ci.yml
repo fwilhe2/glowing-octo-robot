@@ -314,18 +314,18 @@ jobs:
       - name: Create disk image
         run: |
             podman build -t rootfs-builder -f image/Containerfile .
-            podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh ext4
+            podman run -e FLFS_BUILD="$GITHUB_SHA" --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh ext4
 
       # The second output of the same staging tree: the same userspace with the kernel
       # and systemd taken back out, as an OCI image. It reuses the container built above.
       - name: Create OCI image
-        run: podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh oci
+        run: podman run -e FLFS_BUILD="$GITHUB_SHA" --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh oci
 
       # Loading it proves the hand-written OCI layout is well formed, and running it is
       # the only check in this job that executes a binary we shipped. It is not a
       # substitute for the boot job below: the container runs on the runner's kernel.
       - name: Run the OCI image
-        run: ./test/oci.sh output/flfs-oci.tar
+        run: FLFS_BUILD="$GITHUB_SHA" ./test/oci.sh output/flfs-oci.tar
 
       - name: Upload rootfs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
