@@ -451,6 +451,226 @@ fi
 du -sh "$IMAGE"
 
 # ---------------------------------------------------------------------------------
+# What is in the image, written down: an SPDX 2.3 document, one per flavour (issue #75).
+#
+# Generated, not scanned. A scanner infers packages from a package manager's database and
+# there is none here — nothing in this image was installed, everything was compiled — so a
+# scanner would find almost nothing and be confident about it. Every ingredient is already
+# pinned and hashed in packages/<pkg>/env.sh; builder/build-package.sh stages those pins
+# into usr/share/flfs/components as each package installs, and this reads them back.
+#
+# Reading them from the *assembled* tree rather than from packages/ is the whole point,
+# and it is why this lives here rather than in a script over the repository. The two
+# flavours have genuinely different contents — the oci one has had systemd and the kernel
+# subtracted — so a document generated from env.sh would describe neither image. What is
+# in usr/share/flfs/components is what got staged into the tree that became this image.
+#
+# Written by hand, for the same reason the OCI archive below is: this is a JSON object
+# with fields we control, and the alternative is putting jq or python into
+# image/Containerfile to serialise thirty string fields. The values are package names,
+# versions, URLs and hex digests — but "we control them" is a claim worth checking rather
+# than asserting, so test/check-sbom.sh parses the result on the runner, where there *is*
+# a JSON parser, and CI fails when it will not parse or comes up short.
+sbom="$IMAGE/usr/share/flfs/sbom.json"
+components="$IMAGE/usr/share/flfs/components"
+
+if [ ! -d "$components" ] || [ -z "$(ls -A "$components" 2>/dev/null)" ]; then
+    echo "error: no component records in usr/share/flfs/components" >&2
+    echo "       builder/build-package.sh stages one per package; a tree without them" >&2
+    echo "       predates that and cannot be described. Delete rootfs/ and rebuild." >&2
+    exit 1
+fi
+
+# SOURCE_DATE_EPOCH when it is set, so that the same tree produces the same document.
+# SPDX requires a creation timestamp and an unconditional `date` would be the only thing
+# in the image that changes between two identical builds.
+created=$(date -u -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y-%m-%dT%H:%M:%SZ)
+
+# JSON string escaping, for the four characters that can appear in anything read from a
+# file: backslash, quote, tab, and any control character. Applied to every value below
+# rather than only the ones that look risky — the cost is nothing and the alternative is
+# deciding, per field, whether upstream could ever put a quote in a version string.
+jstr() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' -e 's/\r/\\r/g'
+}
+
+# SPDX identifiers may only contain letters, digits, '.' and '-'.
+spdxid() { printf '%s' "$1" | tr -c 'A-Za-z0-9.-' '-'; }
+
+image_name="flfs-$flavour-$oci_arch"
+
+{
+    printf '{\n'
+    printf '  "spdxVersion": "SPDX-2.3",\n'
+    printf '  "dataLicense": "CC0-1.0",\n'
+    printf '  "SPDXID": "SPDXRef-DOCUMENT",\n'
+    printf '  "name": "%s",\n' "$(jstr "$image_name")"
+    # The namespace has to be unique per document. Deriving it from the component records
+    # rather than from a UUID keeps two builds of the same tree identical, which is the
+    # same reason SOURCE_DATE_EPOCH is honoured above.
+    printf '  "documentNamespace": "https://github.com/fwilhe2/glowing-octo-robot/spdx/%s-%s",\n' \
+        "$(jstr "$image_name")" "$(cat "$components"/* | sha256sum | cut -c1-16)"
+    printf '  "creationInfo": {\n'
+    printf '    "created": "%s",\n' "$created"
+    printf '    "creators": [ "Tool: flfs-build-rootfs", "Organization: github.com/fwilhe2/glowing-octo-robot" ]\n'
+    printf '  },\n'
+    printf '  "documentDescribes": [ "SPDXRef-Image" ],\n'
+    printf '  "packages": [\n'
+
+    # The image itself, which everything else is CONTAINED_BY or a DEPENDS_ON of.
+    printf '    {\n'
+    printf '      "SPDXID": "SPDXRef-Image",\n'
+    printf '      "name": "%s",\n' "$(jstr "$image_name")"
+    printf '      "downloadLocation": "NOASSERTION",\n'
+    printf '      "filesAnalyzed": false,\n'
+    printf '      "licenseConcluded": "NOASSERTION",\n'
+    printf '      "licenseDeclared": "NOASSERTION",\n'
+    printf '      "copyrightText": "NOASSERTION",\n'
+    printf '      "primaryPackagePurpose": "OPERATING_SYSTEM"\n'
+    printf '    }'
+
+    for record in "$components"/*; do
+        name= version= license= origin= builder= url= sha256=
+        while IFS='=' read -r key value; do
+            case "$key" in
+                name) name=$value ;; version) version=$value ;; license) license=$value ;;
+                origin) origin=$value ;; builder) builder=$value ;;
+                url) url=$value ;; sha256) sha256=$value ;;
+            esac
+        done < "$record"
+        [ -n "$name" ] || continue
+
+        printf ',\n    {\n'
+        printf '      "SPDXID": "SPDXRef-Package-%s",\n' "$(spdxid "$name")"
+        printf '      "name": "%s",\n' "$(jstr "$name")"
+        printf '      "versionInfo": "%s",\n' "$(jstr "$version")"
+        # A local-source package has no tarball to point at, so the repository is the
+        # download location and there is no checksum — the honest answer in both cases,
+        # and NOASSERTION would be a worse one.
+        if [ "$origin" = local ]; then
+            printf '      "downloadLocation": "git+https://github.com/fwilhe2/glowing-octo-robot",\n'
+        else
+            printf '      "downloadLocation": "%s",\n' "$(jstr "$url")"
+        fi
+        printf '      "filesAnalyzed": false,\n'
+        if [ -n "$sha256" ]; then
+            printf '      "checksums": [ { "algorithm": "SHA256", "checksumValue": "%s" } ],\n' "$(jstr "$sha256")"
+        fi
+        printf '      "externalRefs": [ { "referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:generic/%s@%s" } ],\n' \
+            "$(jstr "$name")" "$(jstr "$version")"
+        printf '      "licenseConcluded": "NOASSERTION",\n'
+        printf '      "licenseDeclared": "%s",\n' "$(jstr "${license:-NOASSERTION}")"
+        printf '      "copyrightText": "NOASSERTION"\n'
+        printf '    }'
+    done
+
+    # The toolchain. Same package and same source compiled by a different compiler is a
+    # different artifact, and this is the one build input env.sh has never described.
+    # One entry per distinct reference, which is normally one.
+    builders=$(awk -F= '$1 == "builder" && $2 != "" { print $2 }' "$components"/* | sort -u)
+    for b in $builders; do
+        printf ',\n    {\n'
+        printf '      "SPDXID": "SPDXRef-Builder-%s",\n' "$(spdxid "$b")"
+        printf '      "name": "%s",\n' "$(jstr "${b%%:*}")"
+        printf '      "versionInfo": "%s",\n' "$(jstr "${b##*:}")"
+        printf '      "downloadLocation": "%s",\n' "$(jstr "$b")"
+        printf '      "filesAnalyzed": false,\n'
+        printf '      "licenseConcluded": "NOASSERTION",\n'
+        printf '      "licenseDeclared": "NOASSERTION",\n'
+        printf '      "copyrightText": "NOASSERTION"\n'
+        printf '    }'
+    done
+
+    # And the libraries the image asks for and does not have. An SBOM listing only what
+    # we built would describe something other than what runs: these are real runtime
+    # dependencies of shipped binaries, resolved by nothing. Computed from the assembled
+    # tree rather than read from test/known-missing-libs.txt, because that file is an
+    # allowlist of what has been *accepted* and this has to be what is actually true.
+    #
+    # They appear as packages the image DEPENDS_ON without a matching CONTAINS below,
+    # which is precisely what SPDX's two relationships are for and reads correctly in a
+    # consumer: needed, not present.
+    # Deliberately the same construction as test/check-rootfs-deps.sh, which is the
+    # authority on this question — two different answers to "what does this tree fail to
+    # resolve" is exactly the drift that file's allowlist exists to prevent. It cannot
+    # simply be reused: it runs over rootfs/, the staging tree, and this has to describe
+    # the *assembled* image, which the trim and the oci subtractions have changed.
+    #
+    # Both halves of `provided` matter, and getting either wrong is silent. A library is
+    # usually shipped as a real file plus a SONAME symlink pointing at it — libcurl.so.4
+    # -> libcurl.so.4.8.0 — so `-type f` alone misses every name a binary actually asks
+    # for. The first version of this reported 29 shipped libraries as missing for that
+    # reason. The SONAME read out of the file covers the other direction, where the link
+    # is absent and ld.so.conf resolves by name.
+    provided=$(
+        { find "$IMAGE" -name '*.so*' \( -type f -o -type l \) -print0 2>/dev/null |
+          xargs -0 -r -n40 sh -c '
+              for f in "$@"; do
+                  basename "$f"
+                  readelf -d "$f" 2>/dev/null | sed -n "s/.*SONAME.*\[\(.*\)\].*/\1/p"
+              done' _ || true; } | sort -u
+    )
+    # The braces and the `|| true` are load-bearing: this hands readelf every file in the
+    # tree, most of which are not ELF at all, and readelf exits non-zero on each one it
+    # cannot parse. xargs turns that into 123, and `set -o pipefail` at the top of this
+    # script turns *that* into a failed image build. Grouping is what lets `|| true`
+    # apply to the producer rather than to `sed`.
+    needed=$(
+        { find "$IMAGE" -type f -print0 2>/dev/null |
+          xargs -0 -r -n40 readelf -dW 2>/dev/null || true; } |
+        sed -n 's/.*NEEDED.*\[\(.*\)\].*/\1/p' | sort -u
+    )
+    missing=$(comm -23 <(printf '%s\n' "$needed") <(printf '%s\n' "$provided"))
+    for lib in $missing; do
+        [ -n "$lib" ] || continue
+        printf ',\n    {\n'
+        printf '      "SPDXID": "SPDXRef-Unresolved-%s",\n' "$(spdxid "$lib")"
+        printf '      "name": "%s",\n' "$(jstr "$lib")"
+        printf '      "versionInfo": "NOASSERTION",\n'
+        printf '      "downloadLocation": "NOASSERTION",\n'
+        printf '      "filesAnalyzed": false,\n'
+        printf '      "licenseConcluded": "NOASSERTION",\n'
+        printf '      "licenseDeclared": "NOASSERTION",\n'
+        printf '      "copyrightText": "NOASSERTION",\n'
+        printf '      "comment": "Referenced by a shipped binary through DT_NEEDED but not present in this image."\n'
+        printf '    }'
+    done
+
+    printf '\n  ],\n'
+    printf '  "relationships": [\n'
+    printf '    { "spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": "SPDXRef-Image" }'
+
+    for record in "$components"/*; do
+        name=$(awk -F= '$1 == "name" { print $2 }' "$record")
+        [ -n "$name" ] || continue
+        id="SPDXRef-Package-$(spdxid "$name")"
+        printf ',\n    { "spdxElementId": "SPDXRef-Image", "relationshipType": "CONTAINS", "relatedSpdxElement": "%s" }' "$id"
+        b=$(awk -F= '$1 == "builder" { print $2 }' "$record")
+        if [ -n "$b" ]; then
+            printf ',\n    { "spdxElementId": "SPDXRef-Builder-%s", "relationshipType": "BUILD_TOOL_OF", "relatedSpdxElement": "%s" }' \
+                "$(spdxid "$b")" "$id"
+        fi
+    done
+
+    for lib in $missing; do
+        [ -n "$lib" ] || continue
+        printf ',\n    { "spdxElementId": "SPDXRef-Image", "relationshipType": "DEPENDS_ON", "relatedSpdxElement": "SPDXRef-Unresolved-%s" }' "$(spdxid "$lib")"
+    done
+
+    printf '\n  ]\n'
+    printf '}\n'
+} > "$sbom"
+
+# The records were the intermediate form; the document supersedes them, the same way the
+# .catalog sources are superseded by the compiled database. Removing them also keeps the
+# SBOM the single answer to "what is in this image" rather than one of two that could
+# disagree.
+rm -rf "$components"
+
+cp "$sbom" "/usr/local/output/sbom-$flavour.json"
+echo "sbom: $(wc -c < "$sbom") bytes, $(grep -c '"SPDXID"' "$sbom") elements"
+
+# ---------------------------------------------------------------------------------
 # What the image weighs, written down. This is the only place the *assembled* tree
 # exists — rootfs/ is the input, still carrying the headers and static libraries the
 # trim above removed — so if the number is not taken here it cannot be taken at all.

@@ -132,6 +132,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./test/rootfs-size.sh [ext4|oci]  # image size vs test/size-budget.txt, and where it went
 ./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
+./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ```
 
@@ -383,6 +384,31 @@ happens at build time, in `packages/systemd/build.sh` (some fifty components off
 `vm.config` fragment in `packages/kernel/build.sh` (defconfig's hardware taken back out).
 Because `rootfs/` is cumulative, a component that stops being built stays staged locally
 until the tree is deleted; only CI starts clean.
+
+**The SBOM is generated, not scanned, and the shape of that is worth knowing before
+touching it.** A scanner reads a package manager's database and there is none here —
+nothing was installed, everything was compiled — so it would find almost nothing and be
+confident about it. Instead every pin already in `packages/<pkg>/env.sh` is handed across
+the container boundary as `FLFS_*` by root `build.sh`, written into
+`usr/share/flfs/components/<pkg>` by `builder/build-package.sh` *after* a successful
+install (so a package that failed to build leaves no record), and collected by
+`build-rootfs.sh` into an SPDX 2.3 document at `usr/share/flfs/sbom.json` plus
+`output/sbom-<flavour>.json`. The records are deleted once the document exists, being the
+intermediate form. Reading them from the **assembled** tree is the point: the two flavours
+have different contents, so a document generated from `packages/` would describe neither
+image.
+
+Two parts of it are easy to get wrong. The document is written by hand, for the same
+reason the OCI archive is — so `test/check-sbom.sh` parses it on the runner, where a JSON
+parser exists, and CI fails when it will not parse, when a package lacks a version or
+download location, when a tarball package lacks a SHA256, or when a relationship names an
+element that does not exist. And the *unresolved* libraries — the ones a shipped binary
+needs through `DT_NEEDED` that the image does not contain — are computed there with the
+same construction as `test/check-rootfs-deps.sh`, including symlinks and SONAMEs in what
+counts as provided. Using `-type f` alone reported 29 shipped libraries as missing,
+because a library is normally a real file plus the SONAME symlink binaries actually ask
+for. They appear as `DEPENDS_ON` without a matching `CONTAINS`, which is SPDX for "needed,
+not present".
 
 Two things in the image are *generated* rather than installed, and both are silent when
 they are missing. `ldconfig` is the known one. The other is systemd's message catalogue:
