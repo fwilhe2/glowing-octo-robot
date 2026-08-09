@@ -79,6 +79,14 @@ check "coreutils that start"                 test "$(ls -d /usr)" = /usr
 check "and can read the passwd file"         test "$(id -un)" = root
 check "the loader has a cache to read"       test -s /etc/ld.so.cache
 
+# The one assertion here that is about a symlink rather than a binary, and the cheapest
+# place in CI to make it: nothing else notices a /bin/sh that is missing or dangling
+# until something tries to run a script. This is also where it matters most — `crun spec`
+# writes "args": ["sh"] and this is a container image. packages/bash/build.sh makes the
+# link in the staging tree, so both flavours have it and testing either tests both.
+check "sh is on PATH, as crun spec assumes"  test "$(command -v sh)" = /usr/bin/sh
+check "and it runs, and it is bash"          test "$(sh -c "echo \$BASH_VERSION")" = "$BASH_VERSION"
+
 # Not an assertion — it is the one binary of ours that exists to be looked at, and this
 # is the cheapest place in CI that runs a shipped binary at all.
 echo

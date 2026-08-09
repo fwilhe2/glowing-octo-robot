@@ -95,12 +95,16 @@ Nearly free.
   Same jq-or-json-c decision as the pull tier.
 - **Execution.** `crun run`, unchanged.
 
-Two traps inherited from the current hand-built bundle are worth writing into the tool
-rather than rediscovering. `crun spec` emits `"args": ["sh"]` and **this image has no
-`/bin/sh`** — bash installs as `/usr/bin/bash` and nothing links `sh` to it, so an
-untranslated spec fails with "executable file not found" rather than anything
-informative. And the generated spec sets `"root": {"readonly": true}`, which is right
-for a bind mount and wrong for an overlay upperdir.
+One trap inherited from the current hand-built bundle is worth writing into the tool
+rather than rediscovering: the generated spec sets `"root": {"readonly": true}`, which is
+right for a bind mount and wrong for an overlay upperdir.
+
+There were two. `crun spec` also emits `"args": ["sh"]`, and for a long time this image
+had no `/bin/sh` at all, so an untranslated spec failed with "executable file not found"
+rather than anything informative. `packages/bash/build.sh` links `/usr/bin/sh` at bash
+now, which is the whole fix — a container's entrypoint is the least surprising place in
+the system to expect a shell, and this was the strongest of the several arguments for
+having one.
 
 ### 4. Networking
 
@@ -174,7 +178,8 @@ and established* test in `CLAUDE.md`:
 The caveats above are real and `packages/openssl/build.sh` handles them: `no-docs` keeps
 the perl pod renderer out of the build, and the three installed perl scripts (`c_rehash`,
 `CA.pl`, `tsget`) are deleted from `DESTDIR`. `packages/curl/build.sh` deletes
-`curl-config` for the same reason — `#!/bin/sh`, and this image has no `/bin/sh`.
+`curl-config` too, though for a different reason now that `/bin/sh` exists: it describes
+where libcurl's headers are, and the trim removes them.
 
 The `openssl` CLI *is* shipped, which this document previously said was unnecessary.
 Blob digests still come from coreutils `sha256sum`; `openssl s_client` and `openssl x509`

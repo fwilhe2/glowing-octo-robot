@@ -43,8 +43,8 @@
 make -j"$(nproc)"
 make install DESTDIR=/usr/local/rootfs
 
-# curl-config is #!/bin/sh, and this image has no /bin/sh — bash installs as
-# /usr/bin/bash and nothing links sh to it (see docs/container-runtime.md, where the same
-# fact breaks `crun spec`'s default args). It exists to tell a compiler where libcurl's
-# headers are, so it is doubly dead here: the trim deletes those headers.
+# curl-config exists to tell a compiler where libcurl's headers and libraries are, and
+# there is no compiler in the image and no headers either — the trim deletes them. That
+# was always the load-bearing half of this deletion; the other half, that its #!/bin/sh
+# had no interpreter here, stopped being true when packages/bash/build.sh linked sh.
 rm -f /usr/local/rootfs/usr/bin/curl-config
