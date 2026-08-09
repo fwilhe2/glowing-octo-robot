@@ -3,8 +3,8 @@
 **Status: nothing here is implemented.** `crun` works and `test/container.sh` proves it,
 but starting a container today means building an OCI bundle by hand — `crun spec`, a
 bind mount of the guest's own `/`, and a `config.json` patched with bash parameter
-expansion because the image has no `sed`. This document is what stands between that and
-`run docker.io/library/alpine sh`.
+expansion — there is no jq in the image, and a JSON edit is not a job for `sed`. This
+document is what stands between that and `run docker.io/library/alpine sh`.
 
 The headline is that **the kernel is already finished**. Every gap is userspace, and
 every missing piece has a C implementation, so nothing here forces a second toolchain
