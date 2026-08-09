@@ -131,8 +131,20 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage  # crun starts a container
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./test/rootfs-size.sh [ext4|oci]  # image size vs test/size-budget.txt, and where it went
+./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ```
+
+`size-history.sh` is the one of those that reports rather than checks: `rootfs-size.sh`
+asks whether an image is *allowed* to be this big, against a number somebody wrote down,
+and that only ever fires once — after the growth, usually some commits after the one that
+caused it. The history plots the last dozen builds on `main` from the `rootfs-size-<arch>`
+artifact CI already uploads, so there is no new state anywhere and it reaches exactly as
+far back as artifact retention. It never fails a build; a missing `gh`, an expired
+artifact or a branch with no history all end in a note. **Any summary added to this
+workflow has to be text — sparklines in a markdown table, no mermaid** — and the reason is
+written out at the telemetry step in `ci.yml`: the run page concatenates all 77 jobs'
+summaries and GitHub renders every mermaid block in its own iframe.
 
 There is no test suite and no linter — the checks above plus a real boot are the
 verification story. Builds are slow (glibc, systemd and the kernel are tens of minutes);

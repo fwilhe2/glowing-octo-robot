@@ -260,6 +260,19 @@ jobs:
 
   rootfs:
     runs-on: ${{ matrix.runner }}
+    # Spelled out because the "Image size over time" step reads the size artifact from
+    # *previous* runs, and `actions: read` is what lets the job's token list and download
+    # them. Same-run artifacts need none of this — actions/download-artifact uses the
+    # runtime token for those, which is why this job managed without a block until now.
+    #
+    # pull-requests: write is not new and not this step's: it is what the job inherited
+    # from the workflow-level default, and naming a block here replaces that default
+    # rather than adding to it. The telemetry action comments on the pull request, so
+    # dropping it would have turned this into a silent change to something else.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
     needs:
       - build
       - kernel
@@ -358,6 +371,28 @@ jobs:
       - name: Measure the OCI image
         if: always()
         run: ./test/rootfs-size.sh oci
+
+      # ...and then which way it is going, which the two steps above cannot say. A ceiling
+      # fires once, after the growth has happened and usually some commits after the one
+      # that caused it; this plots the last dozen builds on main and says what this one did
+      # to the number, per flavour and per directory.
+      #
+      # `always()`, and emphatically so: the run where the budget check just failed is the
+      # one where "which commit, and which directory" is worth most, and a step that only
+      # reports on success would be silent exactly then.
+      #
+      # It reads the rootfs-size-<arch> artifact the step above already uploads, from past
+      # runs — so there is no new state anywhere, and the history reaches exactly as far
+      # back as artifact retention. `continue-on-error` because this is telemetry and
+      # test/rootfs-size.sh is the enforcement: a summary that could fail a build would be
+      # a bad trade. The script also declines rather than fails on its own, so this is
+      # belt and braces.
+      - name: Image size over time
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./test/size-history.sh ${{ matrix.arch }}
 
       - name: Upload rootfs.ext4
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
