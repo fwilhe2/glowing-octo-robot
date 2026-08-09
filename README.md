@@ -348,6 +348,26 @@ Rebuilding only the image after changing one of the build-time options is not en
 locally: `rootfs/` is cumulative and nothing removes stale files from it, so a component
 that is no longer built stays staged until the tree is deleted and rebuilt.
 
+## The shell, and `/bin/sh`
+
+`bash` is the only interpreter in the image and `/usr/bin/sh` is a symlink to it, made by
+`packages/bash/build.sh` because upstream installs no such name — which shell answers to
+it is the distribution's decision. This one had not made it, so for a long time there was
+no `/bin/sh` here at all, which is a stranger position than it sounds: every `#!/bin/sh`
+script in the world is then a file the image cannot start. That is not hypothetical. It
+is `crun spec`'s default `"args": ["sh"]`, a container entrypoint, a systemd unit that
+shells out, and the wrapper scripts several of these packages install.
+
+Invoked under that name bash follows sh's startup-file behaviour on its own. It is not
+full POSIX mode, which needs `--posix` or `POSIXLY_CORRECT`, so nothing that relies on a
+bashism breaks and nothing that does not is any the wiser. Fedora and Arch point
+`/usr/bin/sh` at bash the same way. The cost is one symlink.
+
+What this does *not* change is the no-new-interpreters rule. The image gained no
+interpreter — bash was already here — and perl, python and the rest are as unwelcome as
+they were. What it changes is which deletions in a `build.sh` are about the shebang,
+which is now none of them.
+
 ## The system bus
 
 The image ships the reference `dbus-daemon` (the `dbus` package, which needs `expat`).
@@ -421,8 +441,10 @@ look for `libcrypto` and expect to find it. Carrying two TLS libraries is the ou
 worth avoiding, so the one to carry is the one that scales. Its `Configure` being perl was
 never a disqualification: a build-time interpreter is fine, and what the rule forbids is
 an interpreter *in the image* — which is why `packages/openssl/build.sh` deletes
-`c_rehash`, `CA.pl` and `tsget` from `DESTDIR`, and `packages/curl/build.sh` deletes
-`curl-config`, all four being scripts with no interpreter here to run them.
+`c_rehash`, `CA.pl` and `tsget` from `DESTDIR`, all three being perl with no perl here to
+run them. `packages/curl/build.sh` deletes `curl-config` alongside them for a different
+reason: it is a shell script, and shell scripts run here, but what it describes is where
+libcurl's headers live and the trim has removed them.
 
 The roots come from Debian's `ca-certificates`, which is a snapshot of Mozilla's
 `certdata.txt` plus the python that turns it into PEM — the same source Buildroot,

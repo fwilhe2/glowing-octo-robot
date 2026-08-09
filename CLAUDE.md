@@ -57,9 +57,12 @@ require breaking one, say so and offer an alternative that keeps it.
    this bit in python" is never that argument. What the *builder* needs is unconstrained:
    perl is already in `builder/deps.txt`, and a package whose `configure` is perl or
    python is fine. The rule is about what ships. Watch `make install`, which is where an
-   interpreted helper script sneaks into `DESTDIR` — iproute2's `routel` is python,
-   OpenSSL's `c_rehash`/`CA.pl`/`tsget` are perl, and curl's `curl-config` is `#!/bin/sh`,
-   which this image does not have either. Each package's `build.sh` deletes its own.
+   interpreted helper script sneaks into `DESTDIR` — iproute2's `routel` is python and
+   OpenSSL's `c_rehash`/`CA.pl`/`tsget` are perl. Each package's `build.sh` deletes its
+   own. `#!/bin/sh` is *not* one of these cases: `packages/bash/build.sh` links
+   `/usr/bin/sh` at bash, so a shell script runs here. A wrapper is still deleted when
+   what it wraps is missing — curl's `curl-config` describes headers the trim removes —
+   but that is a judgement about the wrapper, not about the shebang.
 6. **Every package is DFSG-free, and says so.** `LICENSE=` in `env.sh`, as an SPDX
    expression, checked by `test/check-licenses.sh` against `test/dfsg-licenses.txt` in its
    own workflow. Debian's guidelines are the bar because Debian has already argued every
