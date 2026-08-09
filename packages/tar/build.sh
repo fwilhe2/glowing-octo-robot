@@ -1,3 +1,23 @@
+# The builder container runs as root, and gnulib's mknod probe refuses to draw a
+# conclusion from that: its test program creates a fifo with mknod(2) and returns 99 when
+# geteuid() is 0, because root can do it either way and the result says nothing about
+# whether an ordinary user can. Rather than guess, configure stops — "you should not run
+# configure as root (set FORCE_UNSAFE_CONFIGURE=1 in environment to bypass this check)".
+# Nothing about tar is wrong; the check is about who is running it.
+#
+# FORCE_UNSAFE_CONFIGURE=1 is what the message names, and what packages/coreutils/build.sh
+# already does, but read what it actually decides: it takes the 99 as a *no*, defines
+# MKNOD_FIFO_BUG and compiles in gnulib's replacement — a workaround for a BSD bug, on
+# glibc, which does not have it. Answering the question is better than bypassing it, and
+# the answer is not in doubt. mknod(2) creates a fifo for an unprivileged user on Linux,
+# which is exactly what gnulib assumes when it cannot run the test at all: m4/mknod.m4's
+# cross-compile case is `linux-*) gl_cv_func_mknod_works="guessing yes"`.
+#
+# Presetting the cache variable also means the probe never runs, so rootness never comes
+# up. If a future gnulib renames it, the preset stops matching and the build fails the
+# same loud way it did today — which is the right failure to have.
+export gl_cv_func_mknod_works=yes
+
 # --without-selinux: `tar --selinux` stores and restores security contexts through
 # libselinux. There is no policy in the image and libselinux-dev is in deps.txt's
 # deliberately-absent list, so this is pinned rather than left to autodetection — the
