@@ -30,3 +30,34 @@ if [ ! -e "$libdir/libtinfow.so.6" ]; then
     exit 1
 fi
 ln -sfv libtinfow.so.6 "$libdir/libtinfo.so.6"
+
+# ncurses installs a terminfo *authoring* toolkit next to the two runtime tools. tic
+# compiles a terminfo source description into the binary form, captoinfo and infotocap
+# convert between termcap and terminfo, infocmp decompiles one back to source, and toe
+# lists what is in the database — all of which operate on a database that
+# image/build-rootfs.sh has already trimmed to a dozen entries and that nothing in the
+# image will ever add to. tset (and its `reset` alias) initialises a terminal from an
+# interactive login's guesswork about what it is talking to; the console here is a serial
+# line with TERM set by the getty. tabs sets hardware tab stops on a physical terminal.
+# ncursesw6-config is the same case as curl-config — it tells a compiler where the
+# headers are, and the trim deletes the headers.
+#
+# `clear` and `tput` stay. They are the two a shell script or a person at the console
+# actually calls, they cost about 50 KB together, and they read the trimmed database
+# rather than writing to it.
+#
+# --without-progs would be the tidier switch and takes clear and tput with it, so this
+# is a list instead.
+#
+# The test is `-e || -L` rather than plain `-e`, because several of these are symlinks
+# onto each other — captoinfo and infotocap point at tic, reset points at tset — and
+# removing the target first leaves the alias dangling, where `-e` is false and a plain
+# check would fail the build on its own previous iteration.
+for prog in tic captoinfo infotocap infocmp toe tset reset tabs ncursesw6-config; do
+    f=/usr/local/rootfs/usr/bin/$prog
+    if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+        echo "ncurses: $prog is not installed — this removal list is stale" >&2
+        exit 1
+    fi
+    rm -f "$f"
+done
