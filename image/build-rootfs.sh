@@ -229,11 +229,68 @@ fi
 
 # Debug symbols. glibc, systemd and util-linux are compiled with -g and nothing strips
 # them, so about half of what would be shipped is DWARF that only a debugger we do not
-# have could read — libc.so.6 alone is 11 MB unstripped and 2 MB stripped. strip refuses
-# to touch anything that is not an ELF object and leaves it alone, which is what makes
-# it safe to point at the whole tree; /boot is excluded because the kernel is not one.
-find usr -type f -print0 \
-    | xargs -0 -r -P "$(nproc)" -n 50 strip --strip-unneeded 2>/dev/null || true
+# have could read — libc.so.6 alone is 11 MB unstripped and 2 MB stripped. /boot is
+# excluded because the kernel is not one.
+#
+# This used to be `find usr -type f -print0 | xargs ... strip 2>/dev/null || true`, on the
+# belief that strip "refuses to touch anything that is not an ELF object and leaves it
+# alone". Half true: it leaves the file unmodified, but it also writes "file format not
+# recognized" and exits nonzero, once per text file in the tree. That is what the
+# `2>/dev/null` was for, and between them the two silencers hid a real failure:
+#
+#   - `xargs -P` stops dispatching when a child is killed or exits 255, so one strip that
+#     dies takes the whole remainder of the file list with it,
+#   - and `|| true` then discarded xargs' status, so the build carried on and shipped a
+#     tree that was only *partly* stripped — which part depending on find's order.
+#
+# Not hypothetical. On arm64 the oci flavour shipped a 10 MB unstripped libc.so.6 while
+# the ext4 flavour in the same job stripped it to 1.6 MB, reproducibly, and the only thing
+# that noticed was test/size-budget.txt. That file already records a smaller version of
+# this and reads it as batching noise: "two trees differing only in files that were
+# deleted from one produced ~0.9 MiB of difference in directories neither touched".
+#
+# So: hand strip only ELF objects, and let it fail the build if it fails. The magic test
+# is bash's `read -N 4` rather than file(1), which debian:sid does not have without
+# another line in image/Containerfile, or readelf, which would be a process per file.
+# bash drops NUL bytes as it reads, which is harmless here — \x7fELF contains none, so a
+# file whose first bytes are NUL simply fails to match and is skipped, as it should be.
+#
+# The scan runs with tracing off: `set -x` over twenty thousand iterations would be longer
+# than the rest of the build log put together.
+elf_list=$(mktemp)
+set +x
+while IFS= read -r -d '' f; do
+    LC_ALL=C read -r -N 4 magic < "$f" 2>/dev/null || continue
+    if [ "$magic" = $'\177ELF' ]; then printf '%s\0' "$f"; fi
+done < <(find usr -type f -print0) > "$elf_list"
+set -x
+echo "stripping $(tr -cd '\0' < "$elf_list" | wc -c) ELF objects"
+
+# Serial, one file per invocation, and the file named if it fails. That is a deliberate
+# retreat from `xargs -P "$(nproc)" -n 50`, on two grounds.
+#
+# The parallelism is no longer buying anything. It was there because this pass used to
+# walk the whole tree — twenty thousand files, almost all of them not ELF and each one an
+# error. The filter above takes it to eight hundred, and eight hundred strips cost seconds.
+#
+# And the parallelism is what made the failure unreadable. strip dies with SIGBUS on this
+# tree; batched fifty at a time across four workers, all xargs can say is "strip:
+# terminated by signal 7", the other forty-nine files in that batch are silently skipped,
+# and every file xargs had not yet dispatched is skipped too. One at a time, a crash names
+# its file, and nothing else is skipped because there is nothing else in flight.
+set +x
+stripped=0
+while IFS= read -r -d '' f; do
+    strip --strip-unneeded "$f" || {
+        set -x
+        echo "error: strip failed on $f (after $stripped objects)" >&2
+        exit 1
+    }
+    stripped=$((stripped + 1))
+done < "$elf_list"
+set -x
+echo "stripped $stripped ELF objects"
+rm -f "$elf_list"
 
 # Link-time-only files: static archives, libtool descriptors, the crt*.o startup objects
 # glibc installs next to them, headers and pkg-config metadata. The loader never opens

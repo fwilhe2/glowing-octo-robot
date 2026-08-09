@@ -1,0 +1,6 @@
+VERSION="1.14"
+PACKAGE="gzip-${VERSION}"
+TARBALL="$PACKAGE.tar.gz"
+URL="https://ftp.fau.de/gnu/gzip/${TARBALL}"
+SHA256="613d6ea44f1248d7370c7ccdeee0dd0017a09e6c39de894b3c6f03f981191c6b"
+LICENSE="GPL-3.0-or-later"

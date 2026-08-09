@@ -189,6 +189,7 @@ jobs:
           - flfsfetch
           - gawk
           - grep
+          - gzip
           # Data, not code: IANA's registries as the /etc/services and /etc/protocols
           # that nsswitch.conf has been naming all along. Its build.sh compiles nothing.
           - iana-etc
@@ -205,6 +206,7 @@ jobs:
           - pam
           - sed
           - systemd
+          - tar
           - util-linux
           - xz
           - zlib

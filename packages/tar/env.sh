@@ -1,0 +1,6 @@
+VERSION="1.35"
+PACKAGE="tar-${VERSION}"
+TARBALL="$PACKAGE.tar.gz"
+URL="https://ftp.fau.de/gnu/tar/${TARBALL}"
+SHA256="14d55e32063ea9526e057fbf35fcabd53378e769787eff7919c3755b02d2b57e"
+LICENSE="GPL-3.0-or-later"

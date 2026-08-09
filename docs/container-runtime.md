@@ -19,12 +19,14 @@ connectivity and published ports, `USER_NS` if rootless ever becomes interesting
 `BPF_SYSCALL` + `CGROUP_BPF` for the cgroup v2 device controller crun already leans on.
 
 Userspace has `crun` itself, `json-c` underneath it, `mount` and `nsenter` from
-util-linux, `sha256sum` from coreutils, `acl` and `attr` for extended attributes, `zlib`
-and `zstd`, and systemd-networkd/resolved for anything declarative.
+util-linux, `sha256sum` from coreutils, `tar` and `gzip` for the layers themselves, `acl`
+and `attr` for the extended attributes inside them, `zlib` and `zstd`, and
+systemd-networkd/resolved for anything declarative.
 
-**Issue #77 landed most of two of the four tiers below**, on its own merits rather than
-as a step towards this: `iproute2` and `libmnl` are here, and so are `curl`, `openssl` and
-a CA bundle. The tables below are marked accordingly. What that leaves is the parts that
+**The packaging under three of the four tiers below is now done.** Issue #77 did two of
+them on their own merits rather than as a step towards this — `iproute2` and `libmnl` are
+here, and so are `curl`, `openssl` and a CA bundle — and `tar` and `gzip` have since
+followed. The tables below are marked accordingly. What that leaves is the parts that
 are this document's actual work — an unpacker, a driver, a registry client, and the
 netfilter half of the networking — rather than the packaging underneath them.
 
@@ -66,14 +68,21 @@ of this document is about.
 
 | need | status | package |
 | --- | --- | --- |
-| tar | **missing entirely** | **tar** |
-| gzip | **missing entirely** | **gzip** |
+| tar | present | **tar**, GNU tar 1.35 |
+| gzip | present | **gzip** |
 | zstd layers | present | `zstd` |
 | xattrs and file capabilities in layers | present | `tar --xattrs` against `acl` + `attr` |
 
-Note that `tar` and `gzip` are absent from the image outright, not merely un-configured.
-`zlib` is a library with no CLI on top, and `tar+gzip` is what almost every layer in the
-wild is.
+Both were absent from the image outright rather than merely un-configured — `zlib` is a
+library with no CLI on top, and `tar+gzip` is what almost every layer in the wild is —
+so they were packaged together. Two things about that are worth knowing here.
+`packages/tar/build.sh` asserts on `config.h` that the ACL and xattr support this row
+depends on actually got compiled in, because neither `--with-posix-acls` nor
+`--with-xattrs` fails a configure that cannot have them, and the xattr calls come from
+glibc rather than from `libattr` — so a tar with no xattr support has the same `NEEDED`
+as one with it and unpacks a layer with no error and no capabilities. And gzip's
+`gunzip`/`zcat` are symlinks rather than upstream's wrapper scripts, which costs neither
+a fork nor a shell; see that package's `build.sh` for the one-macro mechanism.
 
 **GNU tar does not understand OCI whiteouts.** `.wh.foo` and `.wh..wh..opq` are a layer
 convention applied by the unpacker — containerd and umoci do it; tar has never heard of
@@ -203,16 +212,16 @@ The alternatives, for the record:
 
 ## The package list
 
-Four left of the original nine, none of them more than an afternoon. Issue #77 took the
-expensive tier and half the networking one:
+Two left of the original nine, neither more than an afternoon. Issue #77 took the
+expensive tier and half the networking one, and the unpack tier is done:
 
 ```
-tar  gzip                              unpack       cheap, and unblocks everything else
 libnftnl  nftables                     networking   small, all C
 jq                                     config       or a json-c helper instead
 
 done: libmnl  iproute2                 networking   #77
       openssl  curl  ca-certificates   pull         #77
+      tar  gzip                        unpack
 ```
 
 Plus one bash driver, a registry client and a `createRuntime` hook script — which are now
@@ -225,6 +234,8 @@ Each phase is independently useful, and CI stays green throughout.
 1. **`tar` and `gzip`, and a layer unpacker that handles whiteouts.** No runtime change
    at all — the deliverable is the ability to turn a directory of layer tarballs into a
    correct overlay lowerdir stack, with a test that a file deleted in layer 2 is gone.
+   The two packages are done; the unpacker, which is the half with the whiteout problem
+   in it, is not.
 2. **The driver: overlay assembly plus image-config-to-runtime-spec translation.** At the
    end of this phase `run <local-image> <cmd>` works, with no networking beyond the
    loopback-only netns `crun spec` already produces. This is the phase that delivers most
