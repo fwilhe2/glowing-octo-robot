@@ -265,7 +265,31 @@ while IFS= read -r -d '' f; do
 done < <(find usr -type f -print0) > "$elf_list"
 set -x
 echo "stripping $(tr -cd '\0' < "$elf_list" | wc -c) ELF objects"
-xargs -0 -r -P "$(nproc)" -n 50 strip --strip-unneeded < "$elf_list"
+
+# Serial, one file per invocation, and the file named if it fails. That is a deliberate
+# retreat from `xargs -P "$(nproc)" -n 50`, on two grounds.
+#
+# The parallelism is no longer buying anything. It was there because this pass used to
+# walk the whole tree — twenty thousand files, almost all of them not ELF and each one an
+# error. The filter above takes it to eight hundred, and eight hundred strips cost seconds.
+#
+# And the parallelism is what made the failure unreadable. strip dies with SIGBUS on this
+# tree; batched fifty at a time across four workers, all xargs can say is "strip:
+# terminated by signal 7", the other forty-nine files in that batch are silently skipped,
+# and every file xargs had not yet dispatched is skipped too. One at a time, a crash names
+# its file, and nothing else is skipped because there is nothing else in flight.
+set +x
+stripped=0
+while IFS= read -r -d '' f; do
+    strip --strip-unneeded "$f" || {
+        set -x
+        echo "error: strip failed on $f (after $stripped objects)" >&2
+        exit 1
+    }
+    stripped=$((stripped + 1))
+done < "$elf_list"
+set -x
+echo "stripped $stripped ELF objects"
 rm -f "$elf_list"
 
 # Link-time-only files: static archives, libtool descriptors, the crt*.o startup objects
