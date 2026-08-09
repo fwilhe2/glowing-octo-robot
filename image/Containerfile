@@ -1,8 +1,24 @@
-FROM debian:sid
+# Pinned to a Debian snapshot, for the reasons builder/Containerfile sets out at length:
+# a dated base image so `debian:sid` cannot drift under an old checkout, and apt pointed
+# at snapshot.debian.org so `apt-get install` resolves the same package versions it did on
+# the day. Same date in both files; they are bumped together.
+#
+# It matters here for a reason it does not there. The builder decides what the binaries
+# are compiled *by*; this image decides what the shipped bytes *are* — mkfs.ext4 lays out
+# the filesystem and strip decides what comes out of every ELF object. An unpinned
+# e2fsprogs or binutils means the same tree produces a different image, which is the one
+# thing test/size-budget.txt has to be able to compare across runs.
+ARG SNAPSHOT=20260803
+FROM debian:sid-${SNAPSHOT}@sha256:24c766c06ebdbda66a026e92361ede7d9212819701b2fca82e347ef0c240cb2c
+
+ARG SNAPSHOT
 
 # binutils is here for strip: build-rootfs.sh drops the debug symbols the packages are
 # compiled with, which is about half the size of the shipped tree.
-RUN apt-get update && apt-get -y install e2fsprogs cpio binutils
+RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
+    && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%sT000000Z sid main\n' "$SNAPSHOT" \
+       > /etc/apt/sources.list \
+    && apt-get update && apt-get -y install e2fsprogs cpio binutils
 
 COPY image/build-rootfs.sh /usr/local/bin/
 RUN chmod +X /usr/local/bin/build-rootfs.sh

@@ -6,9 +6,51 @@
 # architecture-suffixed package, because build-essential and g++ pull the right
 # binutils/gcc for the host on their own. Everything here builds natively, so the image
 # is built once per architecture and joined into a manifest list.
-FROM debian:sid
+# The snapshot this image is pinned to. Two things have to be named in time, not one:
+#
+#   the base image   debian:sid floats — it is rebuilt continuously and a checkout from
+#                    two years ago would compile against whatever sid is today. Debian
+#                    publishes dated sid images for exactly this, and the digest is
+#                    carried alongside the tag for the same reason every packages/*/env.sh
+#                    carries a SHA256 next to a URL: a name and a hash that disagree is
+#                    the thing worth catching.
+#
+#   apt              and this is the half that is easy to skip. Pinning the base does not
+#                    pin `apt-get install`: deb.debian.org serves whatever sid holds right
+#                    now, so an old base plus today's archive is a mixture, and it stops
+#                    resolving at all once a package leaves sid. snapshot.debian.org keeps
+#                    every version of every package forever, so the same date names the
+#                    same package set.
+#
+# SNAPSHOT is one date and both halves follow it. tools/image-tags.sh hashes this file
+# into the builder tag, so bumping the date produces a new image and a new tag with no
+# other change — the same way bumping a VERSION does for a package.
+#
+# What this buys is a toolchain that can be *rebuilt*, which is a different guarantee from
+# the one ghcr already gives. The builder image is pushed under a content-hash tag and
+# pulled if it exists, so the bytes are retrievable as long as that tag and that registry
+# live. Pinning the inputs means they can be regenerated without either — and it makes the
+# content hash honest, since two builds of the same deps.txt now produce the same image
+# instead of merely claiming to.
+ARG SNAPSHOT=20260803
+FROM debian:sid-${SNAPSHOT}@sha256:24c766c06ebdbda66a026e92361ede7d9212819701b2fca82e347ef0c240cb2c
+
+# FROM consumed the outer ARG; redeclare it to use it in the build stage.
+ARG SNAPSHOT
 
 COPY builder/deps.txt /deps.txt
+
+# Point apt at the snapshot before it is first run. Recent Debian images ship the deb822
+# /etc/apt/sources.list.d/debian.sources, so that is what has to go — leaving it behind
+# would mean apt reading the live archive and the snapshot at once.
+#
+# http, not https, deliberately: the base image has no ca-certificates and apt's integrity
+# does not come from TLS anyway — it comes from the signature on the Release file, which
+# is checked either way. check-valid-until=no is not optional, because a snapshot's Release
+# file is stale by construction and apt refuses stale metadata by default.
+RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
+    && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%sT000000Z sid main\n' "$SNAPSHOT" \
+       > /etc/apt/sources.list
 
 # One layer, so the image has one apt transaction in its history rather than 23. The sed
 # strips comments and blank lines; xargs turns what is left into the argument list.
