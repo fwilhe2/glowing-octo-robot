@@ -80,3 +80,34 @@ fi
 
 cd /usr/local/src
 source /package-build.sh
+
+# What just got installed, written down where it was installed. ../build.sh passes the
+# pins from env.sh across as FLFS_*; this stages one record per package into the tree
+# beside the binaries, and image/build-rootfs.sh collects them into the SBOM from the
+# assembled image rather than from packages/ — which matters, because the assembled tree
+# is the only place that knows what actually ended up in an image (issue #75).
+#
+# Deliberately after `source`, not before: `set -e` means a failed build never reaches
+# this line, so a record exists only for a package that installed something. The reverse
+# would put a component in the SBOM that is not in the image.
+#
+# key=value rather than JSON because nothing in this container should have to escape a
+# string, and there is exactly one place — build-rootfs.sh — that has to know the SBOM
+# format. rootfs/ is cumulative, so the record is overwritten on a rebuild the same way
+# the binaries are.
+if [ -n "${FLFS_PKG:-}" ]; then
+    components=/usr/local/rootfs/usr/share/flfs/components
+    install -d "$components"
+    {
+        printf 'name=%s\n'    "$FLFS_PKG"
+        printf 'version=%s\n' "${FLFS_VERSION:-}"
+        printf 'license=%s\n' "${FLFS_LICENSE:-NOASSERTION}"
+        printf 'origin=%s\n'  "${FLFS_ORIGIN:-tarball}"
+        printf 'builder=%s\n' "${FLFS_BUILDER:-}"
+        # `if` rather than `[ ... ] && printf`: a local-source package has neither, and an
+        # && list that ends false is a non-zero exit for the whole group, which `set -e`
+        # at the top of this file would turn into a failed build.
+        if [ -n "${FLFS_URL:-}" ];    then printf 'url=%s\n'    "$FLFS_URL";    fi
+        if [ -n "${FLFS_SHA256:-}" ]; then printf 'sha256=%s\n' "$FLFS_SHA256"; fi
+    } > "$components/$FLFS_PKG"
+fi

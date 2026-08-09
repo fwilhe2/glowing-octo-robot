@@ -355,6 +355,22 @@ jobs:
           name: rootfs-size-${{ matrix.arch }}
           path: output/rootfs-size-*.txt
 
+      # image/build-rootfs.sh writes the SBOM by hand — there is no JSON serialiser in
+      # image/Containerfile and adding one to emit thirty string fields would be the same
+      # trade the OCI assembly already declined. That is only sound if something proves
+      # the result parses, and this is where a JSON parser exists. It is also what makes
+      # issue #75's "CI fails if it cannot be produced" true rather than aspirational, so
+      # it is deliberately *not* continue-on-error.
+      - name: Check the SBOM
+        run: ./test/check-sbom.sh
+
+      - name: Upload SBOMs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-${{ matrix.arch }}
+          path: output/sbom-*.json
+
       # Last, deliberately: every other check in this job asks whether the image works,
       # and a bigger one works fine right up until it doesn't fit. These ask how big each
       # got, against ceilings in test/size-budget.txt that have to be raised on purpose.

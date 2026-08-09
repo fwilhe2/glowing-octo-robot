@@ -148,6 +148,33 @@ else
     src_mount=(--volume "$PWD/$PKG_DIR/$PACKAGE":/usr/local/src)
 fi
 
+# The pins, handed across the container boundary so the build can record what it is —
+# builder/build-package.sh writes them into the staging tree as a component record, and
+# image/build-rootfs.sh turns those into the SBOM. This is what "generate it, do not scan
+# for it" means in practice (issue #75): every value here is already in env.sh, already
+# verified by tools/fetch-sources.sh, and needs only writing down.
+#
+# It goes through --env rather than the host writing into rootfs/ afterwards because the
+# staging tree belongs to the container: podman maps our uid to root inside it, and a
+# directory the container created is not reliably ours to add a file to.
+#
+# FLFS_BUILDER is the toolchain's own content-hash reference. What compiled a binary is
+# part of what it is — same package, same source, different compiler is a different
+# artifact — and it is the one input to a build that env.sh has never described.
+component_env=(
+    --env "FLFS_PKG=$PKG"
+    --env "FLFS_VERSION=$VERSION"
+    --env "FLFS_LICENSE=${LICENSE:-NOASSERTION}"
+    --env "FLFS_BUILDER=$BUILDER"
+)
+if [ -n "${LOCAL_SOURCE:-}" ]; then
+    # No tarball and so no checksum: the source is this repository at whatever commit is
+    # checked out, and `VERSION` is ours and means only what we say it means.
+    component_env+=(--env "FLFS_ORIGIN=local")
+else
+    component_env+=(--env "FLFS_ORIGIN=tarball" --env "FLFS_URL=$URL" --env "FLFS_SHA256=$SHA256")
+fi
+
 # --network=none is the point of splitting prep out: the sources are on disk and the
 # toolchain is in the image, so a compile that reaches for the internet is a bug, and
 # this is what turns that from a claim into something it cannot do.
@@ -157,4 +184,5 @@ podman run --rm \
     --volume "$PWD/$PKG_DIR/build.sh":/package-build.sh:ro \
     --volume "$PWD/rootfs":/usr/local/rootfs \
     "${sysroot_mount[@]}" \
+    "${component_env[@]}" \
     "$BUILDER" /build.sh
