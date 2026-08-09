@@ -458,6 +458,38 @@ length. The short version: curl is compiled against the builder image's OpenSSL 
 so it asks for `libcrypto.so.3` at runtime and ours has to be the library that answers —
 which makes a major-version bump something to do deliberately rather than automatically.
 
+## Archives
+
+`tar` and `gzip` are GNU tar and GNU gzip. The image had `xz` and `zstd` — and `zlib`,
+which is a library with no command-line tool on top of it — so it could read the two
+formats almost nothing arrives in and neither of the two it does. `tar+gzip` is what an
+OCI layer is, and it is what everything else that ships a tarball is too.
+
+tar is built with ACL and extended-attribute support on, which is the half that matters
+for `docs/container-runtime.md`: an image layer carries file capabilities as
+`security.capability` xattrs, and `tar --xattrs --acls` is what carries them through an
+unpack. Both are autodetected, and neither `--with-posix-acls` nor `--with-xattrs` fails
+a configure that cannot have them — they check for the headers and quietly turn
+themselves back off — so `packages/tar/build.sh` asserts on `config.h` instead. `readelf`
+would not do: the ACL half links `libacl`, but the xattr calls are glibc's, so a tar with
+no xattr support has exactly the same `NEEDED` as one with it and differs only in
+unpacking layers wrong. What is *not* built is `rmt`, the remote-tape server tar reaches
+for over rsh, there being no rsh, no ssh and no tape drive here.
+
+gzip installs a dozen wrapper scripts around the binary, and none of them ship. Most wrap
+a tool that is not here: `zdiff` and `zcmp` want diffutils, `znew` wants `compress`,
+`zless` wants `less`. That leaves `zgrep` and a couple of others, and shipping four of
+twelve because those four happen to work is a worse story than shipping none.
+
+`gunzip` and `zcat` are the exception, being names too much of the world calls to simply
+not have — and they are better as symlinks than as wrappers regardless, a symlink costing
+neither a fork nor a shell. gzip's `main()` has always been able to answer to them by
+looking at `argv[0]`; that code sits behind `#if !GNU_STANDARD`, whose default is why
+upstream ships wrappers at all, so `packages/gzip/build.sh` compiles with
+`-DGNU_STANDARD=0` and symlinks both names at the binary. It then compresses a string and
+reads it back through the installed `zcat`, because the failure mode is silent and
+backwards: a `gunzip` that did not get the macro compresses.
+
 ## Containers
 
 The OCI runtime is `crun`, chosen because it is the only one written in C — runc is Go
