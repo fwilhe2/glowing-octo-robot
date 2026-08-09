@@ -312,6 +312,49 @@ rm -rf usr/share/man usr/share/doc usr/share/info usr/share/xml
 # loaded, and share/i18n is the *source* form that localedef would compile if it were.
 rm -rf usr/share/locale usr/share/i18n usr/share/gettext
 
+# glibc's gconv modules, which are the same C-locale argument one level further down and
+# by far the largest thing left that nothing here can reach: 253 shared objects, 7.7 MiB,
+# about a tenth of the image. debian-slim carries the same set, so this is not why we are
+# larger than it — it is simply the biggest dead weight in the tree.
+#
+# What can reach them is exactly one program. glibc compiles the important conversions
+# *into* libc — ASCII, ISO-8859-1, UTF-8, UCS-2/4 and INTERNAL are in gconv_builtin.h and
+# need no module at all — so the directory only matters to a caller of iconv_open with an
+# unusual charset, and readelf across the image finds one such caller: /usr/bin/iconv.
+# (glibc's gencat was the other, and packages/glibc/build.sh no longer installs it.)
+#
+# So this is not "delete what nothing uses" but "decide what iconv should still be able
+# to do", which is a smaller claim and worth stating: the Latin, Cyrillic and Greek
+# single-byte encodings a text file in the wild might be in, the Windows and DOS code
+# pages, and the Unicode transforms that are not builtins. What goes is CJK (the
+# multi-byte tables, which are most of the bytes — libCNS alone is 473 KB), EBCDIC in all
+# sixteen national flavours, and a long tail of standards that were obsolete before this
+# repository existed.
+#
+# The gconv-modules configuration is deliberately left whole. It is text, it is small,
+# and it is what resolves charset *aliases* for the modules that remain — pruning it by
+# hand to match would risk breaking a name that still works. The visible cost is that
+# `iconv -l` still advertises everything; asking for one of the missing ones fails at
+# module load rather than at lookup.
+#
+# usr/lib64 on amd64 and usr/lib on arm64, hence the loop rather than a fixed path.
+gconv_keep="ANSI_X3.110 CP1250 CP1251 CP1252 CP1253 CP1254 CP1255 CP1256 CP1257 CP1258
+            IBM437 IBM850 ISO8859-1 ISO8859-2 ISO8859-3 ISO8859-4 ISO8859-5 ISO8859-6
+            ISO8859-7 ISO8859-8 ISO8859-9 ISO8859-9E ISO8859-10 ISO8859-11 ISO8859-13
+            ISO8859-14 ISO8859-15 ISO8859-16 KOI8-R KOI8-RU KOI8-T KOI8-U MACINTOSH
+            UNICODE UTF-16 UTF-32 UTF-7"
+for gconvdir in usr/lib/gconv usr/lib64/gconv; do
+    [ -d "$gconvdir" ] || continue
+    for module in "$gconvdir"/*.so; do
+        [ -e "$module" ] || continue
+        name=${module##*/}
+        case " $(echo $gconv_keep) " in
+            *" ${name%.so} "*) continue ;;
+        esac
+        rm -f "$module"
+    done
+done
+
 # systemd's message catalogue, same reasoning one level down. It ships seventeen
 # .catalog files and sixteen of them are translations, selected by locale — which in a
 # C-locale image can never be the selected one. Dropping them leaves systemd.catalog,
