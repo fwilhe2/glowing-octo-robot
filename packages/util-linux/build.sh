@@ -138,9 +138,8 @@ make install DESTDIR=/usr/local/rootfs
 # Console and terminal filters from an era of paper (colrm, look), hardware that is not
 # here (ldattach for serial line disciplines, rtcwake, readprofile for a kernel built
 # without profiling, ctrlaltdel, blkzone for zoned block devices, blkpr for SCSI
-# persistent reservations, isosize for CD images), network hardware control the iproute2
-# package covers properly (dpll, netshaper), and small queries with no caller (namei,
-# lsclocks, mcookie, uuidparse, swaplabel, fadvise).
+# persistent reservations, isosize for CD images), and small queries with no caller
+# (namei, lsclocks, mcookie, uuidparse, swaplabel, fadvise).
 #
 # The loop insists each name is really there rather than using a bare `rm -f`. A plain
 # `rm -f` of a name upstream has renamed removes nothing and says nothing, and the
@@ -148,7 +147,7 @@ make install DESTDIR=/usr/local/rootfs
 # is about. Every name below is a program this version installs, so absence means the
 # list has gone stale and the build should say so.
 for prog in colrm look namei lsclocks mcookie uuidparse ldattach rtcwake readprofile \
-            ctrlaltdel isosize blkzone blkpr dpll netshaper swaplabel fadvise; do
+            ctrlaltdel isosize blkzone blkpr swaplabel fadvise; do
     if [ ! -e "/usr/local/rootfs/usr/bin/$prog" ]; then
         echo "util-linux: $prog is not installed — this removal list is stale" >&2
         exit 1
