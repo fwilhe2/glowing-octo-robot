@@ -49,9 +49,10 @@ check() {  # check <description> <test...>
     fi
 }
 
-# There is no grep, sed or awk in this image — the CI matrix says what is in it — so
-# os-release gets read the way os-release is meant to be read. Pre-set ID so a missing
-# file is one failed check below rather than an unbound variable that kills the script.
+# os-release gets read the way os-release is meant to be read, rather than with grep —
+# which is in the image now, but sourcing a file of shell assignments needs no tool at
+# all. Pre-set ID so a missing file is one failed check below rather than an unbound
+# variable that kills the script.
 ID=
 . /etc/os-release 2>/dev/null || true
 
