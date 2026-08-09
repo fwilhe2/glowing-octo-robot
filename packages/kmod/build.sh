@@ -1,3 +1,6 @@
+# --buildtype=release: meson's default is `debug`, which is -O0. See "the three things
+# that break silently" in CLAUDE.md.
+#
 # -Dlibdir=lib: meson otherwise defaults to the Debian multiarch path.
 #
 # -Dopenssl=disabled: kmod's openssl feature is PKCS#7 module-signature parsing and
@@ -6,6 +9,6 @@
 # "Failed to initialize kmod context: Operation not supported" from PID 1 and udevd,
 # and makes modprobe/kmod unrunnable in the image. Our kernel is monolithic and its
 # modules are unsigned, so there is no signature to verify.
-meson setup --prefix /usr -Dlibdir=lib -Dopenssl=disabled builddir/
+meson setup --prefix /usr --buildtype=release -Dlibdir=lib -Dopenssl=disabled builddir/
 meson compile -C builddir/
 meson install -C builddir/ --destdir /usr/local/rootfs

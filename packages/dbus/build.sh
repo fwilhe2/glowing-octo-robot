@@ -12,7 +12,9 @@
 # and there is no X here) and the documentation toolchain; expat is built as a package.
 # -Dlibdir=lib: meson defaults libdir to the Debian multiarch path on this builder,
 # which the rest of the system doesn't search.
-meson setup --prefix /usr -Dlibdir=lib \
+# --buildtype=release: meson's default is `debug`, which is -O0. See "the three things
+# that break silently" in CLAUDE.md.
+meson setup --prefix /usr --buildtype=release -Dlibdir=lib \
   -Dsystemd=enabled -Dsystemd_system_unitdir=/usr/lib/systemd/system \
   -Dmessage_bus=true -Dtools=true \
   -Dselinux=disabled -Dapparmor=disabled -Dlibaudit=disabled \

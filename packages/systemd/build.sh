@@ -20,8 +20,12 @@
 # we do not use, or a daemon with no consumer in this image. Each one dropped is a
 # binary, its units and its dbus policy gone — and one less thing that can leave a boot
 # `degraded`.
+# --buildtype=release: meson's default is `debug`, which is -O0. -Dmode=release below is
+# a systemd option about logging and status format and does not touch it. See "the three
+# things that break silently" in CLAUDE.md — this is by far the worst-affected package.
 systemd_opts=(
     --prefix /usr
+    --buildtype=release
     -Dlibdir=lib
     -Dmode=release
     -Dc_args="${CFLAGS:-} -Wno-error=override-init"

@@ -262,7 +262,7 @@ glibc's own install puts `/etc/rpc` there too. It is safe because `image/build-r
 copies the staging tree in *before* it overlays `image/files`, so a name appearing in both
 would be won by `image/files` — and neither of these does.
 
-## The two things that break silently
+## The three things that break silently
 
 **1. Compiling against the wrong glibc.** `builder/build-package.sh` exports
 `CPPFLAGS`/`CFLAGS`/`CXXFLAGS`/`LDFLAGS` pointing gcc at our staged glibc via
@@ -282,6 +282,29 @@ is only discovered when the binary is exec'd in qemu. Prefer configuring the dep
 out (`--without-selinux`, `-Dx11_autolaunch=disabled`) over adding a package to satisfy it.
 `test/check-rootfs-deps.sh` reports all of them at once; `test/known-missing-libs.txt` allowlists
 the accepted backlog so new regressions stand out. Run it before booting.
+
+**3. A meson package with no `--buildtype`.** Autotools packages get `-g -O2` from
+`configure`'s own default, so nothing has to say so; **meson's default buildtype is
+`debug`, which is `-O0`**, and it says nothing about it. The result compiles, links,
+passes every check here and boots — it is simply two to thirteen times the code it should
+be. Every `meson setup` in `packages/` therefore passes `--buildtype=release`
+explicitly. systemd's `-Dmode=release` is *not* that: it is a systemd option about
+logging and status-line format (see the `status-unit-format-default` note in the image
+section) and has nothing to do with the optimizer, which is what made this easy to miss
+for as long as it was.
+
+The blast radius is mostly systemd, because it is the only large one: comparing the
+published `flfs` container image against `debian:bookworm-slim`, `libudev.so.1`'s `.text`
+was 13× Debian's and `libsystemd.so.0`'s was 4×, against 1.35× for bash — the autotools
+control. Those two libraries alone accounted for essentially the whole 4 MB by which the
+container image exceeded debian-slim's, and the disk image carries much more of it
+(`libsystemd-shared`, `libsystemd-core`, `pam_systemd` and the three NSS modules are all
+the same build). `test/size-budget.txt` is the check that *would* have caught this, if the
+ceilings had ever been set against an optimized build rather than around what was measured.
+
+Note that meson's `release` is `-O3`, not the `-O2` a distribution would use;
+`--buildtype=debugoptimized` or `-Doptimization=2` is the closer match if `-O3` ever
+proves to cost more in size than it returns.
 
 **And the version of that which the check cannot catch: a library that is already on the
 allowlist.** `known-missing-libs.txt` says "these are accepted", not "these are accepted
