@@ -37,7 +37,7 @@ echo "loaded $ref"
 # that is all a base image has, and asking for more is how a test starts depending on the
 # host. --network=none because none of it needs a network, and an image that quietly did
 # would be worth finding out about.
-podman run --rm --network=none "$ref" -c '
+podman run --rm --network=none -e EXPECT_BUILD="${FLFS_BUILD:-}" "$ref" -c '
 set -u
 fail=0
 check() {  # check <description> <test...>
@@ -54,6 +54,7 @@ check() {  # check <description> <test...>
 # all. Pre-set ID so a missing file is one failed check below rather than an unbound
 # variable that kills the script.
 ID=
+BUILD_ID=
 . /etc/os-release 2>/dev/null || true
 
 echo "the shell the entrypoint started:"
@@ -61,6 +62,14 @@ check "bash is running as the entrypoint"    test -n "$BASH_VERSION"
 check "it started in the configured WORKDIR" test "$PWD" = /root
 check "PATH finds our binaries"              test "$(command -v ls)" = /usr/bin/ls
 check "os-release identifies the image"      test "$ID" = flfs
+
+# Whether the build stamped itself. This compares against what the caller passed rather
+# than asserting a value, so it says the right thing in both situations: CI exports
+# FLFS_BUILD and the two must agree, while a local run exports nothing and an image with
+# no BUILD_ID is correct. The case it catches is the one that would otherwise be silent —
+# CI supplying a commit that never reaches os-release, leaving a published image unable
+# to say which build it is.
+check "BUILD_ID is what the build was given" test "$BUILD_ID" = "${EXPECT_BUILD:-}"
 
 echo "what a container must not be carrying:"
 check "no kernel"                            test ! -e /boot

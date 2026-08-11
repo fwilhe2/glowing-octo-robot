@@ -96,6 +96,35 @@ cp -r /files/* .
 install -D -m 644 etc/os-release usr/lib/os-release
 ln -sfn ../usr/lib/os-release etc/os-release
 
+# The three fields image/files/etc/os-release cannot carry, because only a build knows
+# them. That file explains at length why it ships none of them rather than inventing
+# values — "consumers can tell 'not versioned' from 'version 1', but not from a number
+# that means nothing" — and this does not change that bargain: with neither variable set,
+# which is what a local `podman run` does, the file comes out exactly as it is in git.
+#
+#   FLFS_VERSION   a release, and only a release: the CalVer yyyy-mm-dd that
+#                  .github/workflows/release.yml cuts. Absent on every ordinary build,
+#                  because an untagged build of main is not a version of anything.
+#   FLFS_BUILD     the commit. Every CI build has one, released or not, and BUILD_ID is
+#                  precisely os-release(5)'s field for "which build is this" as distinct
+#                  from "which release is this".
+#
+# PRETTY_NAME is rewritten rather than appended to, because a second PRETTY_NAME= would
+# work only for parsers that take the last assignment — true of a shell and of systemd,
+# not guaranteed of anything else. os-release(5) has no ordering rule to lean on, so the
+# file is left with one of each key.
+#
+# Before the flavour split, deliberately: a container image is asked what version it is
+# at least as often as a disk is.
+if [ -n "${FLFS_VERSION:-}" ]; then
+    sed -i "s/^PRETTY_NAME=\"\(.*\)\"\$/PRETTY_NAME=\"\1 $FLFS_VERSION\"/" usr/lib/os-release
+    printf 'VERSION="%s"\nVERSION_ID="%s"\n' "$FLFS_VERSION" "$FLFS_VERSION" >> usr/lib/os-release
+fi
+
+if [ -n "${FLFS_BUILD:-}" ]; then
+    printf 'BUILD_ID="%s"\n' "$FLFS_BUILD" >> usr/lib/os-release
+fi
+
 if [ "$flavour" = ext4 ]; then
     # systemd ships two shell drop-ins and systemd-tmpfiles symlinks both into
     # /etc/profile.d at every boot, so /etc/profile now sources them. One stays masked.
