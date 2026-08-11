@@ -4,13 +4,23 @@ name: Package updates
 # CI answers "does it still build, and does the image still boot" before the bump is
 # on main. Closing a pull request without merging it keeps that exact version from
 # being proposed again; a later release still gets its own.
+#
+# "Package" includes the toolchain. The Debian snapshot both Containerfiles are pinned to
+# is an input like any other — it decides what every binary is compiled by and what
+# mkfs.ext4 and strip do to the shipped bytes — and a pin nobody updates is how a
+# reproducible build becomes an unbuildable one. It arrives here under the name
+# `debian-snapshot`, from tools/check-snapshot.sh rather than from tools/check-updates.sh,
+# and is bumped by tools/bump-snapshot.sh rather than tools/bump-version.sh. Everything
+# between those two ends — the branch, the duplicate-suppression, the pull request, the
+# dispatched CI run — is shared, which is the reason it is wired in here instead of
+# getting a workflow of its own.
 on:
   schedule:
     - cron: "5 19 * * 5" # At 19:05 UTC on Friday
   workflow_dispatch:
     inputs:
       packages:
-        description: "Packages to check, space separated (empty = all)"
+        description: "Packages to check, space separated (empty = all, `debian-snapshot` for the toolchain)"
         required: false
         default: ""
 
@@ -35,8 +45,30 @@ jobs:
           # the failures are reported at the end rather than aborting the run.
           ./tools/check-updates.sh --json $PACKAGES > updates.json || failed=1
           [ -s updates.json ] || echo '[]' > updates.json
-          echo "updates=$(cat updates.json)" >> "$GITHUB_OUTPUT"
-          jq -r '.[] | "\(.package): \(.current) -> \(.latest)"' updates.json
+
+          # The toolchain pin, from its own script for its own reasons: check-updates.sh
+          # iterates packages/*/env.sh and the Debian base is not one of those. Both emit
+          # the same JSON shape, so the matrix below never learns which produced what.
+          #
+          # It answers with an empty list far more often than it finds something — a bump
+          # is proposed only once the pin is older than MIN_AGE_DAYS, because every one of
+          # them invalidates the builder tag and with it all 36 packages' caches on both
+          # architectures. That is a monthly expense, not a weekly one, and this cron is
+          # weekly.
+          echo '[]' > snapshot.json
+          if [ -z "$PACKAGES" ] || [[ " $PACKAGES " == *" debian-snapshot "* ]]; then
+            ./tools/check-snapshot.sh --json > snapshot.json 2> snapshot.err || failed=1
+            [ -s snapshot.json ] || echo '[]' > snapshot.json
+            # Its staleness warning is the one thing here worth an annotation rather than
+            # a line in a log nobody opens: it fires when bumps have stopped landing, and
+            # that looks exactly like nothing happening.
+            sed -n 's/^warning: /::warning::/p' snapshot.err || true
+            cat snapshot.err >&2 || true
+          fi
+
+          jq -s add updates.json snapshot.json > all.json
+          echo "updates=$(cat all.json)" >> "$GITHUB_OUTPUT"
+          jq -r '.[] | "\(.package): \(.current) -> \(.latest)"' all.json
           if [ -n "${failed:-}" ]; then
             echo "::warning::some upstream checks failed, see the log above"
           fi
@@ -79,20 +111,37 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
 
-          # Two lines of env.sh, not one. PACKAGE, TARBALL and URL are all derived from
-          # VERSION, but SHA256 is a hash of bytes that only exist upstream, so
-          # bump-version.sh fetches the new tarball and writes the checksum as well.
-          # Rewriting VERSION alone — which is what this did until the vendored sources
-          # image made env.sh carry a checksum at all — leaves the previous release's
-          # SHA256 in place, and every pull request this workflow opens then dies in the
-          # `sources` job on a mismatch, before building anything.
+          # Two lines change, never one, whichever of these runs — and that is the whole
+          # reason both are scripts rather than a sed in this file.
           #
-          # Anything else the new version needs — a configure flag, a patch — is still
-          # for the human reviewing the failing build to add.
-          ./tools/bump-version.sh "$PKG" "$LATEST"
-          git diff --exit-code "packages/$PKG/env.sh" && { echo "error: nothing changed in packages/$PKG/env.sh" >&2; exit 1; }
+          # For a package: PACKAGE, TARBALL and URL are all derived from VERSION, but
+          # SHA256 is a hash of bytes that only exist upstream, so bump-version.sh fetches
+          # the new tarball and writes the checksum too. Rewriting VERSION alone — which is
+          # what this did until the vendored sources image made env.sh carry a checksum at
+          # all — leaves the previous release's SHA256 in place, and the pull request then
+          # dies in the `sources` job on a mismatch, before building anything.
+          #
+          # For the toolchain: the snapshot date drives both the base image tag and the apt
+          # sources line, and the digest that tag resolves to has to move with it.
+          # bump-snapshot.sh writes both, in both Containerfiles, and refuses a tag that is
+          # not a multi-architecture index — one FROM line has to serve both builders.
+          #
+          # Anything else the new version needs — a configure flag, a patch — is still for
+          # the human reviewing the failing build to add.
+          if [ "$PKG" = debian-snapshot ]; then
+            ./tools/bump-snapshot.sh "$LATEST"
+            TITLE="Update the Debian snapshot to $LATEST"
+          else
+            ./tools/bump-version.sh "$PKG" "$LATEST"
+            TITLE="Update $PKG to $LATEST"
+          fi
 
-          git commit -am "Update $PKG to $LATEST"
+          # Over the worktree rather than one named file, so it covers both bumpers: sed
+          # says nothing when its pattern does not match, and a bump that silently changed
+          # nothing would otherwise become an empty pull request.
+          git diff --quiet && { echo "error: nothing changed for $PKG" >&2; exit 1; }
+
+          git commit -am "$TITLE"
 
           # --force, because this line is only reached when the branch has no pull
           # request of its own: a branch left behind by a run that pushed and then
@@ -100,10 +149,31 @@ jobs:
           # retry's commit is identical in content but not in SHA.
           git push --force origin "$BRANCH"
 
-          PR_URL=$(gh pr create \
-            --head "$BRANCH" \
-            --title "Update $PKG to $LATEST" \
-            --body "$(cat <<EOF
+          # What a reviewer needs to know differs between the two, and mostly in what a
+          # failure would mean: a package bump breaks that package's build.sh, a toolchain
+          # bump breaks anything at all and rebuilds everything on the way there.
+          if [ "$PKG" = debian-snapshot ]; then
+            BODY=$(cat <<EOF
+          Debian snapshot \`$CURRENT\` -> \`$LATEST\`, in \`builder/Containerfile\` and
+          \`image/Containerfile\` together — the date and the digest it resolves to, written
+          by \`tools/bump-snapshot.sh\`.
+
+          Tag: $URL
+
+          This is the toolchain, so CI is not checking one package: the builder tag changes,
+          both builder images are rebuilt from the snapshot archive, and every package is
+          recompiled because that reference is in their cache keys. A green run here means
+          the whole image still builds and boots against the new Debian. Expect it to be
+          slow, and expect \`test/rootfs-size.sh\` to be the interesting check — a different
+          \`strip\` or \`mkfs.ext4\` is exactly what moves those numbers.
+
+          Opened automatically by \`.github/workflows/update-packages.yml\`. Closing this
+          pull request stops $LATEST from being proposed again; the next dated image still
+          gets its own.
+          EOF
+          )
+          else
+            BODY=$(cat <<EOF
           \`$PKG\` $CURRENT -> $LATEST.
 
           Source: $URL
@@ -113,7 +183,13 @@ jobs:
           needs work in \`packages/$PKG/build.sh\` before it can be merged. Closing this pull
           request stops $LATEST from being proposed again.
           EOF
-          )")
+          )
+          fi
+
+          PR_URL=$(gh pr create \
+            --head "$BRANCH" \
+            --title "$TITLE" \
+            --body "$BODY")
           echo "opened $PR_URL"
 
           # GitHub starts no workflow run for a push made with GITHUB_TOKEN, so ask for
