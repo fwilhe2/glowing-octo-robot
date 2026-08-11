@@ -50,6 +50,7 @@ does not need. An image is one of each, per architecture.
 | `minimal` | boots to a login shell on the serial console and nothing else | glibc, bash, coreutils, util-linux, systemd and what it needs | `ext4`, `oci` |
 | `net` | a machine somebody can debug: addressing, DNS, TLS, `ip`/`ping`/`curl` | minimal + iproute2, iputils, libmnl, openssl, ca-certificates, curl | `ext4`, `oci` |
 | `full` | everything this repository builds — today's image, unchanged | all of them | `ext4`, `oci` |
+| `lima` | a VM somebody actually works in, via `limactl start` — see below | net + openssh, sudo, sshfs, fuse3 | `lima` |
 | `container-host` *(later)* | runs OCI containers: crun and the tooling of `docs/container-runtime.md` | net + crun, json-c, … | `ext4` |
 | `k8s-node` *(later)* | issue #83, once that question has an answer | container-host + … | `ext4` |
 
@@ -57,6 +58,7 @@ does not need. An image is one of each, per architecture.
 | --- | --- | --- |
 | `ext4` | `rootfs.ext4` via `mkfs.ext4 -d`, booted by qemu with `-kernel` | nothing |
 | `oci` | a hand-written OCI archive | the kernel, systemd, the `/etc` only a booted machine reads |
+| `lima` | a **self-bootable** GPT disk: ESP + systemd-boot + the root filesystem, plus the `lima.yaml` that names it | nothing from the tree |
 | `firecracker` *(later)* | the same disk, an uncompressed kernel, a machine-config JSON | nothing from the tree |
 
 The variants above are *indicative*, particularly `minimal`. Exactly which packages a
@@ -278,6 +280,109 @@ Three things that are awkward or impossible today, as evidence the shape is righ
 - **`k8s-node` becomes a list of packages and a `/etc` overlay** rather than a fork of the
   image build, which is what issue #83 will need once it has an answer.
 
+## The `lima` variant, and the four things it forces
+
+Worth taking seriously ahead of the later variants, and not because it is easy — it is the
+hardest one here. It is the first variant whose requirements are **written down by somebody
+else**. `minimal` and `net` are this project's own opinion about what belongs in an image,
+and an opinion cannot fail a test. Lima's list can, which makes this the one variant that
+genuinely proves the model expresses things it was not designed around. It is also the one
+that turns the output into something a person uses on a Tuesday rather than something CI
+boots.
+
+**The rule first, because it is the one that cannot bend: no package manager, ever.** Lima's
+own requirements end with "one of `apt-get`, `dnf`, `apk`, `pacman` or `zypper`", and that
+is simply not on offer here. It does not have to be, because the requirement is
+*conditional*: Lima's boot scripts reach for a package manager only to install what it
+cannot find — `sshfs`, `newuidmap`/`newgidmap` — so an image that already has all of them
+never enters that branch. The bargain has to be explicit, though, and it is the whole
+reason this variant is more than a package list: **everything Lima might install, this
+variant ships up front.** If a future Lima grows an unconditional call to one, the answer
+is a patch to that boot script (see `docs/reproducing-a-build.md`) or a fork of it — never
+a package manager in the image, and never a shim pretending to be one, which would be a
+lie that fails at the worst moment.
+
+### 1. The disk has to boot itself
+
+The largest requirement, and it is not on Lima's list at all — because every cloud image
+already satisfies it and nobody thinks to write it down.
+
+What this project produces today is a bare filesystem. `mkfs.ext4 -d … 1G` writes no
+partition table and no bootloader, systemd is built `-Dbootloader=disabled -Defi=false
+-Dukify=disabled`, and every boot in this repository is `qemu -kernel bzImage -append
+"root=/dev/vda …"` with the kernel handed in from outside. `docs/release.md` already names
+this: "the disk cannot boot itself… a release of `rootfs.ext4` alone would be unbootable by
+anyone". Lima starts the VM itself and boots the disk through firmware. There is no
+`-kernel`.
+
+So `lima` is a **platform**, and a genuinely new artifact: a GPT disk with an ESP, a
+bootloader (systemd-boot, or a UKI via `ukify`), the root partition, and the `lima.yaml`
+template that names the result. That it lands cleanly on the platform axis rather than
+forcing a third concept is the two-axis split earning its keep — `lima` the platform is how
+it boots, `lima` the variant is what is in it, and neither had to learn about the other.
+
+It pulls three things behind it: systemd rebuilt with the bootloader and EFI options *on*
+(a change to the superset build, so every variant pays the size), `dosfstools` in
+`image/Containerfile` for `mkfs.vfat`, and a partition table — `sfdisk` is in util-linux,
+which is already here. And one to check rather than assume: Lima resizes the disk on
+`limactl start --disk`, so the root partition has to grow to match. `systemd-repart` is the
+answer that needs no new interpreter; whether our systemd build includes it is a question
+for the implementation, not for this document.
+
+### 2. cloud-init is Python, and is not coming in
+
+Lima requires cloud-init preinstalled. Constraint 5 forbids a Python runtime in the image.
+That is a real conflict rather than a technicality, and the resolution is not an exemption.
+
+What cloud-init does for Lima is narrow: mount the `cidata` volume, set the hostname, create
+the user, install the SSH key, and run Lima's own boot scripts out of
+`/mnt/lima-cidata/boot/`. lima-vm maintains the precedent for doing that without it —
+`lima-vm/alpine-lima`'s `lima-init.sh` is about 130 lines of shell reading `lima.env`,
+`meta-data` and `user-data` directly, and it exists because Alpine's minimal image has no
+cloud-init either. It calls `mount`, `awk`, `sed`, `ip`, `hostname` and `useradd`.
+
+We ship all of those but the last: there is no shadow-utils here, so nothing can create a
+user at runtime. `systemd-sysusers` is the substitute already in the image — generate a
+snippet from `lima.env` and run it — and it is worth noticing that this is issue #84
+("provision accounts with systemd credentials instead of a baked-in `/etc/shadow`") arriving
+from a different direction. The two should be designed together or one will be rewritten.
+
+**This is the part most likely to break, and it should be labelled that way rather than
+discovered.** It is a reimplementation of an interface somebody else owns and will change,
+in shell, without their test suite. The only honest mitigation is that the variant declares
+a `lima` boot test, so CI says when it has drifted — which is exactly what the `tests`
+directive is for.
+
+### 3. What Lima names, and what it drags in
+
+| need | package | notes |
+| --- | --- | --- |
+| SSH access | **openssh** | new. The first thing this image ever *listens* on, which is a change of security posture and not merely a package. Links against openssl and zlib, both already here |
+| Lima's scripts call it by name | **sudo** | new. systemd's `run0` is not a drop-in and Lima does not know about it. C, ISC-style licence Debian carries in main — the exact SPDX expression is for the packaging pull request to settle against `test/dfsg-licenses.txt` |
+| the default mount type | **sshfs**, **fuse3** | new. Lima's reverse-sshfs is the guest mounting the host, so this is guest-side and not optional unless the template switches to 9p or virtiofs |
+| rootless containerd | `newuidmap`/`newgidmap` (shadow) | **avoid.** They need setuid or file capabilities, and `CLAUDE.md` already records that a `CAP_NET_RAW` file capability survives neither `mkfs.ext4 -d` nor the OCI layer tar. The first move is to ship a `lima.yaml` that does not enable rootless containerd, not to package shadow |
+| Lima sets the guest timezone | **tzdata** | new, and pure data. There is no `/usr/share/zoneinfo` in this image today, so that step currently has nothing to point at. Accepting UTC is a defensible alternative |
+
+### 4. Kernel options `vm.config` currently takes back out
+
+- **`ISO9660_FS` — mandatory.** Lima hands the guest its `cidata` volume as an ISO, and
+  `vm.config` explicitly clears ISO9660 today. Without it there is no configuration to
+  read and the VM comes up as an unprovisioned box nobody can log into.
+- **`FUSE_FS` — mandatory** for sshfs.
+- **`VFAT_FS` — optional**, and worth leaving off. Firmware reads the ESP without the
+  kernel's help; this is only needed to *mount* it in the guest, i.e. to run `bootctl`
+  there.
+- **9p or virtiofs** only if the template chooses those mount types over reverse-sshfs.
+
+And the wrinkle that keeps this design honest: **kernel configuration is global.** One
+superset build means these options are in every image, `minimal` included, which is mildly
+absurd — a minimal VM image that can mount ISO9660. It is the same trade `firecracker`'s
+`CONFIG_VIRTIO_MMIO` makes, it costs tens of kilobytes, and the alternative is a kernel per
+variant, which would break the one rule this whole design rests on. The right response is a
+comment in `vm.config` saying which variant each of these is for, so that a later reader
+deleting "obviously unnecessary" filesystem support finds out here rather than from a Lima
+VM that will not start.
+
 ## Migration
 
 1. **Per-package file manifests.** Useful on their own — "which package shipped this file"
@@ -289,9 +394,17 @@ Three things that are awkward or impossible today, as evidence the shape is righ
 3. **`minimal` and `net`**, with the per-variant dependency check, size-budget rows, the
    CI loop and the boot matrix. This is where the design either pays or does not: if
    `minimal` comes out at 90% of `full`, that is a finding worth having early.
-4. **`firecracker`**, which needs a runner-side binary and a fifth boot script, and is
+4. **`lima`, in two halves that are worth landing separately.** The platform first — a
+   self-bootable GPT disk with an ESP and systemd-boot — because that is useful on its own
+   (`docs/release.md` currently has to ship a kernel beside every disk for exactly this
+   reason) and because it can be tested by booting it in plain qemu with no `-kernel`, with
+   no Lima anywhere. Then the variant: openssh, sudo, sshfs, the first-boot cidata reader,
+   and a `lima.yaml` template. Splitting it this way means the risky half — somebody else's
+   provisioning interface, reimplemented — lands on top of a disk that is already known to
+   boot, rather than debugging both at once.
+5. **`firecracker`**, which needs a runner-side binary and a fifth boot script, and is
    independent of everything above.
-5. **`container-host` / `k8s-node`**, gated on the packaging in `docs/container-runtime.md`
+6. **`container-host` / `k8s-node`**, gated on the packaging in `docs/container-runtime.md`
    and issue #83 rather than on anything here.
 
 ## Trade-offs and open questions
@@ -299,6 +412,18 @@ Three things that are awkward or impossible today, as evidence the shape is righ
 - **A variant is a promise.** Each one costs CI time, an artifact, a size ceiling somebody
   maintains, and a claim that it works. The bar for adding one should be that somebody
   would actually boot it — not that it is expressible.
+- **`lima` is the one that can be broken from outside.** Every other variant fails only
+  when this repository changes. That one fails when Lima changes its cidata layout or its
+  boot scripts, on somebody else's release schedule, and CI finds out on the next push
+  rather than on the release that broke it. That is an argument for a `lima` boot test
+  from day one, and an argument against reimplementing one byte more of the interface than
+  Lima actually uses — but it is not an argument against the variant, because the same is
+  true of every OCI image this project publishes and the registry has not moved yet.
+- **Whether `lima` needs a testable boot in CI at all** is a fair question, since it needs
+  the `limactl` binary on the runner and a nested VM. The cheap 80% is booting the `lima`
+  *platform* disk in plain qemu with no `-kernel`, which proves the bootloader and the
+  partition table, and leaving the provisioning half to a manual check until it breaks
+  once.
 - **Additive rather than subtractive, and that has a cost.** `package *` for `full` and
   explicit lists elsewhere means a new package joins `full` silently and every other
   variant deliberately. That is the right default for an image whose selling point is that
