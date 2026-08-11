@@ -1,6 +1,32 @@
 name: CI
 on:
+  # Everything below this line compiles 36 packages on two architectures and boots the
+  # result four times on each, and not one step of it reads a markdown file: the build
+  # context is builder/ and image/ (see .containerignore), and the only documentation
+  # that ends up in an image is generated. A push that touches nothing but prose has
+  # nothing here to verify, and running the workflow anyway spends an hour of runner
+  # time proving that a sentence was rewritten.
+  #
+  # paths-ignore is all-or-nothing over the files a push changed, which is the safe
+  # direction: a commit touching both a doc and a build.sh runs everything. The patterns
+  # are deliberately narrow. `*.md` is the two at the repository root, README.md and
+  # CLAUDE.md — not `**.md`, because image/files is COPYied into the assembly container
+  # and a markdown file added under there would be part of an image rather than part of
+  # the prose about one.
+  #
+  # The cost is that a docs-only pull request gets no check run from this workflow at
+  # all: filtered out is not the same as passing, it is absent. Nothing depends on that
+  # today — main has no branch protection and no rulesets, so no check is required — and
+  # licenses.yml is unfiltered, so such a pull request still reports something. If
+  # required checks are ever turned on, this has to become a path filter feeding a
+  # per-job `if:` instead, or merging a typo fix will block forever on a check that
+  # never reports.
+  #
+  # workflow_dispatch stays unfiltered, so a run can always be forced by hand.
   push:
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
   workflow_dispatch:
 
 permissions:
