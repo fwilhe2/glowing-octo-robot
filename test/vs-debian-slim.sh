@@ -81,7 +81,9 @@ podman export "$cid" | tar -x -C "$tmp/root" --no-same-owner
     done < <(du -b --max-depth=2 "$tmp/root" | sort -rn)
     while read -r bytes path; do
         echo "file $bytes ${path#"$tmp/root"/}"
-    done < <(find "$tmp/root" -type f -printf '%s %p\n' | sort -rn | head -n 25)
+    # awk rather than `head -n 25`, which leaves sort writing to a closed pipe and saying
+    # so on stderr; awk reads its input to the end and takes the first 25 lines quietly.
+    done < <(find "$tmp/root" -type f -printf '%s %p\n' | sort -rn | awk 'NR<=25')
 } > "$THEIRS"
 
 # ---------------------------------------------------------------------------------
