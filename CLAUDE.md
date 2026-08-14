@@ -102,7 +102,8 @@ builder/          how a package is compiled: the one builder image, deps.txt (it
 image/            how the staging tree becomes an image, disk or OCI: Containerfile,
                   build-rootfs.sh, and files/ — the /etc the image ships
 test/             everything CI runs to verify a build, plus known-missing-libs.txt
-                  and size-budget.txt
+                  and size-budget.txt; qemu-lib.sh is the boot harness the four qemu
+                  tests and tools/boot-qemu.sh all source
 tools/            local conveniences and maintenance, not part of a build
 docs/             design notes for work not done yet — proposals, not descriptions
 downloads/        source tarballs (gitignored)
@@ -446,8 +447,18 @@ says `running`, which is `degraded` if and only if some unit failed — the fail
 package gets for free by installing a unit whose binary needs a library we don't ship. It also
 asserts the `Tainted` property is empty.
 
-All three drive a real serial login, and their `await` only matches console output that
-arrived *after* the point the caller passes in. That is load-bearing rather than tidy:
+**None of the four spells out how to launch a guest — `test/qemu-lib.sh` does, and
+`tools/boot-qemu.sh` sources it too.** The machine type, console device, accel flags and
+kernel command line were copied into all five and were byte-identical in three of them,
+and the drift that invites is worse than untidy: `boot-qemu.sh` is what you reach for to
+debug a boot CI has just failed, so it has to boot *the same* guest rather than a similar
+one. A test now sets its own `ROOTFS`/`KERNEL`/`INIT`/`LOG` and a `TEST_NAME`, then calls
+`qemu_setup`, `qemu_preflight`, `qemu_boot` and drives the console with `console_send`,
+`console_mark`, `await` and `console_login`. `DIAGNOSE`, when a test sets it, is what
+`fail` types at the guest before dumping the transcript.
+
+All three that log in drive a real serial login, and `await` only matches console output
+that arrived *after* the point the caller passes in. That is load-bearing rather than tidy:
 matching the whole transcript once made the password get typed into the username prompt,
 because systemd (built `-Dmode=release`, so status lines are unit *descriptions* — see
 `status-unit-format-default` in its `meson.build`) prints "Query the User Interactively
