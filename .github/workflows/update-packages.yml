@@ -66,7 +66,13 @@ jobs:
             cat snapshot.err >&2 || true
           fi
 
-          jq -s add updates.json snapshot.json > all.json
+          # -c is load-bearing: a step output is `name=value` on one line, and jq's
+          # default pretty-printing makes an array of objects many. The runner rejects
+          # the continuation lines with "Invalid format '  {'" and the whole job fails —
+          # but only in a week where something actually has an update, since `[]` is one
+          # line either way. tools/check-updates.sh emits compact JSON for exactly this
+          # reason (`jq -sc .`); merging the snapshot list in is what dropped it.
+          jq -cs add updates.json snapshot.json > all.json
           echo "updates=$(cat all.json)" >> "$GITHUB_OUTPUT"
           jq -r '.[] | "\(.package): \(.current) -> \(.latest)"' all.json
           if [ -n "${failed:-}" ]; then
