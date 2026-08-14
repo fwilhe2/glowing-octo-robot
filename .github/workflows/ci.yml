@@ -414,6 +414,13 @@ jobs:
         if: always()
         run: ./test/rootfs-size.sh oci
 
+      # And the same question asked from outside: the budget above is a number we chose,
+      # this one is the base image somebody would use instead. Exceeding it is a failure
+      # with no number to raise — see the script.
+      - name: Compare the OCI image against debian-slim
+        if: always()
+        run: ARCH=${{ matrix.arch }} ./test/vs-debian-slim.sh
+
       # ...and then which way it is going, which the two steps above cannot say. A ceiling
       # fires once, after the growth has happened and usually some commits after the one
       # that caused it; this plots the last dozen builds on main and says what this one did

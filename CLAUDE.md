@@ -132,10 +132,19 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage  # crun starts a container
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./test/rootfs-size.sh [ext4|oci]  # image size vs test/size-budget.txt, and where it went
+./test/vs-debian-slim.sh          # the OCI image against debian-slim, with both breakdowns
 ./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
 ./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ```
+
+`vs-debian-slim.sh` is the other half of `rootfs-size.sh`: the budget is a number we chose,
+this is the base image somebody would otherwise be using. It exports `debian:trixie-slim`
+for the architecture, walks it with the same `du`/`find` invocations `image/build-rootfs.sh`
+uses (duplicated on purpose — a comparison whose sides were counted differently is worse
+than none), and fails when our OCI tree is bigger. There is no number to raise: past that
+line the honest advice is debian-slim, which also ships a package manager. It was 57.9
+against 75.0 MiB on amd64 and 72.3 against 95.8 on arm64 when it was added.
 
 `size-history.sh` is the one of those that reports rather than checks: `rootfs-size.sh`
 asks whether an image is *allowed* to be this big, against a number somebody wrote down,
