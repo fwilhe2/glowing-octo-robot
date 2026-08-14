@@ -28,24 +28,17 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source test/qemu-lib.sh
 
 ROOTFS="${1:-${ROOTFS:-output/rootfs.ext4}}"
 KERNEL="${2:-${KERNEL:-rootfs/boot/bzImage}}"
 INIT="${INIT:-/usr/lib/systemd/systemd}"
-TIMEOUT="${TIMEOUT:-300}"
-MEM="${MEM:-1024}"
-CPUS="${CPUS:-2}"
 LOG="${LOG:-output/container-test.log}"
-LOGIN_USER="${LOGIN_USER:-root}"
-LOGIN_PASSWORD="${LOGIN_PASSWORD:-root}"
+TEST_NAME=container
 
-# Same trick as test/network.sh: the guest echoes back everything typed at the console,
-# so a marker must not appear in the command that produces it or we would match our own
-# input. The guest's shell strips the quotes; the patterns below are the joined string.
-READY="SHELL-IS-UP"
-QUIET="stty -echo; PS1="
-PROBE="echo SHELL-IS'-UP'"
-
+# Same trick as the READY marker in test/qemu-lib.sh: the guest echoes back everything
+# typed at the console, so a marker must not appear in the command that produces it or we
+# would match our own input.
 CGROUP_OK="CGROUP2-OK"
 BUNDLE_OK="BUNDLE-OK"
 RUN_OK="CONTAINER-OK"
@@ -98,149 +91,28 @@ FEATURES="crun --version; echo '--- features ---'; crun features"
 DIAGNOSE="crun list; echo '--- cgroup ---'; cat /sys/fs/cgroup/cgroup.controllers; \
 echo '--- config ---'; cat /run/ct/config.json; echo '--- dmesg ---'; dmesg | tail -40"
 
-# Defaults to the host's own architecture — CI runs this on a matching amd64 or arm64
-# runner, so it never has to be told. Override with ARCH=amd64|arm64 to point at the
-# other qemu binary and machine type explicitly. Both uname's spelling (x86_64/aarch64)
-# and this repo's (amd64/arm64) are accepted.
-ARCH="${ARCH:-$(uname -m)}"
-case "$ARCH" in
-    x86_64|amd64)  ARCH=amd64 ;;
-    aarch64|arm64) ARCH=arm64 ;;
-    *) echo "error: unsupported architecture: $ARCH (expected amd64 or arm64)" >&2; exit 1 ;;
-esac
-
-# amd64's "pc" machine and default cpu need no flags at all; arm64 has no implicit
-# machine type, so qemu-system-aarch64 refuses to start without one. ttyS0 is the 8250
-# UART kvm_guest.config/vm.config build in on amd64; arm64's virt board exposes a PL011
-# instead, at ttyAMA0 — see packages/kernel/build.sh.
-if [ "$ARCH" = arm64 ]; then
-    QEMU=qemu-system-aarch64
-    CONSOLE=ttyAMA0
-else
-    QEMU=qemu-system-x86_64
-    CONSOLE=ttyS0
-fi
-
-command -v "$QEMU" >/dev/null || { echo "error: $QEMU not found" >&2; exit 1; }
-[ -f "$KERNEL" ] || { echo "error: missing kernel: $KERNEL" >&2; exit 1; }
-[ -f "$ROOTFS" ] || { echo "error: missing rootfs: $ROOTFS" >&2; exit 1; }
-
-# Use KVM acceleration when available. On arm64 that means naming the machine type and
-# accel together (-machine virt,accel=kvm) rather than as a separate flag, since virt
-# isn't optional there the way amd64's implicit pc machine is.
-accel=()
-machine=()
-if [ "$ARCH" = arm64 ]; then
-    if [ -w /dev/kvm ]; then
-        machine=(-machine virt,accel=kvm -cpu host)
-    else
-        echo "note: /dev/kvm not available, emulating (slow)"
-        machine=(-machine virt -cpu max)
-    fi
-elif [ -w /dev/kvm ]; then
-    accel=(-enable-kvm -cpu host)
-else
-    echo "note: /dev/kvm not available, emulating (slow)"
-fi
-
-work=$(mktemp -d)
-console="$work/console-in"
-mkfifo "$console"
-mkdir -p "$(dirname "$LOG")"
-: > "$LOG"
-
-"$QEMU" \
-    "${accel[@]}" "${machine[@]}" \
-    -m "$MEM" -smp "$CPUS" \
-    -kernel "$KERNEL" \
-    -drive file="$ROOTFS",format=raw,if=virtio \
-    -nic user,model=virtio-net-pci \
-    -append "root=/dev/vda rw console=$CONSOLE init=$INIT" \
-    -nographic \
-    -no-reboot \
-    < "$console" > "$LOG" 2>&1 &
-qemu_pid=$!
-
-cleanup() {
-    exec 3>&- 2>/dev/null || true
-    kill "$qemu_pid" 2>/dev/null || true
-    wait "$qemu_pid" 2>/dev/null || true
-    rm -rf "$work"
-}
-trap cleanup EXIT
-
-# Read-write, so opening never blocks on qemu having got as far as its stdin.
-exec 3<> "$console"
-
-echo ">> booting $ROOTFS with $KERNEL (init=$INIT), waiting up to ${TIMEOUT}s"
-
-deadline=$((SECONDS + TIMEOUT))
-DIED='Kernel panic|Attempted to kill init|Requesting system (poweroff|reboot)'
-
-fail() {
-    echo ">> container test FAILED: $1" >&2
-    printf '%s\n' "$DIAGNOSE" >&3 2>/dev/null || true
-    sleep 8
-    echo ">> last 80 lines of the console:" >&2
-    tail -80 "$LOG" >&2
-    exit 1
-}
-
-# How much console output there is so far, as a byte offset into the log — the caller
-# takes one of these before it types something and passes it to await, so that only the
-# guest's answer can satisfy the wait. See the login handshake below for why that
-# matters.
-console_mark() { wc -c < "$LOG"; }
-
-# With a third argument, output before that offset is ignored.
-await() { # pattern seconds [since]
-    local until=$((SECONDS + $2)) since="${3:-0}"
-    while [ "$SECONDS" -lt "$until" ]; do
-        tail -c "+$((since + 1))" "$LOG" | grep -qaE "$1" && return 0
-        grep -qaE "$DIED" "$LOG" && fail "the guest died"
-        kill -0 "$qemu_pid" 2>/dev/null || fail "qemu exited"
-        [ "$SECONDS" -lt "$deadline" ] || fail "timed out waiting for: $1"
-        sleep 2
-    done
-    return 1
-}
-
-await 'login:' "$TIMEOUT" || fail "no login prompt"
-echo ">> got a login prompt, logging in as $LOGIN_USER"
-
-# The password waits on output typed *after* the username, not on "Password" appearing
-# anywhere in the log: systemd's status lines contain "Query the User Interactively for
-# a Password" a few seconds into the boot, and matching that types the password into the
-# username prompt. test/systemd.sh has the long version.
-until grep -qaF "$READY" "$LOG"; do
-    [ "$SECONDS" -lt "$deadline" ] || fail "could not get a shell (login rejected?)"
-    prompt=$(console_mark)
-    printf '%s\n' "$LOGIN_USER" >&3
-    await 'Password' 15 "$prompt" || continue
-    printf '%s\n' "$LOGIN_PASSWORD" >&3
-    sleep 3
-    printf '%s\n' "$QUIET" >&3
-    printf '%s\n' "$PROBE" >&3
-    await "$READY" 10 || true
-done
+qemu_setup
+qemu_preflight
+qemu_boot
+console_login
 
 echo ">> logged in, checking cgroup v2"
 
-printf '%s\n' "$CGROUP_CHECK" >&3
+console_send "$CGROUP_CHECK"
 await "$CGROUP_OK" 30 || fail "cgroup v2 missing a controller the fragment should have added"
 echo ">> cgroup v2 OK: memory, pids and cpu are delegated"
 
 # Recorded for the transcript rather than asserted on: what crun was built with is the
 # first thing worth knowing when a bundle behaves unexpectedly.
-printf '%s\n' "$FEATURES" >&3
+console_send "$FEATURES"
 sleep 3
 
 echo ">> building an OCI bundle"
-printf '%s\n' "$BUNDLE" >&3
+console_send "$BUNDLE"
 await "$BUNDLE_OK" 40 || fail "could not build a bundle (crun spec or the bind mount failed)"
 
 echo ">> starting the container"
-printf '%s\n' "$RUN" >&3
+console_send "$RUN"
 await "$RUN_OK" 60 || fail "the container did not start or its assertions did not pass"
 
 echo ">> container OK: crun started it, PID 1 in its own pid namespace, /proc its own"

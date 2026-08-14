@@ -20,40 +20,19 @@
 # resolved a real binary's libraries, which is exactly what a bad package update
 # breaks — and keeping systemd out of it keeps that failure distinguishable from a unit
 # that didn't start. test/network.sh is the one that boots systemd for real.
+#
+# This is the one test that does not log in: PID 1 *is* the shell, so test/qemu-lib.sh's
+# console_login has nothing to talk to and the loop below types at the prompt directly.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source test/qemu-lib.sh
 
 ROOTFS="${1:-${ROOTFS:-boot-image/rootfs.ext4}}"
 KERNEL="${2:-${KERNEL:-boot-image/bzImage}}"
 INIT="${INIT:-/bin/bash}"
-TIMEOUT="${TIMEOUT:-300}"
-MEM="${MEM:-1024}"
-CPUS="${CPUS:-2}"
 LOG="${LOG:-output/boot-test.log}"
-
-# Defaults to the host's own architecture — CI runs this on a matching amd64 or arm64
-# runner, so it never has to be told. Override with ARCH=amd64|arm64 to point at the
-# other qemu binary and machine type explicitly. Both uname's spelling (x86_64/aarch64)
-# and this repo's (amd64/arm64) are accepted.
-ARCH="${ARCH:-$(uname -m)}"
-case "$ARCH" in
-    x86_64|amd64)  ARCH=amd64 ;;
-    aarch64|arm64) ARCH=arm64 ;;
-    *) echo "error: unsupported architecture: $ARCH (expected amd64 or arm64)" >&2; exit 1 ;;
-esac
-
-# amd64's "pc" machine and default cpu need no flags at all; arm64 has no implicit
-# machine type, so qemu-system-aarch64 refuses to start without one. ttyS0 is the 8250
-# UART kvm_guest.config/vm.config build in on amd64; arm64's virt board exposes a PL011
-# instead, at ttyAMA0 — see packages/kernel/build.sh.
-if [ "$ARCH" = arm64 ]; then
-    QEMU=qemu-system-aarch64
-    CONSOLE=ttyAMA0
-else
-    QEMU=qemu-system-x86_64
-    CONSOLE=ttyS0
-fi
+TEST_NAME=boot
 
 # The marker must not appear in the command that produces it: the guest echoes back
 # everything typed at the console, and matching our own input would pass every time.
@@ -71,61 +50,11 @@ COMMAND="uname -srm; echo BOOT-SMOKE'-OK'"
 # from t=0 worked for as long as this only ever ran on amd64.
 PROMPT="${PROMPT:-bash-[0-9]}"
 
-command -v "$QEMU" >/dev/null || { echo "error: $QEMU not found" >&2; exit 1; }
-[ -f "$KERNEL" ] || { echo "error: missing kernel: $KERNEL" >&2; exit 1; }
-[ -f "$ROOTFS" ] || { echo "error: missing rootfs: $ROOTFS" >&2; exit 1; }
-
-# Use KVM acceleration when available. On arm64 that means naming the machine type and
-# accel together (-machine virt,accel=kvm) rather than as a separate flag, since virt
-# isn't optional there the way amd64's implicit pc machine is.
-accel=()
-machine=()
-if [ "$ARCH" = arm64 ]; then
-    if [ -w /dev/kvm ]; then
-        machine=(-machine virt,accel=kvm -cpu host)
-    else
-        echo "note: /dev/kvm not available, emulating (slow)"
-        machine=(-machine virt -cpu max)
-    fi
-elif [ -w /dev/kvm ]; then
-    accel=(-enable-kvm -cpu host)
-else
-    echo "note: /dev/kvm not available, emulating (slow)"
-fi
-
-work=$(mktemp -d)
-console="$work/console-in"
-mkfifo "$console"
-mkdir -p "$(dirname "$LOG")"
-: > "$LOG"
-
-"$QEMU" \
-    "${accel[@]}" "${machine[@]}" \
-    -m "$MEM" -smp "$CPUS" \
-    -kernel "$KERNEL" \
-    -drive file="$ROOTFS",format=raw,if=virtio \
-    -nic user,model=virtio-net-pci \
-    -append "root=/dev/vda rw console=$CONSOLE init=$INIT" \
-    -nographic \
-    -no-reboot \
-    < "$console" > "$LOG" 2>&1 &
-qemu_pid=$!
-
-cleanup() {
-    exec 3>&- 2>/dev/null || true
-    kill "$qemu_pid" 2>/dev/null || true
-    wait "$qemu_pid" 2>/dev/null || true
-    rm -rf "$work"
-}
-trap cleanup EXIT
-
-# Read-write, so opening never blocks on qemu having got as far as its stdin.
-exec 3<> "$console"
-
-echo ">> booting $ROOTFS with $KERNEL (init=$INIT), waiting up to ${TIMEOUT}s"
+qemu_setup
+qemu_preflight
+qemu_boot
 
 status=timeout
-deadline=$((SECONDS + TIMEOUT))
 typed=
 
 while [ "$SECONDS" -lt "$deadline" ]; do
@@ -133,7 +62,7 @@ while [ "$SECONDS" -lt "$deadline" ]; do
         status=ok
         break
     fi
-    if grep -qE 'Kernel panic|Attempted to kill init|Requesting system (poweroff|reboot)' "$LOG"; then
+    if grep -qE "$QEMU_DIED" "$LOG"; then
         status=died
         break
     fi
@@ -146,7 +75,7 @@ while [ "$SECONDS" -lt "$deadline" ]; do
     # its own startup and come back chewed up, and re-running it costs nothing.
     if [ -n "$typed" ] || grep -qE "$PROMPT" "$LOG"; then
         typed=yes
-        printf '%s\n' "$COMMAND" >&3
+        console_send "$COMMAND"
     fi
     sleep 2
 done
@@ -164,6 +93,4 @@ if [ "$status" = ok ]; then
     exit 0
 fi
 
-echo ">> boot FAILED ($status); last 40 lines of the console:" >&2
-tail -40 "$LOG" >&2
-exit 1
+fail "$status"
