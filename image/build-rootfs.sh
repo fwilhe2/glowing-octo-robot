@@ -196,10 +196,9 @@ if [ "$flavour" = oci ]; then
     rm -f  usr/lib/libnss_systemd.so.2 usr/lib/libnss_resolve.so.2 \
            usr/lib/libnss_myhostname.so.2
 
-    # libsystemd.so.0 and libudev.so.1 stay: they are the public client libraries other
-    # packages link against — dbus-daemon has libsystemd.so.0 in its NEEDED — and
-    # removing them would break binaries we are keeping. What is gone is systemd the
-    # system, not its API.
+    # libsystemd.so.0 stays: it is the public client library, and ten binaries this
+    # image keeps have it in NEEDED — crun and libmount.so.1 among them, which is the
+    # container runtime and `mount`. What is gone is systemd the system, not its API.
 
     # Its command-line tools, found rather than listed: systemctl, journalctl, udevadm,
     # loginctl and the forty-odd systemd-* binaries all link the private
@@ -210,6 +209,66 @@ if [ "$flavour" = oci ]; then
             rm -f "$bin"
         fi
     done < <(find usr/bin -maxdepth 1 -type f)
+
+    # PAM, all of it, and this is not the usual "a container rarely needs that": it is
+    # already broken in one. /etc/pam.d went with systemd's /etc above, and libpam with
+    # no configuration for a service does not fall back to something permissive, it
+    # aborts — `su -c ... root` in the published image answers "su: Critical error -
+    # immediate abort", and runuser the same. /etc/shadow is gone too, so there would be
+    # nothing to authenticate against even with a config. What that leaves is a megabyte
+    # of modules nothing can load and a handful of helpers that cannot start.
+    #
+    # The consumers are derived for the same reason the systemd tools are: a util-linux
+    # that grows another PAM-linked helper would otherwise ship it here, pointed at a
+    # library this deleted.
+    #
+    # `grep -a`, and it is not optional. Without it GNU grep decides the file is binary,
+    # and a match on a "line" carrying NUL bytes and invalid UTF-8 — which is every line
+    # of an ELF .dynstr — is discarded rather than reported: `grep -q libpam.so
+    # usr/bin/su` exits 1 on a binary that plainly needs libpam.so.0. `-l` happens to
+    # short-circuit before that check and answers correctly, which is the sort of
+    # difference that makes this silent. `if` rather than `grep && rm` for a duller
+    # reason: a failing `&&` list at the end of a loop body is the script's exit status
+    # under `set -e`.
+    rm -rf usr/lib/security etc/security
+    rm -f  usr/lib/libpam*
+    while IFS= read -r bin; do
+        if grep -qa 'libpam\.so' "$bin" 2>/dev/null; then
+            rm -f "$bin"
+        fi
+    done < <(find usr/bin -maxdepth 1 -type f)
+
+    # A serial getty, in a container that has no serial line and no PID 1 to start one.
+    rm -f usr/bin/agetty
+
+    # kmod, dead here for a reason that has nothing to do with containers: packages/kernel
+    # builds with CONFIG_MODULES off, so there is no module to insert into anything. The
+    # disk image keeps it anyway — systemd-modules-load and udev reach libkmod, and a
+    # missing library there is a failed unit rather than a smaller image. The six tools
+    # are symlinks to kmod and the loop below collects them once this deletes the target.
+    rm -rf etc/depmod.d etc/modprobe.d etc/modules-load.d
+    rm -f  usr/bin/kmod usr/lib/libkmod.so*
+
+    # libudev.so.1 is the half of the sentence above that is not true of it: with udev
+    # and udevadm gone, nothing in the container names the library at all, so it was
+    # 1.6 MB of client library with no client. It has to come after that loop rather than
+    # next to the comment it belongs to — udevadm is a consumer right up until the line
+    # above deletes it. The disk image is where udev runs, and keeps it.
+    #
+    # Checked rather than asserted, because the failure is silent here and loud in
+    # somebody else's container: a package that started linking libudev would look
+    # complete in the staging tree test/check-rootfs-deps.sh reads and fail at exec once
+    # this deleted the library underneath it. grep rather than readelf, so a dlopen by
+    # name is caught alongside a DT_NEEDED — udev's API is reached both ways.
+    consumers=$(find usr -type f -perm -u+x ! -name 'libudev.so*' -exec grep -la 'libudev\.so' {} + 2>/dev/null || true)
+    if [ -n "$consumers" ]; then
+        echo "error: the container image still needs libudev, which this deletes:" >&2
+        echo "$consumers" >&2
+        echo "       Keep the library — drop the rm below — or configure udev out of" >&2
+        echo "       whatever package started asking for it." >&2
+        exit 1
+    fi
+    rm -f usr/lib/libudev.so*
 
     # And the symlinks that pointed into all of that: /sbin/init, halt, poweroff,
     # reboot, shutdown, resolvconf, run0, the mount.* helpers — plus, in the three
