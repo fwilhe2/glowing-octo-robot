@@ -363,11 +363,35 @@ the kernel and systemd — the two things a container gets from the host and the
 which means systemd's unit tree, udev, its drop-in directories, its PAM and NSS modules,
 and every binary whose `NEEDED` names the private `libsystemd-shared` (derived by running
 `readelf`, so a version bump that adds another tool needs no edit), plus the `/etc` only a
-booted machine reads. `libsystemd.so.0` and `libudev.so.1` **stay**: they are the client
-libraries other packages link against, and `dbus-daemon` is one of them. In the three
-directories systemd shares with software we might ship later (`/etc/profile.d`, `/etc/ssh`,
-`/etc/xdg`) the block deletes dangling symlinks and then the directory only if that emptied
-it, rather than removing a future openssh package's config along with systemd's drop-in.
+booted machine reads. `libsystemd.so.0` **stays**: it is the public client library, and ten
+binaries the container keeps have it in `NEEDED` — `crun` and `libmount.so.1`, which is to
+say the container runtime and `mount`. `libudev.so.1` does *not*, and that was the mistake
+this sentence used to make: once udev and `udevadm` are gone nothing in the container names
+it, by `NEEDED` or by `dlopen`.
+
+Three more things go with them, and they are subtractions rather than a diet. **PAM**,
+because it is already broken here rather than merely unusual — `/etc/pam.d` left with
+systemd's `/etc`, and libpam with no configuration for a service aborts instead of falling
+back, so `su` and `runuser` in the published image answer *Critical error - immediate abort*.
+**`agetty`**, which is a serial getty in a machine with no serial line and no PID 1 to start
+one. And **kmod**, for a reason that has nothing to do with containers: `packages/kernel`
+builds `CONFIG_MODULES=n`, so there is no module to insert anywhere. The disk image keeps
+kmod anyway, because systemd-modules-load and udev reach `libkmod`, and a missing library
+there is a failed unit rather than a smaller image. Together with libudev that is 3.2 MiB.
+
+**Deriving a consumer list with `grep` needs `-a`.** Both the PAM sweep and the libudev
+guard look for a library name inside binaries, and GNU grep decides an ELF file is binary
+and then *discards* a match on a line carrying NUL bytes and invalid UTF-8 — which is every
+line of a `.dynstr`. `grep -q libpam.so usr/bin/su` exits 1 on a binary that plainly needs
+`libpam.so.0`; `grep -l` short-circuits before that check and answers correctly, which is
+exactly the sort of inconsistency that ships a silent no-op.
+
+In the three directories systemd shares with software we might ship later
+(`/etc/profile.d`, `/etc/ssh`, `/etc/xdg`) the block deletes dangling symlinks and then the
+directory only if that emptied it, rather than removing a future openssh package's config
+along with systemd's drop-in. That sweep is also what collects `modprobe` and its five
+siblings, which are symlinks to the `kmod` binary deleted above — so anything removed by
+name belongs *before* it.
 
 The OCI archive is assembled by hand — a gzipped layer, a config and a manifest as blobs
 named after their own sha256, plus `index.json` and `oci-layout` — because that is the

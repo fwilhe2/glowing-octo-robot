@@ -79,6 +79,12 @@ check "no udev"                              test ! -e /usr/lib/udev
 check "no units left behind in /etc"         test ! -e /etc/systemd
 check "no fstab for a root it never mounts"  test ! -e /etc/fstab
 check "no password hashes"                   test ! -e /etc/shadow
+# PAM went because it cannot work without the /etc/pam.d that went with systemd, kmod
+# because the kernel is built CONFIG_MODULES=n, libudev because nothing here names it.
+check "no PAM, which had no config to read"  test ! -e /usr/lib/security
+check "no su, which aborted without one"     test ! -e /usr/bin/su
+check "no module tools for a modless kernel" test ! -e /usr/bin/modprobe
+check "no libudev with no client"            test ! -e /usr/lib/libudev.so.1
 
 # Running these rather than testing -x is the point: a binary whose libraries are not in
 # the image is executable right up until it is executed. check-rootfs-deps.sh catches
@@ -88,6 +94,11 @@ echo "and what it must be:"
 check "coreutils that start"                 test "$(ls -d /usr)" = /usr
 check "and can read the passwd file"         test "$(id -un)" = root
 check "the loader has a cache to read"       test -s /etc/ld.so.cache
+# The other side of the subtractions above: these two are what still links libsystemd
+# (crun) and libmount, so they are what a deletion one file too far would break — at
+# exec, which nothing notices unless something execs them.
+check "crun starts"                          sh -c "crun --version >/dev/null"
+check "mount starts"                         sh -c "mount --version >/dev/null"
 
 # The one assertion here that is about a symlink rather than a binary, and the cheapest
 # place in CI to make it: nothing else notices a /bin/sh that is missing or dangling
