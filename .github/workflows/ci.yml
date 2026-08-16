@@ -72,7 +72,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
         with:
           # Text rather than mermaid, which is about the run summary page and
           # not about any one job. GitHub renders every mermaid block in its own
@@ -103,7 +103,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
         with:
           charts: sparkline # see the builder job
 
@@ -136,7 +136,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
         with:
           charts: sparkline # see the builder job
 
@@ -170,7 +170,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
         with:
           charts: sparkline # see the builder job
 
@@ -247,7 +247,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
         with:
           charts: sparkline # see the builder job
 
@@ -315,7 +315,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
         with:
           charts: sparkline # see the builder job
 
@@ -474,7 +474,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@02c48513626383a1d9383b41ccb938a9a560eb3f # v3.1.0
+        uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
         with:
           charts: sparkline # see the builder job
 
