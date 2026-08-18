@@ -18,11 +18,11 @@
 # The parser is python and uses python3-cryptography; both are builder-side only. See
 # CLAUDE.md: what the image may not gain is an interpreter, and what ships from here is
 # a text file.
-VERSION="20260601"
+VERSION="20260816"
 PACKAGE="ca-certificates-${VERSION}"
 TARBALL="ca-certificates_${VERSION}.tar.xz"
 URL="https://deb.debian.org/debian/pool/main/c/ca-certificates/${TARBALL}"
-SHA256="7ab6301f7f34eef90a4d278647c260bc0762e0e14561f4649854cf4b0d4bea21"
+SHA256="d939bcdd0cb058712cf4175bac76997676eb8b68fe9473765e1b40fb3d5b186a"
 # certdata.txt is Mozilla's, under MPL-2.0; the Makefiles and certdata2pem.py are
 # Debian's, under GPL-2.0-or-later. Only the first half reaches the image — what ships is
 # the certificates.
