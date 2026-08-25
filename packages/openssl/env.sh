@@ -24,11 +24,11 @@
 # Being *behind* sid is safe in a way being ahead of it is not: the version nodes a
 # binary asks for are the ones its library defined at link time, and curl uses nothing
 # newer than OPENSSL_3.0.0. test/check-symbol-versions.sh is what would say otherwise.
-VERSION="3.5.7"
+VERSION="3.5.8"
 PACKAGE="openssl-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"
 URL="https://github.com/openssl/openssl/releases/download/${PACKAGE}/${TARBALL}"
-SHA256="a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8"
+SHA256="a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2"
 LICENSE="Apache-2.0"
 UPSTREAM_GITHUB="openssl/openssl"
 # Tags are openssl-3.5.7; the ancient ones are OpenSSL_1_1_1w and never survive the
