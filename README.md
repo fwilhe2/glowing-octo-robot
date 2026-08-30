@@ -40,7 +40,8 @@ packages/<pkg>/   env.sh + build.sh per package, and the tree its tarball unpack
 builder/          how a package is compiled: the one builder image, deps.txt (its
                   entire contents), and the entrypoint that sets up the sysroot
 image/            how the staging tree becomes an image — a bootable disk or an OCI
-                  image: Containerfile, build-rootfs.sh, and files/ — the /etc it ships
+                  image: Containerfile, build-rootfs.sh, files/ (the /etc it ships), and
+                  variants/ + platforms/, which declare the images there are
 test/             everything CI runs to verify a build
 tools/            local conveniences and maintenance, not part of a build
 docs/             design notes for work not done yet — proposals, not descriptions
@@ -83,7 +84,8 @@ produces binaries that can't start.
 `image/Containerfile` / `image/build-rootfs.sh` then turn `rootfs/` into `output/rootfs.ext4`
 (see the `rootfs` job in `.github/workflows/ci.yml`), which `./tools/boot-qemu.sh` boots.
 The same script also writes `output/flfs-oci.tar`, the same userspace as a container image
-— see [The OCI image](#the-oci-image).
+— see [The OCI image](#the-oci-image) — and a smaller disk and container for each of the
+other declared variants; see [Image variants](#image-variants).
 
 ## Adding a package
 
@@ -285,13 +287,14 @@ It is the disk image minus the two things a container gets from somewhere else: 
 kernel, which is the host's, and systemd, which the runtime replaces. `/bin/bash` is the
 entrypoint, so `podman run -it` is a shell and anything after the image name is passed to
 it (`podman run flfs -c 'flfsfetch'`). Everything else is the same userspace, assembled by
-the same script from the same tree — `image/build-rootfs.sh` takes `ext4` or `oci` and
-expresses the container as *subtractions*, so the two cannot drift apart the way two
-scripts would. Dropping systemd means its unit tree, udev, its drop-in directories and its
-PAM and NSS modules, plus every binary linking the private `libsystemd-shared` (found by
-reading their `NEEDED` entries rather than by keeping a list); `libsystemd.so.0` and
-`libudev.so.1` stay, because they are the client libraries other packages link against.
-Also gone is the `/etc` only a booted machine reads: `fstab`, `shadow`, the networkd
+the same script from the same tree — `oci` is a *platform*, thirteen lines of
+`image/platforms/oci.conf` expressing the container as subtractions, so the two cannot
+drift apart the way two scripts would. Omitting systemd takes its unit tree, udev, its
+drop-in directories, its PAM and NSS modules and every one of its command-line tools with
+it, because those are all systemd's files and the per-package manifests know that;
+`libsystemd.so.0` is rescued by a `keep` line, being the public client library that `crun`
+and `libmount.so.1` link. `libudev.so.1` is not: with udevadm gone nothing names it. Also
+gone is the `/etc` only a booted machine reads: `fstab`, `shadow`, the networkd
 configuration, `resolv.conf`. A runtime provides hostname, hosts and resolv.conf itself.
 
 Nothing new is needed to write it. An OCI archive is a tar of five files — a layer, a
@@ -308,6 +311,62 @@ That is also its limit: a container runs on the *host's* kernel, so this says no
 about `packages/kernel` and does not replace the boot tests. It is a check on the image
 we produce; [Containers](#containers) below is the unrelated question of the runtime the
 *disk* image ships.
+
+## Image variants
+
+There is more than one image, and which ones there are is *data* rather than code. An
+image is a **variant** on a **platform**:
+
+* a **variant** is a feature set — which packages are in it and the `/etc` that goes with
+  them — declared in `image/variants/<name>.conf`;
+* a **platform** is what the assembled tree is turned into, and what that target
+  physically cannot use, in `image/platforms/<name>.conf`.
+
+| variant | what it is for | platforms |
+| --- | --- | --- |
+| `minimal` | boots to a login shell on the serial console and nothing else | `ext4`, `oci` |
+| `net` | minimal, plus a network somebody can debug: addressing, DNS, TLS, `ip`/`ping`/`curl` | `ext4`, `oci` |
+| `full` | everything this repository builds — the image published as `flfs:latest` | `ext4`, `oci` |
+
+`full` is the **default variant**, which means it keeps the unsuffixed names: it is
+`output/rootfs.ext4`, `output/flfs-oci.tar`, `sbom-ext4.json` and the `flfs:latest` tag.
+The others are `output/rootfs-minimal.ext4`, `output/flfs-net-oci.tar` and so on.
+
+```sh
+./tools/variants.sh list          # every (variant, platform) pair CI builds
+./tools/variants.sh show net oci  # what net resolves to on that platform
+podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output \
+    rootfs-builder /usr/local/bin/build-rootfs.sh minimal ext4
+```
+
+The rule the whole thing rests on: **the package build never learns about variants.**
+Every package is compiled once per architecture into the same staging tree, exactly as
+before, and a variant is a *selection from* that tree resolved at assembly time. That is
+what keeps 36 packages × 2 architectures from becoming 36 × 2 × N build jobs — a new
+variant costs only an image and a boot.
+
+What makes selection by package possible is a primitive that did not exist before:
+`builder/build-package.sh` diffs the staging tree around each package's install and writes
+the paths it added to `usr/share/flfs/manifests/<pkg>`. That also answers "which package
+shipped this file", which is the first question of every size investigation and which
+nothing here could answer before.
+
+And what makes it *safe* is that a subset need not resolve even though the superset always
+does. `image/build-rootfs.sh` therefore fails an image whose binaries need a library it
+does not ship, against the same `test/known-missing-libs.txt` allowlist
+`test/check-rootfs-deps.sh` holds the staging tree to — and the error names the package
+that provides it, because the manifests know. Each variant also declares which of the boot
+tests apply to it, and CI boots every variant: a subset booting is precisely the claim
+being tested, and `full` passing says nothing about `minimal`.
+
+Selection is deliberately **not** transitive: nothing in this repository declares a
+dependency graph, so closing over one would mean deriving it from `DT_NEEDED`, which is a
+guess that is right often enough to be dangerous. Explicit lists plus a check that names
+the missing package is the same trade this project made when it replaced `apt build-dep`
+with a reviewed `deps.txt`.
+
+`docs/image-variants.md` is the design, including the `lima` and `firecracker` platforms
+that are not built yet.
 
 ## What the image leaves out
 

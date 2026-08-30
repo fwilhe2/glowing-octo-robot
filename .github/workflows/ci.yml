@@ -350,21 +350,37 @@ jobs:
 
       - run: mkdir -p output
 
-      - name: Create disk image
+      # Every declared image, out of the one staging tree, in one job. A loop rather than
+      # a matrix over (arch × variant) on purpose: the expensive part of this job is the
+      # thirty-odd artifact downloads above, and assembling an image from the extracted
+      # tree is seconds — a matrix would pay that setup cost per variant to save nothing.
+      # tools/variants.sh reads image/variants/*.conf, which is where a new image is added.
+      - name: Create the images
         run: |
             podman build -t rootfs-builder -f image/Containerfile .
-            podman run -e FLFS_BUILD="$GITHUB_SHA" --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh ext4
+            ./tools/variants.sh list | while read -r variant platform; do
+              echo "::group::$variant $platform"
+              podman run -e FLFS_BUILD="$GITHUB_SHA" \
+                --volume "$PWD"/rootfs:/usr/local/src \
+                --volume "$PWD"/output:/usr/local/output \
+                rootfs-builder /usr/local/bin/build-rootfs.sh "$variant" "$platform"
+              echo "::endgroup::"
+            done
 
-      # The second output of the same staging tree: the same userspace with the kernel
-      # and systemd taken back out, as an OCI image. It reuses the container built above.
-      - name: Create OCI image
-        run: podman run -e FLFS_BUILD="$GITHUB_SHA" --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh oci
-
-      # Loading it proves the hand-written OCI layout is well formed, and running it is
-      # the only check in this job that executes a binary we shipped. It is not a
+      # Loading each one proves the hand-written OCI layout is well formed, and running it
+      # is the only check in this job that executes a binary we shipped. It is not a
       # substitute for the boot job below: the container runs on the runner's kernel.
-      - name: Run the OCI image
-        run: FLFS_BUILD="$GITHUB_SHA" ./test/oci.sh output/flfs-oci.tar
+      - name: Run the OCI images
+        run: |
+            default=$(./tools/variants.sh default)
+            ./tools/variants.sh list | while read -r variant platform; do
+              [ "$platform" = oci ] || continue
+              if [ "$variant" = "$default" ]; then tar=output/flfs-oci.tar
+              else tar=output/flfs-$variant-oci.tar; fi
+              echo "::group::$variant"
+              FLFS_BUILD="$GITHUB_SHA" ./test/oci.sh "$tar"
+              echo "::endgroup::"
+            done
 
       - name: Upload rootfs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -404,15 +420,27 @@ jobs:
       # breakdowns to look at, and they put those breakdowns in the job summary, which is
       # where "what grew?" gets answered.
       #
-      # The disk first, being the real output of this repo — and `always()` on the second
-      # so that an overage in the first still reports the other image's number rather than
-      # hiding it until the next run.
-      - name: Measure the disk image
-        run: ./test/rootfs-size.sh ext4
-
-      - name: Measure the OCI image
-        if: always()
-        run: ./test/rootfs-size.sh oci
+      # Every image against its own row in test/size-budget.txt — a file with no row for
+      # an image is an error rather than a pass, so a new variant has to be given a
+      # ceiling before it ships and the check prints the line to add.
+      #
+      # The loop keeps going past an overage rather than stopping at the first: the run
+      # where one image is over budget is exactly the run where the others' numbers are
+      # worth having, and a step that reported only up to the first failure would hide
+      # them. The verdict is collected and the step fails at the end.
+      - name: Measure the images
+        run: |
+            rm -f output/over-budget
+            ./tools/variants.sh list | while read -r variant platform; do
+              ./test/rootfs-size.sh "$variant" "$platform" \
+                || echo "$variant/$platform" >> output/over-budget
+            done
+            # The loop runs in a subshell (it is the right-hand side of a pipe), so the
+            # verdict is carried in a file rather than in a variable.
+            if [ -e output/over-budget ]; then
+              echo "over budget: $(tr '\n' ' ' < output/over-budget)" >&2
+              exit 1
+            fi
 
       # And the same question asked from outside: the budget above is a number we chose,
       # this one is the base image somebody would use instead. Exceeding it is a failure
@@ -443,33 +471,64 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./test/size-history.sh ${{ matrix.arch }}
 
+      # Every variant's disk in the one artifact, rather than one artifact each. Not the
+      # nicer shape — each boot job now downloads three images to boot one — but
+      # upload-artifact is a step and the set of variants is data, so one artifact per
+      # variant would mean hardcoding their names here, which is the thing
+      # image/variants/ exists to stop. tools/fetch-image.sh picks the file it wants out
+      # of what this leaves, and so does the boot job below.
       - name: Upload rootfs.ext4
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rootfs.ext4-${{ matrix.arch }}
-          path: output/rootfs.ext4
+          path: output/rootfs*.ext4
 
       - name: Upload OCI image
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: oci-image-${{ matrix.arch }}
-          path: output/flfs-oci.tar
+          path: output/flfs*-oci.tar
+
+  # The boot matrix, read out of image/variants/*.conf rather than written here. It is
+  # its own job because a matrix has to be known before the job it drives starts, and it
+  # costs seconds: no checkout of anything but the repository, no build.
+  variants:
+    runs-on: ubuntu-26.04
+    outputs:
+      boot: ${{ steps.enumerate.outputs.boot }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: enumerate
+        run: echo "boot=$(./tools/variants.sh boot-matrix)" >> "$GITHUB_OUTPUT"
 
   # An image that builds and resolves all its libraries can still fail to boot, so
   # actually boot it: the kernel we build is in rootfs/boot/bzImage.
+  #
+  # A matrix over (arch × variant), running only that variant's declared tests. This is
+  # where the wall clock goes and the arithmetic is worth doing in the open: with
+  # `minimal` (boot, systemd), `net` (+ network) and `full` (+ container) it is
+  # 2 × (2 + 3 + 4) = 18 boots against the 8 there used to be, on runners with no KVM.
+  # Each variant genuinely needs its own — a subset booting is precisely the claim being
+  # tested, and `full` passing says nothing about `minimal` — so the cost is real and
+  # roughly a doubling. If it ever becomes the pull-request bottleneck the lever is
+  # *when* rather than *what*: every variant on main and on a schedule, `full` only on
+  # branches. That is one `if:` and should not be taken pre-emptively.
   boot:
     runs-on: ${{ matrix.runner }}
     needs:
       - rootfs
+      - variants
     strategy:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
+        image: ${{ fromJSON(needs.variants.outputs.boot) }}
         include:
           - arch: amd64
             runner: ubuntu-26.04
           - arch: arm64
             runner: ubuntu-26.04-arm
+    name: boot (${{ matrix.arch }}, ${{ matrix.image.variant }})
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -506,8 +565,12 @@ jobs:
             sudo apt-get install -y --no-install-recommends qemu-system-x86
           fi
 
+      # Which of these run is the variant's own `tests` line. A step that does not apply
+      # is skipped rather than dropped, so the job's step list still reads as the four
+      # questions CI asks of a disk image and it is visible which ones this variant makes.
       - name: Boot the image
-        run: ./test/boot.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
+        if: contains(matrix.image.tests, 'boot')
+        run: ./test/boot.sh artifacts/${{ matrix.image.image }} rootfs/boot/bzImage
 
       # A second boot, this one all the way into systemd, asking whether systemd is happy
       # with itself: a package that ships a unit it cannot run leaves every boot
@@ -515,24 +578,28 @@ jobs:
       # already has, which is the only time CI executes a shipped binary that is not on
       # systemd's or login's critical path — and prints the result, which is the point.
       - name: Check for failed units, and say hello
-        run: ./test/systemd.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
+        if: contains(matrix.image.tests, 'systemd')
+        run: ./test/systemd.sh artifacts/${{ matrix.image.image }} rootfs/boot/bzImage
 
       # A third boot: networkd has to configure the NIC, resolved has to answer, and the
-      # guest has to reach the outside world.
+      # guest has to reach the outside world. Its second round needs ip, ping and curl,
+      # which is why only a variant that ships them declares this test.
       - name: Check networking
-        run: ./test/network.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
+        if: contains(matrix.image.tests, 'network')
+        run: ./test/network.sh artifacts/${{ matrix.image.image }} rootfs/boot/bzImage
 
       # And a fourth, which starts an actual container: the kernel's container.config
       # fragment and crun are only useful together, and nothing above this exercises
       # either of them.
       - name: Check containers
-        run: ./test/container.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
+        if: contains(matrix.image.tests, 'container')
+        run: ./test/container.sh artifacts/${{ matrix.image.image }} rootfs/boot/bzImage
 
       - name: Upload console log
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: boot-console-log-${{ matrix.arch }}
+          name: boot-console-log-${{ matrix.arch }}-${{ matrix.image.variant }}
           path: output/*.log
 
   # The container image, published where it can be pulled from rather than only attached
@@ -544,6 +611,12 @@ jobs:
   # `needs: boot`, not `needs: rootfs`: the OCI and ext4 images are the same userspace
   # out of the same staging tree, so the boot job failing means the thing about to be
   # published is broken, whatever test/oci.sh made of it in isolation.
+  #
+  # Which variants get pushed is declared in image/variants/*.conf — a `publish oci` line
+  # — rather than decided here. Today that is `full` alone, which is also the default
+  # variant, so `flfs:latest` and `flfs:<commit>` go on meaning exactly what they meant
+  # before variants existed. Another variant that starts publishing gets a repository of
+  # its own, flfs-<variant>, rather than a tag inside that one.
   #
   # Only on main. The per-arch tags are commit-scoped and would be harmless from a
   # branch, but `latest` is a name with one holder, and a branch build taking it is how

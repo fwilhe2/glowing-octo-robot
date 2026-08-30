@@ -3,21 +3,30 @@ set -euo pipefail
 
 set -x
 
-# Two things come out of the same staging tree, and the argument says which:
+# Many images come out of the same staging tree, and the two arguments say which:
 #
-#   ext4  a bootable disk for qemu — output/rootfs.ext4, the real output of this repo
-#   oci   a container image — output/flfs-oci.tar, the same userspace with the parts
-#         that only mean something to a machine that boots taken back out
+#     build-rootfs.sh <variant> <platform>
 #
-# They are one script rather than two because everything that is hard-won here — the
-# merged-/usr skeleton, the loader path, the trim, ldconfig — is identical for both.
-# The container flavour is expressed as *subtractions* from the disk image, in one
-# block below, the same way vm.config is expressed as subtractions from defconfig.
-flavour=${1:-ext4}
-case "$flavour" in
-    ext4|oci) ;;
-    *) echo "usage: ${0##*/} [ext4|oci]" >&2; exit 2 ;;
-esac
+# A **variant** is a feature set — which packages are in the image and the /etc that goes
+# with them, declared in image/variants/<name>.conf. A **platform** is what the assembled
+# tree is turned into and what that target physically cannot use,
+# image/platforms/<name>.conf. An image is one of each, per architecture. See
+# docs/image-variants.md, which this script is the implementation of.
+#
+# It is one script rather than one per output because everything that is hard-won here —
+# the merged-/usr skeleton, the loader path, the trim, ldconfig — is identical for all of
+# them, and the two things that are not (mkfs.ext4 and a hand-assembled OCI layout) have
+# nothing in common with each other either. So `format` in a platform file selects a
+# branch at the bottom of this file, and there is no plugin mechanism: there will be
+# three or four platforms ever, and an abstraction layer for two implementations is how
+# a build system becomes unreadable.
+#
+# The rule the whole design rests on: **the package build stage never learns about
+# variants.** Every package is compiled once per architecture into the same staging tree,
+# exactly as before. A variant is a selection *from* that tree, resolved here.
+VARIANT_DIR="${VARIANT_DIR:-/variants}"
+PLATFORM_DIR="${PLATFORM_DIR:-/platforms}"
+source "${VARIANT_LIB:-/usr/local/bin/variant-lib.sh}"
 
 # The staging tree is an input, not the image. Everything below — the /etc we ship, the
 # stripping, the pruning — happens on a copy in the container's own filesystem, so that
@@ -26,6 +35,92 @@ esac
 # libraries and .pc files this script is about to throw away.
 STAGE=/usr/local/src
 IMAGE=/usr/local/image
+
+# What `package *` means here. Not "every packages/<pkg>/env.sh" — that directory is not
+# mounted into this container and, more to the point, would be the wrong answer: an image
+# is selected from the tree that was actually staged, so the manifests are the list.
+#
+# The pipe is what keeps `set -e` out of it: a bare `$(cd … && ls)` that fails because the
+# directory is not there is a failed assignment and an exit before the message below.
+ALL_PACKAGES=$( (cd "$STAGE/usr/share/flfs/manifests" && ls) 2>/dev/null | tr '\n' ' ')
+[ -n "$ALL_PACKAGES" ] || {
+    echo "error: no per-package manifests in usr/share/flfs/manifests" >&2
+    echo "       builder/build-package.sh writes one per package as it installs; a tree" >&2
+    echo "       without them predates that and cannot be selected from. Delete rootfs/" >&2
+    echo "       and rebuild." >&2
+    exit 1
+}
+
+# Arguments. Two of them, except for the one back-compatible shorthand worth keeping:
+# a single argument naming a *platform* is the default variant on that platform, which is
+# what `build-rootfs.sh ext4` and `build-rootfs.sh oci` have always meant.
+usage() {
+    echo "usage: ${0##*/} <variant> <platform>" >&2
+    echo "       ${0##*/} <platform>            # the default variant, $(default_variant)" >&2
+    echo "  variants:  $(variant_list  | tr '\n' ' ')" >&2
+    echo "  platforms: $(platform_list | tr '\n' ' ')" >&2
+    exit 2
+}
+
+case $# in
+    0) variant=$(default_variant); platform=ext4 ;;
+    1) if [ -f "$PLATFORM_DIR/$1.conf" ]; then
+           variant=$(default_variant); platform=$1
+       else
+           echo "error: '$1' is not a platform, so it needs one naming which image to build" >&2
+           usage
+       fi ;;
+    2) variant=$1; platform=$2 ;;
+    *) usage ;;
+esac
+
+# The variant first, then the platform on top of it — which is the resolution order, and
+# it has to be this way round: a platform's omit/drop/keep are physical constraints of
+# the target and a variant may not override them.
+variant_load "$variant" || exit 1
+description=$V_DESCRIPTION
+packages=$V_PACKAGES
+keep_globs=$V_KEEP
+drop_globs=$V_DROP
+files_overlays=$V_FILES
+is_default=$V_DEFAULT
+set_has "$V_PLATFORMS" "$platform" || {
+    echo "error: variant $variant does not declare the $platform platform (it has: $V_PLATFORMS)" >&2
+    echo "       That is a decision in image/variants/$variant.conf, not an oversight here:" >&2
+    echo "       a variant that makes no sense as a container simply does not list it." >&2
+    exit 1
+}
+
+platform_load "$platform" || exit 1
+packages=$(_set_del "$packages" $V_OMIT)
+keep_globs=$(_set_add "$keep_globs" $V_KEEP)
+drop_globs=$(_set_add "$drop_globs" $V_DROP)
+files_overlays="$files_overlays $V_FILES"
+format=$V_FORMAT
+
+# The name every output of this run is filed under. The default variant keeps the
+# unsuffixed names this repository had before variants existed — output/rootfs.ext4,
+# output/flfs-oci.tar, output/sbom-ext4.json — so docs/release.md, the boot tests and
+# every published tag still mean what they always meant.
+id=$(image_id "$variant" "$platform")
+if [ "$is_default" = yes ]; then
+    ext4_out=/usr/local/output/rootfs.ext4
+    oci_out=/usr/local/output/flfs-oci.tar
+    oci_name=flfs
+else
+    ext4_out=/usr/local/output/rootfs-$variant.ext4
+    oci_out=/usr/local/output/flfs-$variant-oci.tar
+    # The repository name a container image loads and publishes as. Per variant and not
+    # per tag: `flfs:latest` and `flfs:<commit>` already have consumers and go on meaning
+    # the default variant, so anything else gets a repository of its own rather than a
+    # tag inside that one. tools/publish-oci.sh pushes to the matching name.
+    oci_name=flfs-$variant
+fi
+
+set +x
+echo "=== building $variant/$platform ($id): $description"
+echo "    packages: $packages"
+set -x
 
 # This runs natively inside the same-arch podman build as the packages it is assembling
 # — never cross-arch — so the host's own uname tells us which ELF interpreter and
@@ -41,6 +136,84 @@ rm -rf "$IMAGE"
 mkdir -p "$IMAGE"
 cp -a "$STAGE"/. "$IMAGE"/
 cd "$IMAGE"
+
+# ---------------------------------------------------------------------------------
+# Selection: which packages are in this image.
+#
+# Expressed as a deletion from the copy rather than a copy of what was chosen, and that
+# is the whole reason rule 6 of the resolution order works — "everything not in any
+# manifest is present regardless". The directory skeleton, image/files, ld.so.cache, the
+# journal catalog database and the SBOM are not any package's files, so a selection
+# cannot lose them by forgetting to name them. Selection is about compiled software, not
+# about the tree's bones.
+#
+# It runs first, before the skeleton and before the trim, so that everything downstream —
+# 800 strip invocations, the readelf sweep for the SBOM, ldconfig — walks the smaller
+# tree. It runs before image/files is copied in too, which is why the `drop` globs are a
+# second pass further down: those name paths in the /etc we ship, which does not exist yet.
+work=$(mktemp -d)
+manifests="$IMAGE/usr/share/flfs/manifests"
+
+for p in $packages; do
+    [ -f "$manifests/$p" ] || {
+        echo "error: variant $variant selects '$p', which is not in this staging tree." >&2
+        echo "       Staged packages: $ALL_PACKAGES" >&2
+        echo "       Either the name is wrong in image/variants/, or that package's build" >&2
+        echo "       did not run — builder/build-package.sh writes a manifest only after a" >&2
+        echo "       successful install." >&2
+        exit 1
+    }
+done
+
+cat "$manifests"/*        | LC_ALL=C sort -u > "$work/owned"
+for p in $packages; do cat "$manifests/$p"; done | LC_ALL=C sort -u > "$work/selected"
+LC_ALL=C comm -23 "$work/owned" "$work/selected" > "$work/unselected"
+
+# `keep` globs win over both `omit` and `drop`, which is the only precedence rule anybody
+# has to remember. This is the half of it that rescues a file from an omitted package —
+# libsystemd.so.0 out of a systemd the oci platform otherwise deletes entirely.
+#
+# Tracing off: this loop is thousands of iterations and `set -x` over it would be longer
+# than the rest of the build log put together. Same reason as the strip scan below.
+set +x
+: > "$work/delete"
+: > "$work/rescued"
+while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    rescued=
+    for g in $keep_globs; do
+        case "$path" in $g) rescued=1; break ;; esac
+    done
+    if [ -n "$rescued" ]; then
+        printf '%s\n' "$path" >> "$work/rescued"
+    else
+        printf '%s\n' "$path" >> "$work/delete"
+    fi
+done < "$work/unselected"
+
+# Files and symlinks by name; directories only afterwards and only if what was removed
+# from inside them left them empty. A directory in a manifest is usually one a package
+# created and shares with three others — `rm -rf` on it would take the neighbours' files
+# with it, which is precisely the class of mistake a manifest exists to prevent.
+#
+# Reverse lexicographic order is depth-first for paths: usr/lib/systemd/system sorts
+# after usr/lib/systemd, so children are attempted before their parents.
+gone=0
+while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [ -L "$path" ] || [ ! -d "$path" ]; then
+        rm -f "$path"
+        gone=$(( gone + 1 ))
+    fi
+done < "$work/delete"
+while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [ -d "$path" ] && [ ! -L "$path" ] && rmdir "$path" 2>/dev/null; then
+        gone=$(( gone + 1 ))
+    fi
+done < <(LC_ALL=C sort -r "$work/delete")
+set -x
+echo "selection: kept $(wc -l < "$work/selected") paths from $(echo $packages | wc -w) packages, removed $gone, rescued $(wc -l < "$work/rescued") by keep"
 
 mkdir -p usr/bin bin sbin boot
 mkdir -p {dev,etc,home,lib}
@@ -125,7 +298,83 @@ if [ -n "${FLFS_BUILD:-}" ]; then
     printf 'BUILD_ID="%s"\n' "$FLFS_BUILD" >> usr/lib/os-release
 fi
 
-if [ "$flavour" = ext4 ]; then
+# A variant's own /etc, laid over the one image/files ships. No variant uses this yet —
+# it is what `k8s-node` becomes a list of packages plus, rather than a fork of the image
+# build — so the directory is expected to be absent and naming one that is not there is
+# an error rather than a silent nothing.
+for dir in $files_overlays; do
+    overlay="${OVERLAY_DIR:-/overlays}/$dir"
+    [ -d "$overlay" ] || {
+        echo "error: $variant/$platform names files '$dir', which is not at $overlay" >&2
+        echo "       image/Containerfile has to COPY it in before a variant can use it." >&2
+        exit 1
+    }
+    cp -r "$overlay"/* .
+done
+
+# ---------------------------------------------------------------------------------
+# `drop`, the second half of selection. These name paths regardless of which package
+# owns them — or of whether any package does, which is why this runs here rather than
+# with the manifest pass above: most of what the oci platform drops is the /etc we ship,
+# copied in three lines ago.
+#
+# `keep` wins over `drop` as it wins over `omit`, and the check is the same one.
+set +x
+shopt -s nullglob dotglob
+for g in $drop_globs; do
+    for match in $g; do
+        rescued=
+        for k in $keep_globs; do
+            case "$match" in $k) rescued=1; break ;; esac
+        done
+        if [ -n "$rescued" ]; then continue; fi
+        # `nullglob` only silences a *pattern* that matched nothing; a literal path like
+        # `etc/hostname` survives expansion whether or not it exists. Asking keeps the log
+        # honest about what was actually there — and a drop line that never matches
+        # anything in any image is a line worth noticing has gone stale.
+        if [ -e "$match" ] || [ -L "$match" ]; then
+            rm -rf "$match"
+            echo "drop: $match"
+        fi
+    done
+done
+shopt -u nullglob dotglob
+set -x
+
+# ---------------------------------------------------------------------------------
+# What selection left pointing at nothing.
+#
+# Scoped rather than tree-wide, and deliberately: /etc/resolv.conf is a symlink into
+# resolved's /run stub that nothing will ever create at assembly time, and a sweep over
+# the whole image would decide it was dangling and delete the file constraint 4 depends
+# on. usr/bin is where a removed package leaves links behind, and the three /etc
+# directories below are the ones systemd shares with software we might ship later —
+# deleting those outright is how a future openssh package loses its config; dropping the
+# links that now point at nothing, and then the directory if that emptied it, doesn't.
+#
+# Targets are resolved against the tree rather than with `readlink -f`, which would
+# resolve an absolute one against the *builder container's* root and conclude that
+# /usr/lib/systemd/systemd still exists. Twice, because these come in chains
+# (systemd-umount → systemd-mount).
+shared="etc/profile.d etc/ssh etc/xdg"
+for _ in 1 2; do
+    while IFS= read -r link; do
+        target=$(readlink "$link")
+        case "$target" in
+            /*) target=".$target" ;;
+            *)  target="$(dirname "$link")/$target" ;;
+        esac
+        [ -e "$target" ] || rm -f "$link"
+    done < <(find usr/bin $shared -type l 2>/dev/null)
+done
+find $shared -depth -type d -empty -delete 2>/dev/null || true
+
+# ---------------------------------------------------------------------------------
+# Everything from here to the trim is about a machine that *boots*, so it is conditional
+# on there being a systemd in the image to boot rather than on the platform being ext4.
+# That is not the same question — a future platform could ship a self-booting disk of the
+# same tree — and asking the tree is the honest version of it.
+if [ -e usr/lib/systemd/systemd ]; then
     # systemd ships two shell drop-ins and systemd-tmpfiles symlinks both into
     # /etc/profile.d at every boot, so /etc/profile now sources them. One stays masked.
     #
@@ -166,145 +415,6 @@ if [ ! -e "lib64/$ld_so" ]; then
         mkdir -p lib64
         ln -sf "/${loader#./}" "lib64/$ld_so"
     fi
-fi
-
-# ---------------------------------------------------------------------------------
-# The container flavour, as subtractions. A container gets its kernel from the host and
-# its PID 1 from the runtime, so both of ours are dead weight — and worse than dead,
-# because a systemd that cannot run is still a systemd someone will try to run. This
-# runs before the trim so the strip pass below has less to walk.
-if [ "$flavour" = oci ]; then
-    # The kernel. The host's is the one the container will be running on.
-    rm -rf boot
-
-    # systemd, in the four places it installs itself: its own tree (36 MB of units,
-    # generators, the executor and the private libsystemd-shared/-core), udev, the
-    # drop-in directories it owns, and its PAM/NSS modules. nsswitch.conf here lists
-    # only `files` and `dns`, so its NSS modules were never loaded even in the disk
-    # image; they would simply dangle now that libsystemd-shared is gone.
-    rm -rf usr/lib/systemd usr/lib/udev usr/share/factory usr/share/user-tmpfiles.d
-    rm -rf usr/lib/sysusers.d usr/lib/tmpfiles.d usr/lib/environment.d usr/lib/binfmt.d
-    # sysctl.d is systemd-sysctl's, and a container has no business setting kernel
-    # parameters — the ones it can see belong to the host or to its own namespace, and
-    # nothing in here would apply them either way. That covers ours as well as systemd's:
-    # image/files/etc/sysctl.d/50-ping-group-range.conf is the guest's opt-in to
-    # unprivileged ICMP sockets, and a runtime decides that for a container.
-    rm -rf usr/lib/sysctl.d etc/sysctl.d
-    rm -rf usr/lib/credstore etc/credstore etc/credstore.encrypted usr/lib/pam.d
-    rm -rf etc/systemd etc/udev etc/tmpfiles.d etc/user-tmpfiles.d
-    rm -f  usr/lib/security/pam_systemd.so usr/lib/security/pam_systemd_loadkey.so
-    rm -f  usr/lib/libnss_systemd.so.2 usr/lib/libnss_resolve.so.2 \
-           usr/lib/libnss_myhostname.so.2
-
-    # libsystemd.so.0 stays: it is the public client library, and ten binaries this
-    # image keeps have it in NEEDED — crun and libmount.so.1 among them, which is the
-    # container runtime and `mount`. What is gone is systemd the system, not its API.
-
-    # Its command-line tools, found rather than listed: systemctl, journalctl, udevadm,
-    # loginctl and the forty-odd systemd-* binaries all link the private
-    # libsystemd-shared we just deleted, and nothing else in the tree does. Deriving
-    # the list means a version bump that adds another one needs no edit here.
-    while IFS= read -r bin; do
-        if readelf -d "$bin" 2>/dev/null | grep -q 'libsystemd-\(shared\|core\)'; then
-            rm -f "$bin"
-        fi
-    done < <(find usr/bin -maxdepth 1 -type f)
-
-    # PAM, all of it, and this is not the usual "a container rarely needs that": it is
-    # already broken in one. /etc/pam.d went with systemd's /etc above, and libpam with
-    # no configuration for a service does not fall back to something permissive, it
-    # aborts — `su -c ... root` in the published image answers "su: Critical error -
-    # immediate abort", and runuser the same. /etc/shadow is gone too, so there would be
-    # nothing to authenticate against even with a config. What that leaves is a megabyte
-    # of modules nothing can load and a handful of helpers that cannot start.
-    #
-    # The consumers are derived for the same reason the systemd tools are: a util-linux
-    # that grows another PAM-linked helper would otherwise ship it here, pointed at a
-    # library this deleted.
-    #
-    # `grep -a`, and it is not optional. Without it GNU grep decides the file is binary,
-    # and a match on a "line" carrying NUL bytes and invalid UTF-8 — which is every line
-    # of an ELF .dynstr — is discarded rather than reported: `grep -q libpam.so
-    # usr/bin/su` exits 1 on a binary that plainly needs libpam.so.0. `-l` happens to
-    # short-circuit before that check and answers correctly, which is the sort of
-    # difference that makes this silent. `if` rather than `grep && rm` for a duller
-    # reason: a failing `&&` list at the end of a loop body is the script's exit status
-    # under `set -e`.
-    rm -rf usr/lib/security etc/security
-    rm -f  usr/lib/libpam*
-    while IFS= read -r bin; do
-        if grep -qa 'libpam\.so' "$bin" 2>/dev/null; then
-            rm -f "$bin"
-        fi
-    done < <(find usr/bin -maxdepth 1 -type f)
-
-    # A serial getty, in a container that has no serial line and no PID 1 to start one.
-    rm -f usr/bin/agetty
-
-    # kmod, dead here for a reason that has nothing to do with containers: packages/kernel
-    # builds with CONFIG_MODULES off, so there is no module to insert into anything. The
-    # disk image keeps it anyway — systemd-modules-load and udev reach libkmod, and a
-    # missing library there is a failed unit rather than a smaller image. The six tools
-    # are symlinks to kmod and the loop below collects them once this deletes the target.
-    rm -rf etc/depmod.d etc/modprobe.d etc/modules-load.d
-    rm -f  usr/bin/kmod usr/lib/libkmod.so*
-
-    # libudev.so.1 is the half of the sentence above that is not true of it: with udev
-    # and udevadm gone, nothing in the container names the library at all, so it was
-    # 1.6 MB of client library with no client. It has to come after that loop rather than
-    # next to the comment it belongs to — udevadm is a consumer right up until the line
-    # above deletes it. The disk image is where udev runs, and keeps it.
-    #
-    # Checked rather than asserted, because the failure is silent here and loud in
-    # somebody else's container: a package that started linking libudev would look
-    # complete in the staging tree test/check-rootfs-deps.sh reads and fail at exec once
-    # this deleted the library underneath it. grep rather than readelf, so a dlopen by
-    # name is caught alongside a DT_NEEDED — udev's API is reached both ways.
-    consumers=$(find usr -type f -perm -u+x ! -name 'libudev.so*' -exec grep -la 'libudev\.so' {} + 2>/dev/null || true)
-    if [ -n "$consumers" ]; then
-        echo "error: the container image still needs libudev, which this deletes:" >&2
-        echo "$consumers" >&2
-        echo "       Keep the library — drop the rm below — or configure udev out of" >&2
-        echo "       whatever package started asking for it." >&2
-        exit 1
-    fi
-    rm -f usr/lib/libudev.so*
-
-    # And the symlinks that pointed into all of that: /sbin/init, halt, poweroff,
-    # reboot, shutdown, resolvconf, run0, the mount.* helpers — plus, in the three
-    # directories systemd shares with software we do not ship *yet*, its shell
-    # integration snippets (/etc/profile.d), its ssh proxy drop-in (/etc/ssh) and its
-    # user-unit directory (/etc/xdg). Those three hold nothing else today, but deleting
-    # them outright is how a future openssh package loses its config; dropping the links
-    # that now point at nothing, and then the directory if that emptied it, doesn't.
-    #
-    # Targets are resolved against the tree rather than with `readlink -f`, which would
-    # resolve an absolute one against the *builder container's* root and conclude that
-    # /usr/lib/systemd/systemd still exists. Twice, because these come in chains
-    # (systemd-umount → systemd-mount).
-    shared="etc/profile.d etc/ssh etc/xdg"
-    for _ in 1 2; do
-        while IFS= read -r link; do
-            target=$(readlink "$link")
-            case "$target" in
-                /*) target=".$target" ;;
-                *)  target="$(dirname "$link")/$target" ;;
-            esac
-            [ -e "$target" ] || rm -f "$link"
-        done < <(find usr/bin $shared -type l 2>/dev/null)
-    done
-    find $shared -depth -type d -empty -delete 2>/dev/null || true
-
-    # The /etc that only a booted machine reads: a root filesystem to mount, a password
-    # to type at a login prompt that isn't there, a NIC for networkd to configure. The
-    # runtime supplies hostname and resolv.conf — ours pointed into resolved's /run stub,
-    # which nothing will ever create here.
-    #
-    # /etc/hosts stays. A runtime bind-mounts its own over it, so it is not what the
-    # container will read, but a static localhost mapping is correct either way and a
-    # missing file is not — `podman run --network=none` mounts nothing.
-    rm -f etc/fstab etc/shadow etc/hostname etc/resolv.conf
-    rm -rf etc/pam.d
 fi
 
 # ---------------------------------------------------------------------------------
@@ -502,15 +612,17 @@ ldconfig -r "$IMAGE" || true
 # Not tolerant of failure the way ldconfig above is: an empty catalog is the state this
 # is fixing, and it should not be able to come back silently.
 #
-# Disk flavour only, and this is one of the two places where "the trim is identical for
-# both" stops being true. The subtractions block above has already deleted
-# usr/lib/systemd — the .catalog source files with it — and every binary linking
-# libsystemd-shared, which is exactly how journalctl goes. So there is nothing to
-# compile, nothing left to read the result, and the loader invocation below fails with
-# a message that names neither: run explicitly, ld.so reports a program it cannot open
-# through the same "cannot open shared object file" it uses for libraries, so a missing
-# journalctl reads as a missing library of journalctl's.
-if [ "$flavour" = ext4 ]; then
+# Conditional on journalctl being in the image rather than on the flavour, and this is
+# the general rule for **anything added below the selection block: it runs against a tree
+# packages have been removed from, so it has to say which images it is for.** An image
+# without systemd has neither the .catalog sources nor anything left to read the result,
+# and the loader invocation below would fail with a message that names neither: run
+# explicitly, ld.so reports a program it cannot open through the same "cannot open shared
+# object file" it uses for libraries, so a missing journalctl reads as a missing library
+# of journalctl's.
+#
+# Not tolerant of failure once it does run: an empty catalog is the state this is fixing.
+if [ -x usr/bin/journalctl ]; then
     catalog_ld="$IMAGE/lib64/$ld_so"
     [ -x "$catalog_ld" ] || catalog_ld="$IMAGE/usr/lib/$ld_so"
     "$catalog_ld" --library-path "$IMAGE/usr/lib:$IMAGE/usr/lib/systemd" \
@@ -524,22 +636,173 @@ chown -R root:root etc
 # already set the mode on the real file under /usr/lib.
 chmod 644 etc/passwd etc/group etc/hosts etc/profile etc/nsswitch.conf etc/ld.so.conf
 
-if [ "$flavour" = ext4 ]; then
-    chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
-              etc/systemd/system/dbus.service.d
-    chmod 644 etc/fstab etc/hostname etc/pam.d/* \
-              etc/systemd/network/*.network \
-              etc/systemd/system/dbus.service.d/*.conf
-    # Password hashes must not be world-readable. Only reachable for this flavour: the
-    # subtractions above delete etc/shadow outright, a container having no login to
-    # authenticate.
-    chmod 600 etc/shadow
+# Per file rather than per flavour, for the same reason as the catalog above: which of
+# these exist is now a question about what this image selected, and a `chmod` on a path a
+# platform dropped is a failed build rather than a smaller image.
+#
+# `if` rather than `[ … ] && chmod …`, and not as a style preference: under `set -e` a
+# top-level `A && B` whose A is false is a non-zero status for the whole list, so the
+# idiom would fail the build on precisely the images these tests exist to skip.
+if [ -d etc/systemd ]; then
+    chmod 755 etc/systemd/system etc/systemd/network etc/systemd/system/dbus.service.d
+    chmod 644 etc/systemd/network/*.network etc/systemd/system/dbus.service.d/*.conf
 fi
+if [ -d etc/pam.d ]; then
+    chmod 755 etc/pam.d
+    chmod 644 etc/pam.d/*
+fi
+if [ -f etc/fstab ];    then chmod 644 etc/fstab;    fi
+if [ -f etc/hostname ]; then chmod 644 etc/hostname; fi
+# Password hashes must not be world-readable. Absent from a container image, which has no
+# login to authenticate.
+if [ -f etc/shadow ];   then chmod 600 etc/shadow;   fi
 
 du -sh "$IMAGE"
 
 # ---------------------------------------------------------------------------------
-# What is in the image, written down: an SPDX 2.3 document, one per flavour (issue #75).
+# What this image asks for and does not have.
+#
+# Selection introduces a failure mode the old two-flavour build could not have: an image
+# missing a library some binary in it needs. The superset always resolves — that is what
+# test/check-rootfs-deps.sh proves about rootfs/ — but a subset need not, and a variant
+# that drops libmnl and keeps `ip` is broken in a way nothing over the staging tree can
+# see. The first sign would be `ip` not starting in qemu, which is the same shape as the
+# allowlisted-library trap CLAUDE.md already records.
+#
+# The computation is not new: it is what the SBOM's "unresolved" entries have always
+# been, with deliberately the same construction as test/check-rootfs-deps.sh — two
+# different answers to "what does this tree fail to resolve" is exactly the drift that
+# script's allowlist exists to prevent. What changes is the verdict. Today the number is
+# written into a document; here it fails the build.
+#
+# Both halves of `provided` matter, and getting either wrong is silent. A library is
+# usually shipped as a real file plus a SONAME symlink pointing at it — libcurl.so.4 ->
+# libcurl.so.4.8.0 — so `-type f` alone misses every name a binary actually asks for. The
+# first version of this reported 29 shipped libraries as missing for that reason. The
+# SONAME read out of the file covers the other direction, where the link is absent and
+# ld.so.conf resolves by name.
+provided=$(
+    { find "$IMAGE" -name '*.so*' \( -type f -o -type l \) -print0 2>/dev/null |
+      xargs -0 -r -n40 sh -c '
+          for f in "$@"; do
+              basename "$f"
+              readelf -d "$f" 2>/dev/null | sed -n "s/.*SONAME.*\[\(.*\)\].*/\1/p"
+          done' _ || true; } | sort -u
+)
+# The braces and the `|| true` are load-bearing: this hands readelf every file in the
+# tree, most of which are not ELF at all, and readelf exits non-zero on each one it
+# cannot parse. xargs turns that into 123, and `set -o pipefail` at the top of this
+# script turns *that* into a failed image build. Grouping is what lets `|| true` apply to
+# the producer rather than to `sed`.
+needed=$(
+    { find "$IMAGE" -type f -print0 2>/dev/null |
+      xargs -0 -r -n40 readelf -dW 2>/dev/null || true; } |
+    sed -n 's/.*NEEDED.*\[\(.*\)\].*/\1/p' | sort -u
+)
+missing=$(comm -23 <(printf '%s\n' "$needed") <(printf '%s\n' "$provided"))
+
+# test/known-missing-libs.txt is the accepted backlog for the superset, and a variant's
+# check runs against the same list: a library that is accepted-missing for everybody
+# stays accepted-missing here. Same caveat CLAUDE.md already records — an allowlist hides
+# new arrivals as well as old ones.
+allowlist=${ALLOWLIST:-/known-missing-libs.txt}
+unexpected=$(
+    comm -23 <(printf '%s\n' "$missing" | grep -v '^$' | sort -u) \
+             <(grep -v '^[[:space:]]*\(#\|$\)' "$allowlist" | sort -u)
+)
+
+if [ -n "$unexpected" ]; then
+    set +x
+    echo "error: $variant/$platform is missing libraries that binaries in it need:" >&2
+    for lib in $unexpected; do
+        # The error names the fix, which is the whole reason the manifests exist: "this
+        # variant needs libmnl.so.0, which libmnl provides; add it to net.conf" is a
+        # thirty-second fix and "unresolved: libmnl.so.0" is a twenty-minute one.
+        # `|| true` on both of these: grep exits non-zero when it matches nothing, and
+        # under `set -o pipefail` that is a failed assignment and an exit in the middle of
+        # an error message. `sed -n 1,4p` rather than `head -4` for the neighbouring
+        # reason — head closing the pipe early is a SIGPIPE the same pipefail would take
+        # for a build failure.
+        owners=$( { (cd "$manifests" && grep -lF "/$lib" ./*) 2>/dev/null || true; } |
+                  sed 's|^\./||' | tr '\n' ' ')
+        consumers=$( { find "$IMAGE" -type f -print0 |
+                       xargs -0 -r -n40 grep -laF "$lib" 2>/dev/null || true; } |
+                     sed -e "s|^$IMAGE/||" -e '4q' | tr '\n' ' ')
+        printf '  %s\n' "$lib" >&2
+        if [ -n "$owners" ]; then
+            printf '      provided by: %s — add it to image/variants/%s.conf\n' "$owners" "$variant" >&2
+        else
+            printf '      no package here provides it; it came from the Debian builder image.\n' >&2
+            printf '      Configure the dependency out, or allowlist it in %s.\n' "$(basename "$allowlist")" >&2
+        fi
+        printf '      needed by: %s\n' "$consumers" >&2
+    done
+    exit 1
+fi
+
+# The other direction, and the one DT_NEEDED cannot see: a library selection removed
+# whose name is still referenced by something that survived. This is the general form of
+# the libudev guard the old subtractions block carried by hand — grep rather than readelf
+# precisely so a dlopen by name is caught alongside a NEEDED, which is how udev's and
+# kmod's APIs are both reached.
+#
+# Only names selection actually removed and nothing else provides: a library that moved
+# or is shipped twice is not gone.
+set +x
+: > "$work/gone-libs.all"
+while IFS= read -r p; do
+    case "${p##*/}" in *.so|*.so.*) printf '%s\n' "${p##*/}" >> "$work/gone-libs.all" ;; esac
+done < "$work/delete"
+LC_ALL=C sort -u -o "$work/gone-libs.all" "$work/gone-libs.all"
+# Both sides re-sorted in the same collation: `provided` above was built with the
+# container's default locale and gone-libs.all with LC_ALL=C, and comm compares byte
+# order rather than trusting either.
+comm -23 "$work/gone-libs.all" <(printf '%s\n' "$provided" | LC_ALL=C sort -u) > "$work/gone-libs"
+set -x
+
+if [ -s "$work/gone-libs" ]; then
+    refs=$(find usr -type f -perm -u+x -exec grep -laF -f "$work/gone-libs" {} + 2>/dev/null || true)
+    if [ -n "$refs" ]; then
+        set +x
+        echo "error: $variant/$platform still references libraries selection removed:" >&2
+        printf '%s\n' "$refs" | sed 's/^/  /' >&2
+        echo "       Either select the package that provides it, rescue the library with a" >&2
+        echo "       'keep' line, or drop whatever started asking for it." >&2
+        exit 1
+    fi
+fi
+
+# ---------------------------------------------------------------------------------
+# The component records for packages this image does not contain.
+#
+# A record exists for every package that was staged; an image is a selection from that,
+# so the SBOM has to be too. Presence is decided by asking the tree rather than by
+# reading the package list, which is the difference that matters for a `keep`: the oci
+# platform omits systemd and rescues libsystemd.so.0, and systemd is genuinely still an
+# ingredient of that image.
+components="$IMAGE/usr/share/flfs/components"
+set +x
+for record in "$components"/*; do
+    [ -e "$record" ] || continue
+    pkg=${record##*/}
+    [ -f "$manifests/$pkg" ] || continue
+    survives=
+    while IFS= read -r path; do
+        if [ -e "$IMAGE/$path" ] || [ -L "$IMAGE/$path" ]; then survives=1; break; fi
+    done < "$manifests/$pkg"
+    if [ -z "$survives" ]; then rm -f "$record"; fi
+done
+set -x
+echo "components: $(ls "$components" | wc -l) packages contributed files to this image"
+
+# The manifests have done their work — selection, the dependency hint above and the
+# component pruning just now. They are the intermediate form, like the component records
+# and the .catalog sources, and the assembled image should have one answer to "what is in
+# me": usr/share/flfs/sbom.json, below.
+rm -rf "$manifests"
+
+# ---------------------------------------------------------------------------------
+# What is in the image, written down: an SPDX 2.3 document, one per image (issue #75).
 #
 # Generated, not scanned. A scanner infers packages from a package manager's database and
 # there is none here — nothing in this image was installed, everything was compiled — so a
@@ -548,10 +811,11 @@ du -sh "$IMAGE"
 # into usr/share/flfs/components as each package installs, and this reads them back.
 #
 # Reading them from the *assembled* tree rather than from packages/ is the whole point,
-# and it is why this lives here rather than in a script over the repository. The two
-# flavours have genuinely different contents — the oci one has had systemd and the kernel
-# subtracted — so a document generated from env.sh would describe neither image. What is
-# in usr/share/flfs/components is what got staged into the tree that became this image.
+# and it is why this lives here rather than in a script over the repository. Every image
+# has genuinely different contents — this one is whatever `$variant` selected, minus what
+# `$platform` cannot use — so a document generated from env.sh would describe none of
+# them. The records left in usr/share/flfs/components after the pruning above are the
+# packages that actually contributed a file to *this* image.
 #
 # Written by hand, for the same reason the OCI archive below is: this is a JSON object
 # with fields we control, and the alternative is putting jq or python into
@@ -585,7 +849,7 @@ jstr() {
 # SPDX identifiers may only contain letters, digits, '.' and '-'.
 spdxid() { printf '%s' "$1" | tr -c 'A-Za-z0-9.-' '-'; }
 
-image_name="flfs-$flavour-$oci_arch"
+image_name="flfs-$id-$oci_arch"
 
 {
     printf '{\n'
@@ -671,44 +935,16 @@ image_name="flfs-$flavour-$oci_arch"
 
     # And the libraries the image asks for and does not have. An SBOM listing only what
     # we built would describe something other than what runs: these are real runtime
-    # dependencies of shipped binaries, resolved by nothing. Computed from the assembled
-    # tree rather than read from test/known-missing-libs.txt, because that file is an
-    # allowlist of what has been *accepted* and this has to be what is actually true.
+    # dependencies of shipped binaries, resolved by nothing.
+    #
+    # $missing was computed above, where it is also what fails the build when it names
+    # something test/known-missing-libs.txt has not accepted. One computation, two
+    # consumers: a document that disagreed with the check beside it would be worse than
+    # either alone.
     #
     # They appear as packages the image DEPENDS_ON without a matching CONTAINS below,
     # which is precisely what SPDX's two relationships are for and reads correctly in a
     # consumer: needed, not present.
-    # Deliberately the same construction as test/check-rootfs-deps.sh, which is the
-    # authority on this question — two different answers to "what does this tree fail to
-    # resolve" is exactly the drift that file's allowlist exists to prevent. It cannot
-    # simply be reused: it runs over rootfs/, the staging tree, and this has to describe
-    # the *assembled* image, which the trim and the oci subtractions have changed.
-    #
-    # Both halves of `provided` matter, and getting either wrong is silent. A library is
-    # usually shipped as a real file plus a SONAME symlink pointing at it — libcurl.so.4
-    # -> libcurl.so.4.8.0 — so `-type f` alone misses every name a binary actually asks
-    # for. The first version of this reported 29 shipped libraries as missing for that
-    # reason. The SONAME read out of the file covers the other direction, where the link
-    # is absent and ld.so.conf resolves by name.
-    provided=$(
-        { find "$IMAGE" -name '*.so*' \( -type f -o -type l \) -print0 2>/dev/null |
-          xargs -0 -r -n40 sh -c '
-              for f in "$@"; do
-                  basename "$f"
-                  readelf -d "$f" 2>/dev/null | sed -n "s/.*SONAME.*\[\(.*\)\].*/\1/p"
-              done' _ || true; } | sort -u
-    )
-    # The braces and the `|| true` are load-bearing: this hands readelf every file in the
-    # tree, most of which are not ELF at all, and readelf exits non-zero on each one it
-    # cannot parse. xargs turns that into 123, and `set -o pipefail` at the top of this
-    # script turns *that* into a failed image build. Grouping is what lets `|| true`
-    # apply to the producer rather than to `sed`.
-    needed=$(
-        { find "$IMAGE" -type f -print0 2>/dev/null |
-          xargs -0 -r -n40 readelf -dW 2>/dev/null || true; } |
-        sed -n 's/.*NEEDED.*\[\(.*\)\].*/\1/p' | sort -u
-    )
-    missing=$(comm -23 <(printf '%s\n' "$needed") <(printf '%s\n' "$provided"))
     for lib in $missing; do
         [ -n "$lib" ] || continue
         printf ',\n    {\n'
@@ -755,7 +991,7 @@ image_name="flfs-$flavour-$oci_arch"
 # disagree.
 rm -rf "$components"
 
-cp "$sbom" "/usr/local/output/sbom-$flavour.json"
+cp "$sbom" "/usr/local/output/sbom-$id.json"
 echo "sbom: $(wc -c < "$sbom") bytes, $(grep -c '"SPDXID"' "$sbom") elements"
 
 # ---------------------------------------------------------------------------------
@@ -765,18 +1001,20 @@ echo "sbom: $(wc -c < "$sbom") bytes, $(grep -c '"SPDXID"' "$sbom") elements"
 # test/rootfs-size.sh is what reads this back, compares the total against the budget in
 # test/size-budget.txt and prints the breakdown.
 #
-# One report per flavour, and the flavour is in the filename: the two images share every
-# line of this script up to here and are nothing like the same size, so a single path
-# would mean whichever ran last describing both.
+# One report per image, and the image id is in the filename: every variant and platform
+# shares every line of this script up to the selection block and none of them are the
+# same size, so a single path would mean whichever ran last describing all of them. The
+# default variant's reports keep the bare rootfs-size-ext4.txt / rootfs-size-oci.txt
+# names, which is what test/vs-debian-slim.sh and test/size-history.sh read.
 #
 # Apparent bytes rather than blocks: it measures what the tree contains instead of what
 # one filesystem's rounding makes of it, which keeps the number comparable across the two
 # architectures, across a change to mkfs, and between a disk and a tar. What each flavour
 # then costs in its own container — `disk` for the ext4, `archive` for the OCI — is
 # appended below, once the thing that answers it has run.
-report=/usr/local/output/rootfs-size-$flavour.txt
+report=/usr/local/output/rootfs-size-$id.txt
 {
-    echo "# assembled $flavour image tree, sizes in bytes. Written by image/build-rootfs.sh."
+    echo "# assembled $id image tree, sizes in bytes. Written by image/build-rootfs.sh."
     echo "total $(du -sb "$IMAGE" | cut -f1)"
 
     # Two depths: enough to separate usr/lib from usr/share from usr/bin, which is where
@@ -800,20 +1038,33 @@ report=/usr/local/output/rootfs-size-$flavour.txt
     done < <(find "$IMAGE" -type f -printf '%s %p\n' | sort -rn | head -n 25)
 } > "$report"
 
-if [ "$flavour" = ext4 ]; then
-    /sbin/mkfs.ext4 -L root -d "$IMAGE" /usr/local/output/rootfs.ext4 1G
+# ---------------------------------------------------------------------------------
+# What the tree is turned into, selected by the platform's `format`: one branch per
+# format and no plugin mechanism, deliberately. `mkfs.ext4 -d` and a hand-assembled OCI
+# layout have nothing in common, there will be three or four formats ever, and an
+# abstraction layer over two implementations is how a build system acquires one nobody
+# can read. A fourth branch is what a `lima` or `firecracker` platform would add.
+if [ "$format" = ext4 ]; then
+    /sbin/mkfs.ext4 -L root -d "$IMAGE" "$ext4_out" 1G
 
     # What that came to once the filesystem's own metadata, journal and block rounding are
     # counted: the number that says whether 1G is still the right size for the disk.
-    fs=$(/sbin/dumpe2fs -h /usr/local/output/rootfs.ext4 2>/dev/null)
+    fs=$(/sbin/dumpe2fs -h "$ext4_out" 2>/dev/null)
     block_count=$(echo "$fs" | grep '^Block count:'  | tr -dc '0-9')
     block_free=$( echo "$fs" | grep '^Free blocks:'  | tr -dc '0-9')
     block_size=$( echo "$fs" | grep '^Block size:'   | tr -dc '0-9')
     echo "disk $(( (block_count - block_free) * block_size ))" >> "$report"
     echo "capacity $(( block_count * block_size ))" >> "$report"
 
+    ls -l "$ext4_out"
     cat "$report"
     exit 0
+fi
+
+if [ "$format" != oci ]; then
+    echo "error: image/platforms/$platform.conf names format '$format', which nothing here builds" >&2
+    echo "       Add a branch to image/build-rootfs.sh, next to ext4 and oci." >&2
+    exit 1
 fi
 
 # ---------------------------------------------------------------------------------
@@ -860,8 +1111,8 @@ cat > /tmp/config.json <<EOF
     "Entrypoint": ["/bin/bash"],
     "WorkingDir": "/root",
     "Labels": {
-      "org.opencontainers.image.title": "flfs",
-      "org.opencontainers.image.description": "Florian's Linux From Scratch, without the kernel and systemd"
+      "org.opencontainers.image.title": "$oci_name",
+      "org.opencontainers.image.description": "$description (variant $variant), without the kernel and systemd"
     }
   },
   "rootfs": {
@@ -871,7 +1122,7 @@ cat > /tmp/config.json <<EOF
   "history": [
     {
       "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-      "created_by": "image/build-rootfs.sh oci"
+      "created_by": "image/build-rootfs.sh $variant $platform"
     }
   ]
 }
@@ -898,7 +1149,11 @@ cat > /tmp/manifest.json <<EOF
 EOF
 read -r manifest_digest manifest_size < <(blob /tmp/manifest.json)
 
-# ref.name is the tag `podman load` gives what it reads: localhost/flfs:latest.
+# ref.name is the tag `podman load` gives what it reads: localhost/flfs:latest for the
+# default variant, localhost/flfs-<variant>:latest for the others. Distinct per variant
+# and not decoration: test/oci.sh and tools/publish-oci.sh both read the tag back out of
+# what podman printed, and two archives annotated the same name would have the second
+# load silently move that tag off the first image.
 cat > "$layout/index.json" <<EOF
 {
   "schemaVersion": 2,
@@ -909,21 +1164,20 @@ cat > "$layout/index.json" <<EOF
       "digest": "sha256:$manifest_digest",
       "size": $manifest_size,
       "platform": { "architecture": "$oci_arch", "os": "linux" },
-      "annotations": { "org.opencontainers.image.ref.name": "flfs:latest" }
+      "annotations": { "org.opencontainers.image.ref.name": "$oci_name:latest" }
     }
   ]
 }
 EOF
 echo '{"imageLayoutVersion": "1.0.0"}' > "$layout/oci-layout"
 
-tar --create --directory "$layout" oci-layout index.json blobs \
-    > /usr/local/output/flfs-oci.tar
-ls -l /usr/local/output/flfs-oci.tar
+tar --create --directory "$layout" oci-layout index.json blobs > "$oci_out"
+ls -l "$oci_out"
 
 # The container flavour's answer to `disk`: what a registry stores and a `podman pull`
 # moves is the gzipped layer, not the tree. Appended here rather than above for the same
 # reason `disk` is appended after mkfs — the number does not exist until the thing that
 # produces it has run.
-echo "archive $(stat -c %s /usr/local/output/flfs-oci.tar)" >> "$report"
+echo "archive $(stat -c %s "$oci_out")" >> "$report"
 
 cat "$report"

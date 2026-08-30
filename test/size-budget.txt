@@ -52,8 +52,30 @@
 # directories neither touched — image/build-rootfs.sh strips in parallel with
 # `xargs -P`, and the batching depends on find's order.
 #
-# flavour  arch   MiB
-ext4       amd64  126
-ext4       arm64  186
-oci        amd64  96
-oci        arm64  121
+# The rows gained a column with image variants (docs/image-variants.md): an image is a
+# variant on a platform, and `full` is the variant that was the only one there used to
+# be. The `full` rows below are unchanged numbers under a wider heading.
+#
+# The `minimal` and `net` rows are ESTIMATES, derived by subtracting from `full` the
+# measurements this file already records — 2.9 MiB for iproute2/iputils/libmnl and
+# 10.6 MiB for openssl/curl/ca-certificates on the disk image, 3.7 and 10.6 on the
+# container one — plus roughly 2 MiB for crun, json-c and the text utilities, and then
+# about 15% of headroom rather than the 8% the measured rows carry. They are deliberately
+# loose in the direction that cannot break a build: a ceiling set too high prints the
+# "only N% of its budget" note below, and one set too low fails CI for a number nobody
+# has ever measured. Tighten them from the first CI run that reports the real figures —
+# test/size-history.sh prints them per image.
+#
+# variant  platform  arch   MiB
+full       ext4      amd64  126
+full       ext4      arm64  186
+full       oci       amd64  96
+full       oci       arm64  121
+net        ext4      amd64  114
+net        ext4      arm64  169
+net        oci       amd64  87
+net        oci       arm64  110
+minimal    ext4      amd64  99
+minimal    ext4      arm64  147
+minimal    oci       amd64  73
+minimal    oci       arm64  92

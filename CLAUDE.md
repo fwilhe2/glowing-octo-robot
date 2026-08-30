@@ -100,7 +100,8 @@ packages/<pkg>/   env.sh + build.sh per package, and the tree its tarball unpack
 builder/          how a package is compiled: the one builder image, deps.txt (its
                   entire contents), and the entrypoint that sets up the sysroot
 image/            how the staging tree becomes an image, disk or OCI: Containerfile,
-                  build-rootfs.sh, and files/ — the /etc the image ships
+                  build-rootfs.sh, files/ (the /etc the image ships), variant-lib.sh, and
+                  variants/ + platforms/ — the declared images, as data
 test/             everything CI runs to verify a build, plus known-missing-libs.txt
                   and size-budget.txt; qemu-lib.sh is the boot harness the four qemu
                   tests and tools/boot-qemu.sh all source
@@ -131,9 +132,10 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/network.sh output/rootfs.ext4 rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
 ./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage  # crun starts a container
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
-./test/rootfs-size.sh [ext4|oci]  # image size vs test/size-budget.txt, and where it went
+./test/rootfs-size.sh [variant] <platform>  # size vs test/size-budget.txt, and where it went
+./tools/variants.sh list          # every (variant, platform) pair; `show <v> [p]` resolves one
 ./test/vs-debian-slim.sh          # the OCI image against debian-slim, with both breakdowns
-./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
+./test/size-history.sh [amd64|arm64]  # every image against the last dozen builds on main
 ./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ```
@@ -145,6 +147,10 @@ uses (duplicated on purpose — a comparison whose sides were counted differentl
 than none), and fails when our OCI tree is bigger. There is no number to raise: past that
 line the honest advice is debian-slim, which also ships a package manager. It was 57.9
 against 75.0 MiB on amd64 and 72.3 against 95.8 on arm64 when it was added.
+
+`rootfs-size.sh` and `size-history.sh` both take an *image id* — `ext4`/`oci` for the
+default variant, `minimal-ext4` and friends for the rest — and `rootfs-size.sh` also
+accepts `<variant> <platform>`. See the image-variants section below.
 
 `size-history.sh` is the one of those that reports rather than checks: `rootfs-size.sh`
 asks whether an image is *allowed* to be this big, against a number somebody wrote down,
@@ -189,7 +195,12 @@ that way:
   sources images (content-hash tags from `tools/image-tags.sh`), then unpack the tarballs.
 - `build.sh` (root) → the only driver: prep, extract, assemble podman mounts, run.
 - `builder/build-package.sh` → container entrypoint: merged-`/usr` staging, sysroot flags,
-  then `source /package-build.sh`.
+  then `source /package-build.sh` — and, around that `source`, the two `find`s whose diff
+  becomes `usr/share/flfs/manifests/<pkg>`, the per-package file list image variants are
+  selected with (see below). Size and mtime are in the diff key alongside the path, so a
+  package that *overwrites* another's file claims it too; claiming an ambiguous path in
+  both manifests is the safe direction, since a file in either is kept when either package
+  is selected.
 
 **The compile runs `--network=none`.** Prep has already fetched every tarball (verified
 against the `SHA256` in its `env.sh`) and got the builder image, so a build that reaches
@@ -343,6 +354,72 @@ the binary rather than the check.**
 
 ## Image assembly and boot
 
+### Image variants
+
+**There is no longer one image, and which ones there are is data.** An image is a
+**variant** (a feature set — `image/variants/<name>.conf`) on a **platform** (what the
+tree is turned into and what that target physically cannot use —
+`image/platforms/<name>.conf`). `image/build-rootfs.sh` takes both:
+`build-rootfs.sh minimal ext4`. A single argument naming a platform still means the
+default variant on it, which is what `build-rootfs.sh ext4` has always meant.
+
+Today: `minimal`, `net` and `full` on `ext4` and `oci`. `full` carries `default yes`,
+which is what keeps `output/rootfs.ext4`, `output/flfs-oci.tar`, `sbom-ext4.json`, the
+`ext4`/`oci` rows in `test/size-budget.txt` and the `flfs:latest` tag meaning what they
+meant before variants existed. Everything else is suffixed with the variant. Exactly one
+variant may be the default.
+
+**The rule the whole design rests on: the package build stage never learns about
+variants.** Every package is compiled once per architecture into the same staging tree,
+and a variant is a *selection from* that tree resolved at assembly time. That is what
+keeps 36 packages × 2 arches from becoming 36 × 2 × N jobs; a new variant costs an image
+and a boot, nothing more. Do not add a variant dimension to the `build` matrix.
+
+`image/variant-lib.sh` is the parser, sourced from two sides of the container boundary —
+`build-rootfs.sh` inside the assembly container and `tools/variants.sh` on the host, which
+is what enumerates CI's matrices. One parser, because a host that thinks `net` builds for
+`oci` and a container that thinks it does not is a wrong image nobody would look for.
+Globbing is off for the whole parse: half the directives take patterns, and `package *`
+unquoted in a shell with pathname expansion is the contents of whatever directory the
+caller was standing in.
+
+Resolution order, because every ambiguity in it is a silent wrong image: the parent chain
+oldest first, then this variant's own lines; **then the platform's**, which a variant may
+not override, because a platform constraint is physical; the selected packages' manifests
+are unioned; `drop` globs removed; **`keep` globs win over both `omit` and `drop`**, which
+is the only precedence rule to remember; and everything in no manifest — the directory
+skeleton, `image/files`, `ld.so.cache`, the catalog database, the SBOM — is present
+regardless. Selection is about compiled software, not the tree's bones, which is why it is
+implemented as a deletion from the copy rather than a copy of what was chosen.
+
+Two things that used to be derived by hand in the subtractions block are gone because the
+manifests already knew: the `readelf` sweep for binaries linking the private
+`libsystemd-shared`, and most of the dangling-symlink walk. What could not move is
+`drop usr/bin/login usr/bin/su usr/bin/runuser`: those are *util-linux's* files, so
+omitting `pam` does not take them. That is a real downgrade from a sweep that could not go
+stale — and it is acceptable only because going stale is now loud, since a binary whose
+`NEEDED` names a library the image lacks fails the build.
+
+**What makes selection safe is that the check now fails rather than reports.** The
+superset always resolves; a subset need not, and a variant that drops `libmnl` and keeps
+`ip` would first be noticed as `ip` not starting in qemu. `build-rootfs.sh` computes the
+unresolved set from the assembled tree — the same construction as
+`test/check-rootfs-deps.sh`, SONAMEs and symlinks included in what counts as provided —
+holds it to the same `test/known-missing-libs.txt`, and names the package that provides
+each missing library, which the manifests make possible. It also runs the general form of
+the old libudev guard: any executable that still *references* a library selection removed,
+`grep` rather than `readelf` so a `dlopen` by name is caught too.
+
+Selection is deliberately **not** transitive. Nothing here declares a dependency graph, so
+the closure would have to come from `DT_NEEDED`, which is a guess that is right often
+enough to be dangerous. Explicit lists plus a check that names the missing package is the
+same trade `deps.txt` already made.
+
+`docs/image-variants.md` is the design, and the `lima`/`firecracker` platforms in it are
+not built.
+
+### Assembly
+
 `image/Containerfile` + `image/build-rootfs.sh` turn `rootfs/` into `output/rootfs.ext4`:
 directory skeleton, `image/files/etc` copied in as the shipped `/etc` (hostname `flfs`,
 credentials from `image/files/etc/shadow` — `root`/`root` and `user`/`user`, the latter
@@ -354,11 +431,10 @@ in `image/files/`, not into
 editing it means `podman build -f image/Containerfile` again before `podman run`, or the
 image is assembled from the old copy.
 
-`build-rootfs.sh` takes the output as its argument, `ext4` (the default) or `oci`, and the
-same run of the same script produces `output/flfs-oci.tar` for the second. **The container
-flavour is written as subtractions from the disk image, in one block**, for the same reason
-`vm.config` is written as subtractions from defconfig: two scripts would drift, and the
-skeleton, loader path, trim and `ldconfig` are identical either way. What it subtracts is
+**The container platform is written as subtractions from the disk image**, for the same
+reason `vm.config` is written as subtractions from defconfig: two scripts would drift, and
+the skeleton, loader path, trim and `ldconfig` are identical either way. It is now thirteen
+lines of `image/platforms/oci.conf` rather than seventy of code. What it subtracts is
 the kernel and systemd — the two things a container gets from the host and the runtime —
 which means systemd's unit tree, udev, its drop-in directories, its PAM and NSS modules,
 and every binary whose `NEEDED` names the private `libsystemd-shared` (derived by running
@@ -379,19 +455,22 @@ builds `CONFIG_MODULES=n`, so there is no module to insert anywhere. The disk im
 kmod anyway, because systemd-modules-load and udev reach `libkmod`, and a missing library
 there is a failed unit rather than a smaller image. Together with libudev that is 3.2 MiB.
 
-**Deriving a consumer list with `grep` needs `-a`.** Both the PAM sweep and the libudev
-guard look for a library name inside binaries, and GNU grep decides an ELF file is binary
-and then *discards* a match on a line carrying NUL bytes and invalid UTF-8 — which is every
-line of a `.dynstr`. `grep -q libpam.so usr/bin/su` exits 1 on a binary that plainly needs
-`libpam.so.0`; `grep -l` short-circuits before that check and answers correctly, which is
-exactly the sort of inconsistency that ships a silent no-op.
+**Deriving a consumer list with `grep` needs `-a`.** The one surviving sweep — the check
+for an executable that still references a library selection removed — looks for a library
+name inside binaries, and GNU grep decides an ELF file is binary and then *discards* a
+match on a line carrying NUL bytes and invalid UTF-8, which is every line of a `.dynstr`.
+`grep -q libpam.so usr/bin/su` exits 1 on a binary that plainly needs `libpam.so.0`;
+`grep -l` short-circuits before that check and answers correctly, which is exactly the sort
+of inconsistency that ships a silent no-op.
 
 In the three directories systemd shares with software we might ship later
-(`/etc/profile.d`, `/etc/ssh`, `/etc/xdg`) the block deletes dangling symlinks and then the
-directory only if that emptied it, rather than removing a future openssh package's config
-along with systemd's drop-in. That sweep is also what collects `modprobe` and its five
-siblings, which are symlinks to the `kmod` binary deleted above — so anything removed by
-name belongs *before* it.
+(`/etc/profile.d`, `/etc/ssh`, `/etc/xdg`) `build-rootfs.sh` deletes dangling symlinks and
+then the directory only if that emptied it, rather than removing a future openssh package's
+config along with systemd's drop-in. That sweep is scoped rather than tree-wide on purpose:
+`/etc/resolv.conf` points into resolved's `/run` stub, which nothing creates at assembly
+time, so a whole-tree sweep would delete the file constraint 4 depends on. `modprobe` and
+its five siblings need nothing special any more — they are `kmod`'s files, so `omit kmod`
+takes them.
 
 The OCI archive is assembled by hand — a gzipped layer, a config and a manifest as blobs
 named after their own sha256, plus `index.json` and `oci-layout` — because that is the
@@ -427,10 +506,12 @@ the container boundary as `FLFS_*` by root `build.sh`, written into
 `usr/share/flfs/components/<pkg>` by `builder/build-package.sh` *after* a successful
 install (so a package that failed to build leaves no record), and collected by
 `build-rootfs.sh` into an SPDX 2.3 document at `usr/share/flfs/sbom.json` plus
-`output/sbom-<flavour>.json`. The records are deleted once the document exists, being the
-intermediate form. Reading them from the **assembled** tree is the point: the two flavours
-have different contents, so a document generated from `packages/` would describe neither
-image.
+`output/sbom-<id>.json`. The records are deleted once the document exists, being the
+intermediate form, and a record whose package left no surviving file in *this* image is
+deleted before that — presence is decided by asking the tree, which is what keeps `systemd`
+in the container image's SBOM on the strength of the rescued `libsystemd.so.0`. Reading
+them from the **assembled** tree is the point: every image has different contents, so a
+document generated from `packages/` would describe none of them.
 
 Two parts of it are easy to get wrong. The document is written by hand, for the same
 reason the OCI archive is — so `test/check-sbom.sh` parses it on the runner, where a JSON
@@ -456,11 +537,13 @@ version to read. Ours is compiled against our glibc and its RUNPATH is an absolu
 loader by hand with `--library-path "$IMAGE/usr/lib:$IMAGE/usr/lib/systemd"` —
 `--library-path` is searched ahead of `DT_RUNPATH`, which is what makes the override
 take. The sixteen translated catalogs are trimmed for the same reason as `share/locale`:
-a C-locale image can never select one. It runs for the `ext4` flavour only — the
-subtractions have taken both the catalog sources and journalctl itself by then — which is
-the general rule for **anything added below the subtractions block: it runs against a
-tree systemd has been removed from, so it has to say which flavour it is for.** The
-failure does not look like one. Invoked explicitly, `ld.so` reports a program it cannot
+a C-locale image can never select one. It runs only when `usr/bin/journalctl` is in the image
+— selection may have taken both the catalog sources and journalctl itself by then — which
+is the general rule for **anything added below the selection block: it runs against a tree
+packages have been removed from, so it has to say which images it is for.** Asking the tree
+beats asking the platform: the same question decides the `/sbin/init` symlink and the
+`/etc` permission fixups, and a future self-booting platform would get them right for free.
+The failure does not look like one. Invoked explicitly, `ld.so` reports a program it cannot
 open with the same *cannot open shared object file* it uses for libraries, so a deleted
 `journalctl` reads as a missing library of journalctl's.
 
@@ -677,10 +760,22 @@ image from it — `output/rootfs.ext4` is the real output.
 ## CI
 
 `.github/workflows/ci.yml`: `base` → `glibc` (and `kernel` in parallel) → `build` matrix →
-`rootfs` → `boot` → `publish-oci`. Each package job uses `.github/actions/build-package`,
+`rootfs` → `boot` → `publish-oci`, with a tiny `variants` job feeding `boot` its matrix.
+Each package job uses `.github/actions/build-package`,
 which stages a glibc-only sysroot via `SYSROOT_DIR=sysroot` so each package artifact
 contains only its own files, and caches on a hash that deliberately includes
 `glibc/env.sh` — a glibc bump must rebuild everything.
+
+`rootfs` is still **one job per architecture, looping over the declared images inside
+it** — the expensive part of that job is downloading and extracting three dozen artifacts,
+and assembling an image from the extracted tree is seconds, so a matrix over
+(arch × variant) would pay that setup cost N times to save nothing. `boot` *is* such a
+matrix, running only each variant's declared `tests`: 2 × (2 + 3 + 4) = 18 boots against
+the 8 there used to be, on runners with no KVM. Each variant genuinely needs its own boot —
+a subset booting is precisely the claim being tested — so that cost is real. If it becomes
+the pull-request bottleneck the lever is *when* rather than *what* (every variant on `main`
+and on a schedule, `full` only on branches), and that is one `if:` that should not be taken
+pre-emptively.
 
 `publish-oci` is the only job that writes anything the world can see, and the only one
 **gated to `main`** (`if: github.ref == 'refs/heads/main'`), which has a consequence worth

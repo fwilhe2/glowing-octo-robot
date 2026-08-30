@@ -10,6 +10,9 @@
 # By default it grabs the latest *successful* CI run, for the host's own architecture.
 # Override any of:
 #   ARCH         amd64 or arm64 (default the host's own architecture)
+#   VARIANT      which image variant to fetch (default the one marked `default yes`,
+#                which is what owns the unsuffixed rootfs.ext4). See
+#                ./tools/variants.sh variants.
 #   ROOTFS_RUN   pin a specific glowing-octo-robot run id
 #   OUT          output directory (default output/boot-image, or output/boot-image-$ARCH
 #                when ARCH is overridden away from the host's own)
@@ -17,12 +20,23 @@
 # Examples:
 #   ./tools/fetch-image.sh
 #   ARCH=arm64 ./tools/fetch-image.sh
+#   VARIANT=minimal ./tools/fetch-image.sh
 #   ROOTFS_RUN=29703135782 ./tools/fetch-image.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 REPO="fwilhe2/glowing-octo-robot"
+
+# One artifact per architecture holds every variant's disk image, so the fetch is the
+# same either way and only the filename inside it changes. The default variant keeps the
+# bare rootfs.ext4 that tools/boot-qemu.sh and docs/release.md name.
+VARIANT="${VARIANT:-$(./tools/variants.sh default)}"
+if [ "$VARIANT" = "$(./tools/variants.sh default)" ]; then
+    IMAGE_FILE=rootfs.ext4
+else
+    IMAGE_FILE=rootfs-$VARIANT.ext4
+fi
 
 # Defaults to the host's own architecture. ci.yml builds and boot-tests both amd64 and
 # arm64 in every run, tagging each artifact with the arch that produced it, so this has
@@ -55,9 +69,16 @@ RUN="${ROOTFS_RUN:-$(gh run list -R "$REPO" --workflow ci.yml --status success -
                        --json databaseId -q '.[0].databaseId')}"
 [ -n "$RUN" ] || { echo "error: no successful run found" >&2; exit 1; }
 
-echo ">> rootfs ($ARCH): $REPO run $RUN (artifact: rootfs.ext4-$ARCH)"
+echo ">> rootfs ($VARIANT, $ARCH): $REPO run $RUN (artifact: rootfs.ext4-$ARCH, $IMAGE_FILE)"
 gh run download "$RUN" -R "$REPO" -n "rootfs.ext4-$ARCH" -D "$tmp/rootfs"
-cp "$(find "$tmp/rootfs" -type f | head -1)" "$OUT/rootfs.ext4"
+found=$(find "$tmp/rootfs" -type f -name "$IMAGE_FILE" | head -1)
+[ -n "$found" ] || {
+    echo "error: that artifact has no $IMAGE_FILE — it holds: $(find "$tmp/rootfs" -type f -printf '%f ')" >&2
+    exit 1
+}
+# Always landed as rootfs.ext4 locally, whichever variant it is: tools/boot-qemu.sh boots
+# $OUT/rootfs.ext4 and one boot directory holds one image.
+cp "$found" "$OUT/rootfs.ext4"
 
 # The kernel package artifact rather than the assembled rootfs one: it is a tar, so the
 # bzImage comes out byte-for-byte, and it is the same artifact the CI boot job uses.
