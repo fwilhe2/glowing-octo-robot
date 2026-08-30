@@ -102,7 +102,12 @@ format=$V_FORMAT
 # unsuffixed names this repository had before variants existed — output/rootfs.ext4,
 # output/flfs-oci.tar, output/sbom-ext4.json — so docs/release.md, the boot tests and
 # every published tag still mean what they always meant.
-id=$(image_id "$variant" "$platform")
+# IMAGE_ID rather than `id`, and the case is the point: the SBOM's relationship loop
+# further down builds an SPDX element id per package in a variable of its own, and the
+# first version of this called both of them `id`. Every image then wrote its size report
+# and its SBOM to output/…-SPDXRef-Package-zstd.… — the last package alphabetically —
+# so six images produced one report and one document, each describing whichever ran last.
+IMAGE_ID=$(image_id "$variant" "$platform")
 if [ "$is_default" = yes ]; then
     ext4_out=/usr/local/output/rootfs.ext4
     oci_out=/usr/local/output/flfs-oci.tar
@@ -118,7 +123,7 @@ else
 fi
 
 set +x
-echo "=== building $variant/$platform ($id): $description"
+echo "=== building $variant/$platform ($IMAGE_ID): $description"
 echo "    packages: $packages"
 set -x
 
@@ -887,7 +892,7 @@ jstr() {
 # SPDX identifiers may only contain letters, digits, '.' and '-'.
 spdxid() { printf '%s' "$1" | tr -c 'A-Za-z0-9.-' '-'; }
 
-image_name="flfs-$id-$oci_arch"
+image_name="flfs-$IMAGE_ID-$oci_arch"
 
 {
     printf '{\n'
@@ -1005,12 +1010,12 @@ image_name="flfs-$id-$oci_arch"
     for record in "$components"/*; do
         name=$(awk -F= '$1 == "name" { print $2 }' "$record")
         [ -n "$name" ] || continue
-        id="SPDXRef-Package-$(spdxid "$name")"
-        printf ',\n    { "spdxElementId": "SPDXRef-Image", "relationshipType": "CONTAINS", "relatedSpdxElement": "%s" }' "$id"
+        pkg_spdxid="SPDXRef-Package-$(spdxid "$name")"
+        printf ',\n    { "spdxElementId": "SPDXRef-Image", "relationshipType": "CONTAINS", "relatedSpdxElement": "%s" }' "$pkg_spdxid"
         b=$(awk -F= '$1 == "builder" { print $2 }' "$record")
         if [ -n "$b" ]; then
             printf ',\n    { "spdxElementId": "SPDXRef-Builder-%s", "relationshipType": "BUILD_TOOL_OF", "relatedSpdxElement": "%s" }' \
-                "$(spdxid "$b")" "$id"
+                "$(spdxid "$b")" "$pkg_spdxid"
         fi
     done
 
@@ -1029,7 +1034,7 @@ image_name="flfs-$id-$oci_arch"
 # disagree.
 rm -rf "$components"
 
-cp "$sbom" "/usr/local/output/sbom-$id.json"
+cp "$sbom" "/usr/local/output/sbom-$IMAGE_ID.json"
 echo "sbom: $(wc -c < "$sbom") bytes, $(grep -c '"SPDXID"' "$sbom") elements"
 
 # ---------------------------------------------------------------------------------
@@ -1050,9 +1055,9 @@ echo "sbom: $(wc -c < "$sbom") bytes, $(grep -c '"SPDXID"' "$sbom") elements"
 # architectures, across a change to mkfs, and between a disk and a tar. What each flavour
 # then costs in its own container — `disk` for the ext4, `archive` for the OCI — is
 # appended below, once the thing that answers it has run.
-report=/usr/local/output/rootfs-size-$id.txt
+report=/usr/local/output/rootfs-size-$IMAGE_ID.txt
 {
-    echo "# assembled $id image tree, sizes in bytes. Written by image/build-rootfs.sh."
+    echo "# assembled $IMAGE_ID image tree, sizes in bytes. Written by image/build-rootfs.sh."
     echo "total $(du -sb "$IMAGE" | cut -f1)"
 
     # Two depths: enough to separate usr/lib from usr/share from usr/bin, which is where
