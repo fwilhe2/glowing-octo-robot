@@ -757,15 +757,53 @@ LC_ALL=C sort -u -o "$work/gone-libs.all" "$work/gone-libs.all"
 # Both sides re-sorted in the same collation: `provided` above was built with the
 # container's default locale and gone-libs.all with LC_ALL=C, and comm compares byte
 # order rather than trusting either.
-comm -23 "$work/gone-libs.all" <(printf '%s\n' "$provided" | LC_ALL=C sort -u) > "$work/gone-libs"
+printf '%s\n' "$provided" | LC_ALL=C sort -u > "$work/provided"
+comm -23 "$work/gone-libs.all" "$work/provided" > "$work/gone-libs.gross"
+
+# ...minus every name that is a *prefix* of one the image still provides, which is the
+# rule this check needs and did not have on its first outing. `usr/lib/libsystemd.so` is
+# the unversioned development symlink: the oci platform's `keep usr/lib/libsystemd.so.0*`
+# does not match it, so selection removes it, and by bare name it looks gone. It is not,
+# in any sense a consumer cares about — `libsystemd.so.0` is right there — and because
+# `grep -F` matches substrings, hunting for "libsystemd.so" finds every binary that
+# references `libsystemd.so.0`. That is exactly what happened: crun, logger, dbus-daemon,
+# libmount, libdbus-1 and libsystemd.so.0 itself were reported as referencing a library
+# that had not gone anywhere.
+#
+# A name that is a prefix of a provided one is therefore not a removal, and the same rule
+# covers every other `libX.so` dev symlink the trim leaves behind.
+set +x
+: > "$work/gone-libs"
+while IFS= read -r lib; do
+    [ -n "$lib" ] || continue
+    shadowed=
+    while IFS= read -r have; do
+        case "$have" in "$lib"*) shadowed=1; break ;; esac
+    done < "$work/provided"
+    if [ -z "$shadowed" ]; then printf '%s\n' "$lib" >> "$work/gone-libs"; fi
+done < "$work/gone-libs.gross"
 set -x
 
 if [ -s "$work/gone-libs" ]; then
-    refs=$(find usr -type f -perm -u+x -exec grep -laF -f "$work/gone-libs" {} + 2>/dev/null || true)
-    if [ -n "$refs" ]; then
+    # `grep -o` per file so the message names the library as well as the file. Without it
+    # the report is a list of paths and no clue which of forty removed libraries any of
+    # them wanted, which is a twenty-minute fix pretending to be a thirty-second one.
+    # Two passes: one `grep -l` over the whole tree to find the files at all, then `grep
+    # -o` on just those. A `grep -o` per executable would be two thousand invocations for
+    # an answer that is almost always "none of them".
+    candidates=$(find usr -type f -perm -u+x -exec grep -laF -f "$work/gone-libs" {} + 2>/dev/null || true)
+    set +x
+    : > "$work/gone-refs"
+    for f in $candidates; do
+        for lib in $(grep -oaF -f "$work/gone-libs" "$f" 2>/dev/null | sort -u); do
+            printf '%s %s\n' "$lib" "$f" >> "$work/gone-refs"
+        done
+    done
+    set -x
+    if [ -s "$work/gone-refs" ]; then
         set +x
         echo "error: $variant/$platform still references libraries selection removed:" >&2
-        printf '%s\n' "$refs" | sed 's/^/  /' >&2
+        sort -u "$work/gone-refs" | sed 's/^/  /' >&2
         echo "       Either select the package that provides it, rescue the library with a" >&2
         echo "       'keep' line, or drop whatever started asking for it." >&2
         exit 1

@@ -358,14 +358,24 @@ jobs:
       - name: Create the images
         run: |
             podman build -t rootfs-builder -f image/Containerfile .
+            rm -f output/failed-images
+            # Every image is attempted even after one fails. A run costs ten minutes and
+            # the images are independent, so stopping at the first would turn "three
+            # variants are wrong in the same way" into three runs. The verdict is
+            # collected in a file because the loop is a pipeline and so a subshell.
             ./tools/variants.sh list | while read -r variant platform; do
               echo "::group::$variant $platform"
               podman run -e FLFS_BUILD="$GITHUB_SHA" \
                 --volume "$PWD"/rootfs:/usr/local/src \
                 --volume "$PWD"/output:/usr/local/output \
-                rootfs-builder /usr/local/bin/build-rootfs.sh "$variant" "$platform"
+                rootfs-builder /usr/local/bin/build-rootfs.sh "$variant" "$platform" \
+                || echo "$variant/$platform" >> output/failed-images
               echo "::endgroup::"
             done
+            if [ -e output/failed-images ]; then
+              echo "failed to assemble: $(tr '\n' ' ' < output/failed-images)" >&2
+              exit 1
+            fi
 
       # Loading each one proves the hand-written OCI layout is well formed, and running it
       # is the only check in this job that executes a binary we shipped. It is not a
