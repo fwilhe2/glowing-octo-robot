@@ -1,10 +1,10 @@
-VERSION="2.42.2"
+VERSION="2.42.3"
 PACKAGE="util-linux-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"
 # kernel.org files tarballs by major.minor series, so 2.42.2 lives in v2.42/.
 IFS=. read -r _major _minor _ <<< "$VERSION"
 URL="https://www.kernel.org/pub/linux/utils/util-linux/v${_major}.${_minor}/${TARBALL}"
-SHA256="e73fe91d9b536c6e3548132c1e327843b0bac3c94be9f158ce112eb989d25fc7"
+SHA256="2f4c3484f67c79688a50974b9e0ae52d089fe07a63d2dbb59b20e50ed26fe89f"
 LICENSE="GPL-2.0-or-later AND GPL-2.0-only AND GPL-3.0-or-later AND LGPL-2.1-or-later AND BSD-2-Clause AND BSD-3-Clause AND BSD-4-Clause-UC AND ISC AND MIT AND EUPL-1.2"
 UPSTREAM_INDEX="https://www.kernel.org/pub/linux/utils/util-linux/"
 UPSTREAM_SUBDIR="v[0-9]+\.[0-9]+/"
