@@ -1,8 +1,8 @@
-VERSION="7.2.2"
+VERSION="7.2.3"
 PACKAGE="linux-${VERSION}"
 TARBALL="$PACKAGE.tar.xz"
 URL="https://cdn.kernel.org/pub/linux/kernel/v${VERSION%%.*}.x/${TARBALL}"
-SHA256="7d0e7ce14f98c43efe880cffbf354a59be45928fdf7170d7333c374ae91c0d83"
+SHA256="8ba259e8e7b13ec6ef0941c8a39ad90b24bd4a4d6c0010ba6bafb794550ecd03"
 LICENSE="GPL-2.0-only WITH Linux-syscall-note"
 # Debian's linux source package pulls in a whole distro kernel toolchain (and its
 # build-dep list breaks whenever sid moves), so list what this build actually needs.
