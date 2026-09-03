@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# How the image size has moved, for both flavours, as a job summary:
+# How the image size has moved, for every image this build produced, as a job summary:
 #
 #     ./test/size-history.sh              # this architecture
 #     ./test/size-history.sh arm64        # name one
@@ -32,7 +32,17 @@ esac
 RUNS="${RUNS:-12}"          # how many past builds to plot
 BASE_BRANCH="${BASE_BRANCH:-main}"
 WORKFLOW="${WORKFLOW:-ci.yml}"
-FLAVOURS="ext4 oci"
+
+# Whatever this build actually wrote, rather than a fixed pair: with image variants there
+# is one report per (variant, platform) — rootfs-size-ext4.txt and rootfs-size-oci.txt
+# for the default variant, rootfs-size-minimal-ext4.txt and friends for the rest.
+#
+# The history side is deliberately tolerant of a name that did not exist yet: `field`
+# answers 0 for a missing file and the loops below skip a zero, so a run from before a
+# variant was added simply contributes no point to that variant's line rather than
+# failing. Which is the same property that made adding a variant cheap in the first place.
+FLAVOURS=$( (cd output 2>/dev/null && ls rootfs-size-*.txt 2>/dev/null) |
+            sed -e 's/^rootfs-size-//' -e 's/\.txt$//' | sort | tr '\n' ' ')
 
 # stdout always; the job summary as well when there is one. Same shape as the summary()
 # in test/rootfs-size.sh — a local run should print the thing CI would show.
@@ -79,11 +89,7 @@ sparkline() {
 # ---------------------------------------------------------------------------------
 # This build. Without it there is nothing to compare against and no reason to go to the
 # network, so it is checked first.
-have_current=1
-for f in $FLAVOURS; do
-    [ -f "output/rootfs-size-$f.txt" ] || have_current=0
-done
-if [ "$have_current" = 0 ]; then
+if [ -z "$FLAVOURS" ]; then
     echo "no size reports in output/ — build an image first (image/build-rootfs.sh writes them)" >&2
     exit 0
 fi
@@ -133,7 +139,7 @@ out ""
 if [ "$series_ok" = 0 ]; then
     out "This build:"
     out ""
-    out "| flavour | size |"
+    out "| image | size |"
     out "| --- | ---: |"
     for f in $FLAVOURS; do
         out "| \`$f\` | $(mib "$(field total "output/rootfs-size-$f.txt")") MiB |"
@@ -147,7 +153,7 @@ fi
 # The headline table: one row per flavour, the shape on the left and the numbers on the
 # right. `main` is the most recent build on the base branch — on a pull request that is
 # what this change is being judged against; on a push to main it is the commit before.
-out "| flavour | last $(wc -l < "$HIST/index.asc") builds on \`$BASE_BRANCH\` → now | $BASE_BRANCH | this build | Δ |"
+out "| image | last $(wc -l < "$HIST/index.asc") builds on \`$BASE_BRANCH\` → now | $BASE_BRANCH | this build | Δ |"
 out "| --- | --- | ---: | ---: | ---: |"
 
 for f in $FLAVOURS; do
@@ -208,12 +214,18 @@ done
 # shape cannot answer.
 out "<details><summary>Run by run</summary>"
 out ""
-out "| date | commit | ext4 | oci |"
-out "| --- | --- | ---: | ---: |"
+header="| date | commit"; rule="| --- | ---"
+for f in $FLAVOURS; do header="$header | $f"; rule="$rule | ---:"; done
+out "$header |"
+out "$rule |"
 while read -r id sha date; do
-    out "| ${date/T/ } | \`$sha\` | $(mib "$(field total "$HIST/$id/rootfs-size-ext4.txt")") | $(mib "$(field total "$HIST/$id/rootfs-size-oci.txt")") |"
+    row="| ${date/T/ } | \`$sha\`"
+    for f in $FLAVOURS; do row="$row | $(mib "$(field total "$HIST/$id/rootfs-size-$f.txt")")"; done
+    out "$row |"
 done < "$HIST/index.asc"
 here=${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || echo local)}
-out "| **this build** | \`${here:0:7}\` | **$(mib "$(field total output/rootfs-size-ext4.txt)")** | **$(mib "$(field total output/rootfs-size-oci.txt)")** |"
+row="| **this build** | \`${here:0:7}\`"
+for f in $FLAVOURS; do row="$row | **$(mib "$(field total "output/rootfs-size-$f.txt")")**"; done
+out "$row |"
 out ""
 out "</details>"

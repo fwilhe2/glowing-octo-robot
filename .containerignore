@@ -8,3 +8,8 @@
 *
 !builder
 !image
+# For one file: image/Containerfile COPYs test/known-missing-libs.txt, so that a variant's
+# per-image dependency check and test/check-rootfs-deps.sh hold to the same allowlist.
+# The directory as a whole, per the note above — re-including a file under an excluded
+# directory does not work.
+!test

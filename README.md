@@ -40,12 +40,14 @@ packages/<pkg>/   env.sh + build.sh per package, and the tree its tarball unpack
 builder/          how a package is compiled: the one builder image, deps.txt (its
                   entire contents), and the entrypoint that sets up the sysroot
 image/            how the staging tree becomes an image — a bootable disk or an OCI
-                  image: Containerfile, build-rootfs.sh, and files/ — the /etc it ships
+                  image: Containerfile, build-rootfs.sh, files/ (the /etc it ships), and
+                  variants/ + platforms/, which declare the images there are
 test/             everything CI runs to verify a build
 tools/            local conveniences and maintenance, not part of a build
 docs/             design notes for work not done yet — proposals, not descriptions
 downloads/        source tarballs (gitignored)
 rootfs/           shared staging tree every package installs into (gitignored)
+sysroot/          glibc only, the tree packages compile against (gitignored)
 output/           built images, fetched CI artifacts, test console logs (gitignored)
 ```
 
@@ -62,13 +64,24 @@ Each package is built in a throwaway podman container and installed into the sha
 ./build.sh coreutils
 ```
 
-glibc comes first because everything else is compiled against it: `rootfs/` is
-bind-mounted into the builder read-only and handed to gcc as `--sysroot`, so the
-binaries we ship require the symbol versions *our* glibc defines rather than whatever
-the Debian builder image happens to have installed. `SYSROOT_DIR` points that mount at
-another tree — CI stages a glibc-only one, which keeps each package's artifact to its
-own files. Packages that have no libc to build against (`glibc`, `kernel`) set
-`NO_SYSROOT=1` in their `env.sh`.
+glibc comes first because everything else is compiled against it. There are two trees and
+the difference between them matters: `sysroot/` is what a build compiles **against**, and
+`rootfs/` is what it installs **into**. `sysroot/` is bind-mounted read-only and handed to
+gcc as `--sysroot`, so the binaries we ship require the symbol versions *our* glibc
+defines rather than whatever the Debian builder image happens to have installed.
+
+`sysroot/` holds glibc and nothing else of ours, which is what keeps a package from
+compiling against another package. When the two were one directory, util-linux — built
+after systemd, alphabetically — found systemd's `libudev.h` and `libudev.so` through the
+sysroot and linked `lsblk` and `findmnt` against a library CI's build of it never sees.
+`./build.sh glibc` installs into `sysroot/` and is mirrored into `rootfs/` afterwards
+(`FILLS_SYSROOT=1` in its `env.sh`); `SYSROOT_DIR` points the mount somewhere else, which
+CI does to keep each package's artifact to its own files. Packages that have no libc to
+build against (`glibc`, `kernel`) set `NO_SYSROOT=1`.
+
+Every bind mount carries podman's `:z`, so this works on a host running SELinux in
+enforcing mode. Without it, a build on Fedora or RHEL fails on its first `install -d` with
+a permission error that names no permission you do not have and does not mention SELinux.
 
 The container also *runs* on our glibc: every file its own `libc6` owns is bind-mounted
 over with ours. Builds run what they just compiled — `help2man` asks a fresh `ptx` for
@@ -83,7 +96,8 @@ produces binaries that can't start.
 `image/Containerfile` / `image/build-rootfs.sh` then turn `rootfs/` into `output/rootfs.ext4`
 (see the `rootfs` job in `.github/workflows/ci.yml`), which `./tools/boot-qemu.sh` boots.
 The same script also writes `output/flfs-oci.tar`, the same userspace as a container image
-— see [The OCI image](#the-oci-image).
+— see [The OCI image](#the-oci-image) — and a smaller disk and container for each of the
+other declared variants; see [Image variants](#image-variants).
 
 ## Adding a package
 
@@ -122,6 +136,7 @@ and add it to the CI matrix in `.github/workflows/ci.yml`:
   | `LICENSE` | SPDX expression for what the tarball ships; must be DFSG-free — see [Licensing](#licensing) |
   | `MIRRORS` | optional extra URLs, tried in order when `URL` is unreachable |
   | `NO_SYSROOT` | set to `1` for packages that aren't compiled against our glibc |
+  | `FILLS_SYSROOT` | set to `1` for the package that *is* our glibc; it installs into `sysroot/` and is mirrored into `rootfs/` |
   | `LOCAL_SOURCE` | set to `1` when the source is in this repository rather than upstream — see below |
   | `UPSTREAM_*` | where to look for new releases, when the directory `URL` points into isn't it — see `tools/upstream.sh` |
 
@@ -269,7 +284,7 @@ it runs on. Every commit also keeps a tag of its own — `flfs:<commit>`, and
 To build it instead of pulling it, `output/flfs-oci.tar`:
 
 ```sh
-podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output \
+podman run --volume "$PWD"/rootfs:/usr/local/src:z --volume "$PWD"/output:/usr/local/output:z \
     rootfs-builder /usr/local/bin/build-rootfs.sh oci
 podman load -i output/flfs-oci.tar
 podman run --rm -it localhost/flfs:latest
@@ -285,13 +300,14 @@ It is the disk image minus the two things a container gets from somewhere else: 
 kernel, which is the host's, and systemd, which the runtime replaces. `/bin/bash` is the
 entrypoint, so `podman run -it` is a shell and anything after the image name is passed to
 it (`podman run flfs -c 'flfsfetch'`). Everything else is the same userspace, assembled by
-the same script from the same tree — `image/build-rootfs.sh` takes `ext4` or `oci` and
-expresses the container as *subtractions*, so the two cannot drift apart the way two
-scripts would. Dropping systemd means its unit tree, udev, its drop-in directories and its
-PAM and NSS modules, plus every binary linking the private `libsystemd-shared` (found by
-reading their `NEEDED` entries rather than by keeping a list); `libsystemd.so.0` and
-`libudev.so.1` stay, because they are the client libraries other packages link against.
-Also gone is the `/etc` only a booted machine reads: `fstab`, `shadow`, the networkd
+the same script from the same tree — `oci` is a *platform*, thirteen lines of
+`image/platforms/oci.conf` expressing the container as subtractions, so the two cannot
+drift apart the way two scripts would. Omitting systemd takes its unit tree, udev, its
+drop-in directories, its PAM and NSS modules and every one of its command-line tools with
+it, because those are all systemd's files and the per-package manifests know that;
+`libsystemd.so.0` is rescued by a `keep` line, being the public client library that `crun`
+and `libmount.so.1` link. `libudev.so.1` is not: with udevadm gone nothing names it. Also
+gone is the `/etc` only a booted machine reads: `fstab`, `shadow`, the networkd
 configuration, `resolv.conf`. A runtime provides hostname, hosts and resolv.conf itself.
 
 Nothing new is needed to write it. An OCI archive is a tar of five files — a layer, a
@@ -308,6 +324,62 @@ That is also its limit: a container runs on the *host's* kernel, so this says no
 about `packages/kernel` and does not replace the boot tests. It is a check on the image
 we produce; [Containers](#containers) below is the unrelated question of the runtime the
 *disk* image ships.
+
+## Image variants
+
+There is more than one image, and which ones there are is *data* rather than code. An
+image is a **variant** on a **platform**:
+
+* a **variant** is a feature set — which packages are in it and the `/etc` that goes with
+  them — declared in `image/variants/<name>.conf`;
+* a **platform** is what the assembled tree is turned into, and what that target
+  physically cannot use, in `image/platforms/<name>.conf`.
+
+| variant | what it is for | platforms |
+| --- | --- | --- |
+| `minimal` | boots to a login shell on the serial console and nothing else | `ext4`, `oci` |
+| `net` | minimal, plus a network somebody can debug: addressing, DNS, TLS, `ip`/`ping`/`curl` | `ext4`, `oci` |
+| `full` | everything this repository builds — the image published as `flfs:latest` | `ext4`, `oci` |
+
+`full` is the **default variant**, which means it keeps the unsuffixed names: it is
+`output/rootfs.ext4`, `output/flfs-oci.tar`, `sbom-ext4.json` and the `flfs:latest` tag.
+The others are `output/rootfs-minimal.ext4`, `output/flfs-net-oci.tar` and so on.
+
+```sh
+./tools/variants.sh list          # every (variant, platform) pair CI builds
+./tools/variants.sh show net oci  # what net resolves to on that platform
+podman run --volume "$PWD"/rootfs:/usr/local/src:z --volume "$PWD"/output:/usr/local/output:z \
+    rootfs-builder /usr/local/bin/build-rootfs.sh minimal ext4
+```
+
+The rule the whole thing rests on: **the package build never learns about variants.**
+Every package is compiled once per architecture into the same staging tree, exactly as
+before, and a variant is a *selection from* that tree resolved at assembly time. That is
+what keeps 36 packages × 2 architectures from becoming 36 × 2 × N build jobs — a new
+variant costs only an image and a boot.
+
+What makes selection by package possible is a primitive that did not exist before:
+`builder/build-package.sh` diffs the staging tree around each package's install and writes
+the paths it added to `usr/share/flfs/manifests/<pkg>`. That also answers "which package
+shipped this file", which is the first question of every size investigation and which
+nothing here could answer before.
+
+And what makes it *safe* is that a subset need not resolve even though the superset always
+does. `image/build-rootfs.sh` therefore fails an image whose binaries need a library it
+does not ship, against the same `test/known-missing-libs.txt` allowlist
+`test/check-rootfs-deps.sh` holds the staging tree to — and the error names the package
+that provides it, because the manifests know. Each variant also declares which of the boot
+tests apply to it, and CI boots every variant: a subset booting is precisely the claim
+being tested, and `full` passing says nothing about `minimal`.
+
+Selection is deliberately **not** transitive: nothing in this repository declares a
+dependency graph, so closing over one would mean deriving it from `DT_NEEDED`, which is a
+guess that is right often enough to be dangerous. Explicit lists plus a check that names
+the missing package is the same trade this project made when it replaced `apt build-dep`
+with a reviewed `deps.txt`.
+
+`docs/image-variants.md` is the design, including the `lima` and `firecracker` platforms
+that are not built yet.
 
 ## What the image leaves out
 
@@ -458,6 +530,55 @@ length. The short version: curl is compiled against the builder image's OpenSSL 
 so it asks for `libcrypto.so.3` at runtime and ours has to be the library that answers —
 which makes a major-version bump something to do deliberately rather than automatically.
 
+## Remote access
+
+`openssh` is the ssh server and client, and it is the first thing this image has ever
+*listened* on — which is a change of what the image is, not another line in the package
+list. Everything before it was reached over a serial console; this is reached over a
+network, by somebody who is not already at the machine.
+
+It is here for the `lima` variant. Lima starts the VM and then does everything else over
+ssh — provisioning, mounting the host's filesystem back into the guest, running commands
+— so a VM somebody actually works in needs a server before it needs anything else on
+Lima's list. There is no second candidate: Lima writes OpenSSH configuration verbatim,
+`sshfs` is an OpenSSH client talking to an OpenSSH server, and every distribution's `ssh`
+is this one. It links only what the image already had — `libcrypto` from openssl, `libz`,
+`libpam`, `libcrypt` — and ships no interpreted helper.
+
+Three things about how it is set up are decisions rather than defaults.
+
+**Host keys are generated on the machine, at its first boot**, by `sshd-keygen.service`
+running `ssh-keygen -A`, and never in the image. A private host key baked into an image
+built from a public repository would be the same key on every machine that ever booted
+it, and any of them could then impersonate the rest. `packages/openssh/build.sh` runs
+`make install-nokeys` for the same reason, even though upstream's key-generating install
+step is already a no-op under `DESTDIR`.
+
+**Root can log in by key and not by password.** `PermitRootLogin prohibit-password`, plus
+`KbdInteractiveAuthentication no` to close the second path to a password that PAM's
+keyboard-interactive method would otherwise open. `image/files/etc/shadow` ships
+`root`/`root` and `user`/`user`, which are throwaway credentials for a development VM
+reached over a serial console and are not credentials to expose to a network.
+
+**The daemon brings its own scaffolding, from the package rather than from
+`image/files`.** The unit, the symlink that enables it, the `sysusers.d` snippet for the
+privilege separation account, `sshd_config` and `/etc/pam.d/sshd` are all installed by
+`packages/openssh/build.sh` into `DESTDIR`. That is what makes them disappear in the
+variants that do not select openssh: `image/files` is copied into every image, but a
+package's manifest belongs to one package, and a unit whose `ExecStart` names a binary
+that is not there is a failed unit and a `degraded` boot.
+
+```sh
+./test/ssh.sh output/rootfs.ext4 rootfs/boot/bzImage
+```
+
+is the check, and it has the guest connect to itself on `127.0.0.1` — which
+means no port forward, no ssh client on the runner and no key material crossing the
+boundary. Everything that can be wrong about sshd in this image is inside the guest: the
+unit, the host key, the privilege separation account, the seccomp sandbox and the PAM
+stack. Reaching the guest from *outside* is a property of the VMM rather than of the
+image, and it is the `lima` platform's problem when that arrives.
+
 ## Archives
 
 `tar` and `gzip` are GNU tar and GNU gzip. The image had `xz` and `zstd` — and `zlib`,
@@ -474,7 +595,7 @@ themselves back off — so `packages/tar/build.sh` asserts on `config.h` instead
 would not do: the ACL half links `libacl`, but the xattr calls are glibc's, so a tar with
 no xattr support has exactly the same `NEEDED` as one with it and differs only in
 unpacking layers wrong. What is *not* built is `rmt`, the remote-tape server tar reaches
-for over rsh, there being no rsh, no ssh and no tape drive here.
+for over rsh — there is no rsh here, and no tape drive for it to reach.
 
 gzip installs a dozen wrapper scripts around the binary, and none of them ship. Most wrap
 a tool that is not here: `zdiff` and `zcmp` want diffutils, `znew` wants `compress`,

@@ -1,9 +1,27 @@
 # Image variants: one build, many images
 
-**Status: nothing here is implemented.** `image/build-rootfs.sh` takes `ext4` or `oci` and
-that is the whole vocabulary. This document is the design for turning that one hard-coded
-special case into a general one: several images, declared rather than coded, differing both
-in *what they run on* and *what is in them*.
+**Status: steps 1–3 of the migration below are implemented; 4–6 are not.** Per-package
+manifests, the variant/platform files and their parser, the `full`/`net`/`minimal` variants
+on the `ext4` and `oci` platforms, the per-image dependency check and the CI loop and boot
+matrix are all in the tree. The `lima` and `firecracker` platforms, the `container-host`
+and `k8s-node` variants and everything in the "lima variant" section below are still
+design — nothing there is built.
+
+The one piece of step 4 that has landed ahead of the rest is **openssh**, packaged and
+booted in `full`, with `test/ssh.sh` as its check. It is the first thing this image
+listens on and it is useful on its own, so it did not have to wait for a platform that
+cannot boot yet; the other packages the lima section names — sudo, sshfs, fuse3, tzdata —
+still do not exist here.
+
+What landed differs from the sketch below in two places worth knowing about, both noted at
+the point they come up: the `oci` platform has to name PAM's *consumers* by hand, because
+`login`, `su` and `runuser` are util-linux's files rather than pam's; and the dangling
+symlink sweep survives as a scoped pass rather than disappearing, because `/etc/resolv.conf`
+is a deliberate dangling symlink that a tree-wide sweep would delete.
+
+This document is the design for turning one hard-coded special case into a general one:
+several images, declared rather than coded, differing both in *what they run on* and *what
+is in them*.
 
 The rule the whole design hangs on, stated first because everything else is downstream of
 it: **the package build stage never learns about variants.** Every package is compiled once
@@ -357,7 +375,7 @@ directive is for.
 
 | need | package | notes |
 | --- | --- | --- |
-| SSH access | **openssh** | new. The first thing this image ever *listens* on, which is a change of security posture and not merely a package. Links against openssl and zlib, both already here |
+| SSH access | **openssh** | ✅ packaged. The first thing this image ever *listens* on, which is a change of security posture and not merely a package. It links openssl, zlib and pam, all already here, and installs its own unit, sysusers snippet and pam.d stack so that a variant which does not select it ships none of them |
 | Lima's scripts call it by name | **sudo** | new. systemd's `run0` is not a drop-in and Lima does not know about it. C, ISC-style licence Debian carries in main — the exact SPDX expression is for the packaging pull request to settle against `test/dfsg-licenses.txt` |
 | the default mount type | **sshfs**, **fuse3** | new. Lima's reverse-sshfs is the guest mounting the host, so this is guest-side and not optional unless the template switches to 9p or virtiofs |
 | rootless containerd | `newuidmap`/`newgidmap` (shadow) | **avoid.** They need setuid or file capabilities, and `CLAUDE.md` already records that a `CAP_NET_RAW` file capability survives neither `mkfs.ext4 -d` nor the OCI layer tar. The first move is to ship a `lima.yaml` that does not enable rootless containerd, not to package shadow |
@@ -385,13 +403,13 @@ VM that will not start.
 
 ## Migration
 
-1. **Per-package file manifests.** Useful on their own — "which package shipped this file"
+1. **✅ Per-package file manifests.** Useful on their own — "which package shipped this file"
    — and nothing consumes them yet, so this lands green and invisible.
-2. **`full`, `ext4` and `oci` as data, reproducing today's images.** The subtractions block
+2. **✅ `full`, `ext4` and `oci` as data, reproducing today's images.** The subtractions block
    becomes `image/platforms/oci.conf`. Verified by assembling both ways and diffing the
    trees: this step should change nothing, and being able to prove that is the whole
    reason it is a step of its own.
-3. **`minimal` and `net`**, with the per-variant dependency check, size-budget rows, the
+3. **✅ `minimal` and `net`**, with the per-variant dependency check, size-budget rows, the
    CI loop and the boot matrix. This is where the design either pays or does not: if
    `minimal` comes out at 90% of `full`, that is a finding worth having early.
 4. **`lima`, in two halves that are worth landing separately.** The platform first — a

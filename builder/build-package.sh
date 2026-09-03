@@ -78,8 +78,47 @@ if [ -n "${SYSROOT:-}" ]; then
     export LDFLAGS="$sysroot_ldflags${LDFLAGS:+ $LDFLAGS}"
 fi
 
+# What this package is about to add to the tree, so that image/build-rootfs.sh can later
+# be asked for a *subset* of it. Selection by package needs a mapping from package to
+# files and there was never one: rootfs/ is a merged blob and usr/share/flfs/components
+# records the pin, not the paths. See docs/image-variants.md.
+#
+# It has to be a before-and-after diff rather than "everything under DESTDIR is mine",
+# because rootfs/ is cumulative — thirty-five packages have already installed into it.
+#
+# Size and mtime are in the key alongside the path, not just the path, so that a package
+# which *overwrites* another's file claims it too. Ownership of an overwritten path is
+# genuinely ambiguous, and claiming it in both manifests is the safe direction: a file in
+# either package's manifest is kept when either package is selected.
+#
+# usr/share/flfs is pruned because it is where the manifests and the component records
+# themselves live. They are the intermediate form — build-rootfs.sh consumes and deletes
+# both — and a manifest that listed itself would be a package claiming its own bookkeeping.
+#
+# LC_ALL=C on both sorts and the comm between them: three commands that have to agree
+# about collation, and a locale that reordered one of them would silently produce a
+# manifest of everything.
+manifest_snapshot() {  # <output file>
+    ( cd /usr/local/rootfs 2>/dev/null &&
+      find . \( -path ./usr/share/flfs -prune \) -o -printf '%y %s %T@ %P\n' ) \
+        | LC_ALL=C sort > "$1"
+}
+
+manifest_snapshot /tmp/flfs-tree-before
+
 cd /usr/local/src
 source /package-build.sh
+
+if [ -n "${FLFS_PKG:-}" ]; then
+    manifest_snapshot /tmp/flfs-tree-after
+    manifests=/usr/local/rootfs/usr/share/flfs/manifests
+    install -d "$manifests"
+    # cut -f4- rather than -f4: the path is the rest of the line, so a filename with a
+    # space in it survives.
+    LC_ALL=C comm -13 /tmp/flfs-tree-before /tmp/flfs-tree-after \
+        | cut -d' ' -f4- > "$manifests/$FLFS_PKG"
+    echo "manifest: $FLFS_PKG claims $(wc -l < "$manifests/$FLFS_PKG") paths"
+fi
 
 # What just got installed, written down where it was installed. ../build.sh passes the
 # pins from env.sh across as FLFS_*; this stages one record per package into the tree
