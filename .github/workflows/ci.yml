@@ -367,8 +367,8 @@ jobs:
             ./tools/variants.sh list | while read -r variant platform; do
               echo "::group::$variant $platform"
               podman run -e FLFS_BUILD="$GITHUB_SHA" \
-                --volume "$PWD"/rootfs:/usr/local/src \
-                --volume "$PWD"/output:/usr/local/output \
+                --volume "$PWD"/rootfs:/usr/local/src:z \
+                --volume "$PWD"/output:/usr/local/output:z \
                 rootfs-builder /usr/local/bin/build-rootfs.sh "$variant" "$platform" \
                 || echo "$variant/$platform" >> output/failed-images
               echo "::endgroup::"

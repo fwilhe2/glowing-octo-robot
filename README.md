@@ -47,6 +47,7 @@ tools/            local conveniences and maintenance, not part of a build
 docs/             design notes for work not done yet — proposals, not descriptions
 downloads/        source tarballs (gitignored)
 rootfs/           shared staging tree every package installs into (gitignored)
+sysroot/          glibc only, the tree packages compile against (gitignored)
 output/           built images, fetched CI artifacts, test console logs (gitignored)
 ```
 
@@ -63,13 +64,24 @@ Each package is built in a throwaway podman container and installed into the sha
 ./build.sh coreutils
 ```
 
-glibc comes first because everything else is compiled against it: `rootfs/` is
-bind-mounted into the builder read-only and handed to gcc as `--sysroot`, so the
-binaries we ship require the symbol versions *our* glibc defines rather than whatever
-the Debian builder image happens to have installed. `SYSROOT_DIR` points that mount at
-another tree — CI stages a glibc-only one, which keeps each package's artifact to its
-own files. Packages that have no libc to build against (`glibc`, `kernel`) set
-`NO_SYSROOT=1` in their `env.sh`.
+glibc comes first because everything else is compiled against it. There are two trees and
+the difference between them matters: `sysroot/` is what a build compiles **against**, and
+`rootfs/` is what it installs **into**. `sysroot/` is bind-mounted read-only and handed to
+gcc as `--sysroot`, so the binaries we ship require the symbol versions *our* glibc
+defines rather than whatever the Debian builder image happens to have installed.
+
+`sysroot/` holds glibc and nothing else of ours, which is what keeps a package from
+compiling against another package. When the two were one directory, util-linux — built
+after systemd, alphabetically — found systemd's `libudev.h` and `libudev.so` through the
+sysroot and linked `lsblk` and `findmnt` against a library CI's build of it never sees.
+`./build.sh glibc` installs into `sysroot/` and is mirrored into `rootfs/` afterwards
+(`FILLS_SYSROOT=1` in its `env.sh`); `SYSROOT_DIR` points the mount somewhere else, which
+CI does to keep each package's artifact to its own files. Packages that have no libc to
+build against (`glibc`, `kernel`) set `NO_SYSROOT=1`.
+
+Every bind mount carries podman's `:z`, so this works on a host running SELinux in
+enforcing mode. Without it, a build on Fedora or RHEL fails on its first `install -d` with
+a permission error that names no permission you do not have and does not mention SELinux.
 
 The container also *runs* on our glibc: every file its own `libc6` owns is bind-mounted
 over with ours. Builds run what they just compiled — `help2man` asks a fresh `ptx` for
@@ -124,6 +136,7 @@ and add it to the CI matrix in `.github/workflows/ci.yml`:
   | `LICENSE` | SPDX expression for what the tarball ships; must be DFSG-free — see [Licensing](#licensing) |
   | `MIRRORS` | optional extra URLs, tried in order when `URL` is unreachable |
   | `NO_SYSROOT` | set to `1` for packages that aren't compiled against our glibc |
+  | `FILLS_SYSROOT` | set to `1` for the package that *is* our glibc; it installs into `sysroot/` and is mirrored into `rootfs/` |
   | `LOCAL_SOURCE` | set to `1` when the source is in this repository rather than upstream — see below |
   | `UPSTREAM_*` | where to look for new releases, when the directory `URL` points into isn't it — see `tools/upstream.sh` |
 
@@ -271,7 +284,7 @@ it runs on. Every commit also keeps a tag of its own — `flfs:<commit>`, and
 To build it instead of pulling it, `output/flfs-oci.tar`:
 
 ```sh
-podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output \
+podman run --volume "$PWD"/rootfs:/usr/local/src:z --volume "$PWD"/output:/usr/local/output:z \
     rootfs-builder /usr/local/bin/build-rootfs.sh oci
 podman load -i output/flfs-oci.tar
 podman run --rm -it localhost/flfs:latest
@@ -335,7 +348,7 @@ The others are `output/rootfs-minimal.ext4`, `output/flfs-net-oci.tar` and so on
 ```sh
 ./tools/variants.sh list          # every (variant, platform) pair CI builds
 ./tools/variants.sh show net oci  # what net resolves to on that platform
-podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output \
+podman run --volume "$PWD"/rootfs:/usr/local/src:z --volume "$PWD"/output:/usr/local/output:z \
     rootfs-builder /usr/local/bin/build-rootfs.sh minimal ext4
 ```
 

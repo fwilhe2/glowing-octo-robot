@@ -109,6 +109,8 @@ tools/            local conveniences and maintenance, not part of a build
 docs/             design notes for work not done yet — proposals, not descriptions
 downloads/        source tarballs (gitignored)
 rootfs/           shared, cumulative staging tree every package installs into (gitignored)
+sysroot/          glibc and nothing else of ours — what packages compile *against*,
+                  as distinct from rootfs/, which is what they install into (gitignored)
 output/           built images, fetched CI artifacts, test console logs (gitignored)
 ```
 
@@ -179,8 +181,10 @@ snapshot already sitting there and quietly skip the extraction.
 
 `rootfs/` is a *shared, cumulative* staging tree (gitignored) — every package installs
 into the same directory and nothing removes stale files, so after a version bump or a
-build that partially succeeded, delete `rootfs/` and rebuild from glibc when the tree
-stops making sense.
+build that partially succeeded, delete `rootfs/` **and `sysroot/`** and rebuild from glibc
+when the tree stops making sense. Both, because `sysroot/` is cumulative in the same way
+and across the one bump where it matters most: a glibc version bump leaves the previous
+release's libraries beside the new ones in the tree everything else compiles against.
 
 ## How a package build works
 
@@ -310,6 +314,28 @@ catches this; it is why that script exists.
 `glibc` and `kernel` set `NO_SYSROOT=1` (nothing to build against). The builder container
 also *runs* on our glibc: root `build.sh` bind-mounts every file the image's `libc6` owns
 over with ours, because builds execute what they just compiled.
+
+**The sysroot is `sysroot/`, not `rootfs/`, and holding those apart is load-bearing.**
+`sysroot/` is glibc and nothing else of ours — `packages/glibc/env.sh` carries
+`FILLS_SYSROOT=1`, so it installs there and `build.sh` mirrors it into `rootfs/`
+afterwards. `rootfs/` is what packages install *into* and is cumulative, which is exactly
+why it cannot also be what they compile *against*: `--sysroot` would then hand each build
+the headers and libraries of every package built before it, in alphabetical order.
+util-linux is the worked example — built after systemd, its configure found `libudev.h`
+and `libudev.so` in the tree and linked `lsblk` and `findmnt` against `libudev.so.1`. CI
+never saw it, because the workflow has always passed `SYSROOT_DIR=sysroot`, so the
+divergence ran the wrong way: a local build produced binaries CI would not, and the `oci`
+images — which omit systemd — could not be assembled locally at all. If a local tree
+starts disagreeing with CI, this is the first thing to suspect.
+
+**Every podman bind mount in `build.sh` carries `:z`.** Without it nothing builds on a
+host running SELinux in enforcing mode (Fedora, RHEL), and the failure names neither
+SELinux nor anything true: `install: cannot create directory '/usr/local/rootfs/usr':
+Permission denied`, for a directory the user owns. It costs nothing on the Debian and
+Ubuntu hosts CI uses — with no policy loaded, podman ignores the flag. `z` and not `Z`:
+the trees are read by more than one container, the package builds and then the image
+assembly, and the private label would make each the only reader of a tree the next has to
+open.
 
 **2. Linking against a library only the builder image has.** `configure` finds an
 optional dev package inside the Debian container, links against it, and the missing `.so`

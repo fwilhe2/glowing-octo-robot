@@ -21,8 +21,8 @@ ARCHIVE="${1:-output/flfs-oci.tar}"
 
 [ -f "$ARCHIVE" ] || {
     echo "error: no OCI archive at $ARCHIVE" >&2
-    echo "       build it with: podman run --volume \"\$PWD\"/rootfs:/usr/local/src \\" >&2
-    echo "         --volume \"\$PWD\"/output:/usr/local/output rootfs-builder \\" >&2
+    echo "       build it with: podman run --volume \"\$PWD\"/rootfs:/usr/local/src:z \\" >&2
+    echo "         --volume \"\$PWD\"/output:/usr/local/output:z rootfs-builder \\" >&2
     echo "         /usr/local/bin/build-rootfs.sh oci" >&2
     exit 1
 }
