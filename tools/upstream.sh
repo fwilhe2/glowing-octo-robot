@@ -32,7 +32,16 @@ set -euo pipefail
 # Package directories are relative to the repository root, not to tools/.
 cd "$(dirname "$0")/.."
 
-NUM='[0-9]+(\.[0-9]+)*'
+# What a version looks like. Dotted numbers, plus the one suffix an upstream here
+# actually uses: portable OpenSSH numbers itself <upstream>p<portable>, so 10.5p1 is a
+# release and 10.5 is not a thing that was ever published. Without the suffix openssh
+# fails twice over — the default regex would not match its tarball, and the "plain
+# numeric versions only" filter at the bottom would drop the candidate even if it had.
+#
+# It stays this narrow deliberately. The filter exists to keep alphas, betas and release
+# candidates from being proposed as updates, and `p<digits>` is the only decoration in
+# this set that is a final release rather than a pre-release.
+NUM='[0-9]+(\.[0-9]+)*(p[0-9]+)?'
 
 fetch() {
     curl -fsSL --max-time 60 --retry 2 --retry-delay 2 "$@"

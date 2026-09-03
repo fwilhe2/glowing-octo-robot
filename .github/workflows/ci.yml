@@ -228,6 +228,7 @@ jobs:
           - libmnl
           - libxcrypt
           - ncurses
+          - openssh
           - openssl
           - pam
           - sed
@@ -516,8 +517,8 @@ jobs:
   #
   # A matrix over (arch × variant), running only that variant's declared tests. This is
   # where the wall clock goes and the arithmetic is worth doing in the open: with
-  # `minimal` (boot, systemd), `net` (+ network) and `full` (+ container) it is
-  # 2 × (2 + 3 + 4) = 18 boots against the 8 there used to be, on runners with no KVM.
+  # `minimal` (boot, systemd), `net` (+ network) and `full` (+ ssh, + container) it is
+  # 2 × (2 + 3 + 5) = 20 boots against the 8 there used to be, on runners with no KVM.
   # Each variant genuinely needs its own — a subset booting is precisely the claim being
   # tested, and `full` passing says nothing about `minimal` — so the cost is real and
   # roughly a doubling. If it ever becomes the pull-request bottleneck the lever is
@@ -598,7 +599,15 @@ jobs:
         if: contains(matrix.image.tests, 'network')
         run: ./test/network.sh artifacts/${{ matrix.image.image }} rootfs/boot/bzImage
 
-      # And a fourth, which starts an actual container: the kernel's container.config
+      # A fourth, which logs into the guest over ssh — from inside the guest, so that no
+      # port forward and no client on the runner are involved. sshd is the first thing
+      # this image ever listens on and nothing above would notice it refusing every
+      # connection: test/systemd.sh only asks whether the unit *started*.
+      - name: Check ssh
+        if: contains(matrix.image.tests, 'ssh')
+        run: ./test/ssh.sh artifacts/${{ matrix.image.image }} rootfs/boot/bzImage
+
+      # And a fifth, which starts an actual container: the kernel's container.config
       # fragment and crun are only useful together, and nothing above this exercises
       # either of them.
       - name: Check containers

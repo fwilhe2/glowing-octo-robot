@@ -130,6 +130,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/boot.sh output/rootfs.ext4 rootfs/boot/bzImage   # headless boot smoke test
 ./test/systemd.sh output/rootfs.ext4 rootfs/boot/bzImage  # no failed units
 ./test/network.sh output/rootfs.ext4 rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
+./test/ssh.sh output/rootfs.ext4 rootfs/boot/bzImage       # sshd is up and lets a key in
 ./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage  # crun starts a container
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./test/rootfs-size.sh [variant] <platform>  # size vs test/size-budget.txt, and where it went
@@ -556,12 +557,12 @@ is being assembled, and `systemd-sysusers` is ordered before `systemd-tmpfiles-s
 The kernel is a normal package (`packages/kernel/`, `defconfig` + `kvm_guest.config` +
 `container.config` + `vm.config`) staged at `rootfs/boot/bzImage`, so a CI run is self-contained. `test/boot.sh` runs `/bin/bash` as
 PID 1 by default, not systemd: it isolates "the kernel booted and the loader resolved a
-real binary" from everything systemd does on top. `test/systemd.sh`, `test/network.sh` and
-`test/container.sh` boot systemd for real (they reach `multi-user.target` and a login
-prompt). `test/systemd.sh` is the cheap catch-all: it asserts `systemctl is-system-running`
-says `running`, which is `degraded` if and only if some unit failed — the failure mode a
-package gets for free by installing a unit whose binary needs a library we don't ship. It also
-asserts the `Tainted` property is empty.
+real binary" from everything systemd does on top. `test/systemd.sh`, `test/network.sh`,
+`test/ssh.sh` and `test/container.sh` boot systemd for real (they reach
+`multi-user.target` and a login prompt). `test/systemd.sh` is the cheap catch-all: it
+asserts `systemctl is-system-running` says `running`, which is `degraded` if and only if
+some unit failed — the failure mode a package gets for free by installing a unit whose
+binary needs a library we don't ship. It also asserts the `Tainted` property is empty.
 
 **None of the four spells out how to launch a guest — `test/qemu-lib.sh` does, and
 `tools/boot-qemu.sh` sources it too.** The machine type, console device, accel flags and
@@ -594,8 +595,10 @@ denied rather than defaulted.** That is the right policy and an easy trap: the s
 that needs one is not always obvious from the package that installs it. `user@.service`
 carries `PAMName=systemd-user`, so a missing `pam.d/systemd-user` fails every login's user
 manager and leaves the system `degraded`; util-linux's `su` and `runuser` each want their
-own. `other` runs `pam_warn` before `pam_deny` so the next one says which service it was in
-the journal instead of failing mutely.
+own; sshd wants one too, and that one is installed by `packages/openssh/build.sh` rather
+than shipped here — see the openssh section below for why a package's own service
+scaffolding belongs to the package. `other` runs `pam_warn` before `pam_deny` so the next
+one says which service it was in the journal instead of failing mutely.
 
 Having that file is only half of it: **`pam.d/systemd-user` has to include
 `pam_systemd.so`**, however much it looks like the one module that cannot belong there.
@@ -664,6 +667,47 @@ for `libcrypto.so.3`/`libssl.so.3` at runtime, which ours answers only while it 
 3.x release. `packages/openssl/env.sh` holds `tools/check-updates.sh` to the 3.5 series
 for that reason, and `test/check-symbol-versions.sh` is what would catch the other
 direction — a curl that wanted a symbol version our older OpenSSL does not define.
+
+`openssh` is the SSH server, and **the first thing this image has ever listened on** —
+which is a change of security posture rather than another package, and the reason its
+`env.sh` argues the case before the `VERSION=` line. It is here for the `lima` variant
+(`docs/image-variants.md`), which reaches the guest over ssh and has no other way in. It
+links only what is already shipped: libcrypto from openssl (the same coupling to the
+builder image's OpenSSL that curl has, above), libz, libpam and libcrypt.
+
+**It is also the first package that arrives with a *service*, and where that scaffolding
+lives is the rule to carry forward: the package installs it, not `image/files`.**
+`packages/openssh/build.sh` writes the unit, the `multi-user.target.wants` symlink that
+enables it, the `sysusers.d` snippet for the privilege separation account, `sshd_config`
+and `/etc/pam.d/sshd` into `DESTDIR`. The reason is selection: `image/files` is copied
+into *every* image, a manifest belongs to one package, and a unit whose `ExecStart` names
+a binary the image does not contain is a failed unit and a `degraded` boot — which is
+exactly what `minimal` and `net` would ship, since neither selects openssh. Installed from
+the package, the whole apparatus goes away with it for free. This is the general form of
+the trap `image/files/etc/pam.d/other` sets: a PAM service with no file of its own is
+denied, and `pam.d/sshd` is now one more file that has to exist — it just is not in the
+directory the other five are in.
+
+Three things about it that are decisions rather than defaults. **Host keys are generated
+on first boot**, by `sshd-keygen.service` calling `ssh-keygen -A`, and never in the image:
+a key baked into an image built from a public repository is the same key on every machine
+that boots it. `make install-nokeys` rather than `make install` is the other half of that,
+even though upstream's `host-key` target is already a no-op under `DESTDIR`. **`PermitRootLogin
+prohibit-password` with `KbdInteractiveAuthentication no`**, because `image/files/etc/shadow`
+ships root with the password `root` — fine on a serial console, not over a network — and
+because upstream's own comment warns that PAM's keyboard-interactive path is a second way
+to a password that `PermitRootLogin` does not inspect. And **the `oci` platform drops the
+server half** (`sshd`, `sshd-session`, `sshd-auth`, the sftp subsystem, `sshd_config`,
+`moduli`, `/var/empty`) while keeping the client: `sshd-session` and `sshd-auth` are the
+only binaries configure links `-lpam` into — it puts it in `SSHDLIBS`, not `LIBS` — so a
+container that omits pam physically cannot run them.
+
+`test/ssh.sh` is the check, and it has the guest connect **to itself** over 127.0.0.1 — no
+port forward in `test/qemu-lib.sh`, no ssh client on the runner, no key material crossing
+the boundary. Everything that can be wrong about sshd here is inside the guest. It asserts
+`$XDG_SESSION_ID` is set in the ssh session, which is the cheap evidence that
+`pam_systemd.so` ran and logind registered it rather than the login merely being
+authenticated.
 
 The OCI runtime is `crun` (constraint 3), plus `json-c` for `config.json`. crun is the
 only runtime written in C; runc (Go) and youki (Rust) would each mean a second toolchain
@@ -770,7 +814,7 @@ contains only its own files, and caches on a hash that deliberately includes
 it** — the expensive part of that job is downloading and extracting three dozen artifacts,
 and assembling an image from the extracted tree is seconds, so a matrix over
 (arch × variant) would pay that setup cost N times to save nothing. `boot` *is* such a
-matrix, running only each variant's declared `tests`: 2 × (2 + 3 + 4) = 18 boots against
+matrix, running only each variant's declared `tests`: 2 × (2 + 3 + 5) = 20 boots against
 the 8 there used to be, on runners with no KVM. Each variant genuinely needs its own boot —
 a subset booting is precisely the claim being tested — so that cost is real. If it becomes
 the pull-request bottleneck the lever is *when* rather than *what* (every variant on `main`

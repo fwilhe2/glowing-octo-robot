@@ -517,6 +517,55 @@ length. The short version: curl is compiled against the builder image's OpenSSL 
 so it asks for `libcrypto.so.3` at runtime and ours has to be the library that answers —
 which makes a major-version bump something to do deliberately rather than automatically.
 
+## Remote access
+
+`openssh` is the ssh server and client, and it is the first thing this image has ever
+*listened* on — which is a change of what the image is, not another line in the package
+list. Everything before it was reached over a serial console; this is reached over a
+network, by somebody who is not already at the machine.
+
+It is here for the `lima` variant. Lima starts the VM and then does everything else over
+ssh — provisioning, mounting the host's filesystem back into the guest, running commands
+— so a VM somebody actually works in needs a server before it needs anything else on
+Lima's list. There is no second candidate: Lima writes OpenSSH configuration verbatim,
+`sshfs` is an OpenSSH client talking to an OpenSSH server, and every distribution's `ssh`
+is this one. It links only what the image already had — `libcrypto` from openssl, `libz`,
+`libpam`, `libcrypt` — and ships no interpreted helper.
+
+Three things about how it is set up are decisions rather than defaults.
+
+**Host keys are generated on the machine, at its first boot**, by `sshd-keygen.service`
+running `ssh-keygen -A`, and never in the image. A private host key baked into an image
+built from a public repository would be the same key on every machine that ever booted
+it, and any of them could then impersonate the rest. `packages/openssh/build.sh` runs
+`make install-nokeys` for the same reason, even though upstream's key-generating install
+step is already a no-op under `DESTDIR`.
+
+**Root can log in by key and not by password.** `PermitRootLogin prohibit-password`, plus
+`KbdInteractiveAuthentication no` to close the second path to a password that PAM's
+keyboard-interactive method would otherwise open. `image/files/etc/shadow` ships
+`root`/`root` and `user`/`user`, which are throwaway credentials for a development VM
+reached over a serial console and are not credentials to expose to a network.
+
+**The daemon brings its own scaffolding, from the package rather than from
+`image/files`.** The unit, the symlink that enables it, the `sysusers.d` snippet for the
+privilege separation account, `sshd_config` and `/etc/pam.d/sshd` are all installed by
+`packages/openssh/build.sh` into `DESTDIR`. That is what makes them disappear in the
+variants that do not select openssh: `image/files` is copied into every image, but a
+package's manifest belongs to one package, and a unit whose `ExecStart` names a binary
+that is not there is a failed unit and a `degraded` boot.
+
+```sh
+./test/ssh.sh output/rootfs.ext4 rootfs/boot/bzImage
+```
+
+is the check, and it has the guest connect to itself on `127.0.0.1` — which
+means no port forward, no ssh client on the runner and no key material crossing the
+boundary. Everything that can be wrong about sshd in this image is inside the guest: the
+unit, the host key, the privilege separation account, the seccomp sandbox and the PAM
+stack. Reaching the guest from *outside* is a property of the VMM rather than of the
+image, and it is the `lima` platform's problem when that arrives.
+
 ## Archives
 
 `tar` and `gzip` are GNU tar and GNU gzip. The image had `xz` and `zstd` — and `zlib`,
@@ -533,7 +582,7 @@ themselves back off — so `packages/tar/build.sh` asserts on `config.h` instead
 would not do: the ACL half links `libacl`, but the xattr calls are glibc's, so a tar with
 no xattr support has exactly the same `NEEDED` as one with it and differs only in
 unpacking layers wrong. What is *not* built is `rmt`, the remote-tape server tar reaches
-for over rsh, there being no rsh, no ssh and no tape drive here.
+for over rsh — there is no rsh here, and no tape drive for it to reach.
 
 gzip installs a dozen wrapper scripts around the binary, and none of them ship. Most wrap
 a tool that is not here: `zdiff` and `zcmp` want diffutils, `znew` wants `compress`,

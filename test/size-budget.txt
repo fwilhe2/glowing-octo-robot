@@ -74,6 +74,17 @@
 # is the single largest thing a future variant could drop, and `drop boot` is a
 # legitimate line to write once something boots from outside the image.
 #
+# openssh joined `full` (and only `full` — `package *` is what puts it there) without a
+# row moving, and the number is written down here rather than left to be rediscovered:
+# it is 8.4 MiB stripped on amd64, which took the full/ext4 image from 75% of its ceiling
+# to 82%. Most of that is not the daemon: openssh builds a static libssh.a and links it
+# into each of its eleven installed binaries, so `ssh`, `sshd`, `scp`, `sftp`,
+# `ssh-keygen`, `ssh-agent`, `ssh-add`, `ssh-keyscan`, `sshd-session`, `sshd-auth` and
+# `sftp-server` each carry their own copy of the protocol code. Another 0.66 MiB is
+# /etc/ssh/moduli, a data file for a key exchange modern clients no longer negotiate.
+# Both are the places to look first if this ceiling ever needs defending rather than
+# raising.
+#
 # variant  platform  arch   MiB
 full       ext4      amd64  126
 full       ext4      arm64  186
