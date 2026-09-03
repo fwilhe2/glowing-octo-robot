@@ -823,6 +823,21 @@ fi
 # reading the package list, which is the difference that matters for a `keep`: the oci
 # platform omits systemd and rescues libsystemd.so.0, and systemd is genuinely still an
 # ingredient of that image.
+#
+# **Directories do not count as surviving files**, and without that this loop pruned
+# nothing at all. A manifest is a diff keyed on path, size and mtime — deliberately, so
+# that a package which overwrites another's file claims it too — and a directory's mtime
+# changes whenever anything is added to it. So every package claims `usr/bin`, `etc` and
+# `usr/lib` merely for having installed something into them, those directories are in
+# every image, and the very first line read made every record look alive. The minimal
+# image's SBOM listed all 38 packages, curl and crun included, neither of which has a
+# byte in it.
+#
+# Over-claiming directories is right for *selection*, which is the other consumer of
+# these manifests: a directory claimed by both a selected and an unselected package must
+# not be deleted. It is only the question being asked here — did this package leave a
+# file behind — that has to exclude them. The symlink test comes first because -d follows
+# a link, and a symlink to a directory is a file this package really did install.
 components="$IMAGE/usr/share/flfs/components"
 set +x
 for record in "$components"/*; do
@@ -831,7 +846,10 @@ for record in "$components"/*; do
     [ -f "$manifests/$pkg" ] || continue
     survives=
     while IFS= read -r path; do
-        if [ -e "$IMAGE/$path" ] || [ -L "$IMAGE/$path" ]; then survives=1; break; fi
+        if [ -L "$IMAGE/$path" ] || { [ -e "$IMAGE/$path" ] && [ ! -d "$IMAGE/$path" ]; }; then
+            survives=1
+            break
+        fi
     done < "$manifests/$pkg"
     if [ -z "$survives" ]; then rm -f "$record"; fi
 done
