@@ -19,13 +19,17 @@
 # SHA256, and unpacked into the package's own directory. The compile then runs with
 # --network=none: once prep is done, nothing about a build touches the network.
 #
-# Packages compile against our own glibc, not the builder image's: a tree that already
-# has glibc staged in it is bind-mounted read-only and passed to gcc as --sysroot (see
-# builder/build-package.sh). That tree defaults to rootfs/ — where ./build.sh glibc puts it
-# — and can be pointed elsewhere with SYSROOT_DIR, which CI uses to keep each package's
-# artifact free of glibc's files. So glibc has to be built before anything else:
+# Packages compile against our own glibc, not the builder image's: sysroot/ is
+# bind-mounted read-only and passed to gcc as --sysroot (see builder/build-package.sh).
+# It holds glibc and nothing else of ours — ./build.sh glibc is what fills it, and
+# SYSROOT_DIR points it elsewhere, which CI does. So glibc has to be built first:
 #
 #     ./build.sh glibc && ./build.sh coreutils
+#
+# Two trees, and the difference is the point. sysroot/ is what a build compiles *against*
+# and holds exactly glibc; rootfs/ is what a build installs *into*, is cumulative, and is
+# what an image is assembled from. See the SYSROOT_DIR note further down for what went
+# wrong while they were the same directory.
 set -euo pipefail
 
 PKG="${1:-}"
@@ -50,7 +54,26 @@ fi
 source "$PKG_DIR/env.sh"
 
 NO_SYSROOT="${NO_SYSROOT:-}"
-SYSROOT_DIR="${SYSROOT_DIR:-rootfs}"
+FILLS_SYSROOT="${FILLS_SYSROOT:-}"
+
+# The sysroot is a **glibc-only** tree, and it is a different directory from the
+# cumulative rootfs/ staging tree. That distinction is the whole point, and it used to
+# default the other way: with SYSROOT_DIR=rootfs, every package compiled against a tree
+# holding every package built before it, so `--sysroot` handed configure the headers and
+# libraries of our *other* packages and a build silently linked against whatever happened
+# to be staged already.
+#
+# It is not hypothetical and the order it depends on is alphabetical. systemd installs
+# libudev.h and libudev.so into the staging tree; util-linux is built after it, its
+# configure found both through the sysroot, and lsblk and findmnt came out with
+# libudev.so.1 in NEEDED. CI never saw it — the workflow has always passed
+# SYSROOT_DIR=sysroot and staged a glibc-only tree there — so the divergence ran the
+# wrong way round: a local build produced binaries CI would not, and the oci images,
+# which omit systemd, could not be assembled locally at all.
+#
+# What the design says is "glibc comes from us, the rest is still Debian's" (see
+# builder/build-package.sh). This is what makes that true off a CI runner too.
+SYSROOT_DIR="${SYSROOT_DIR:-sysroot}"
 
 # glibc itself is what fills the sysroot, and the kernel is freestanding — neither has
 # one to build against.
@@ -63,14 +86,27 @@ if [ -z "$NO_SYSROOT" ]; then
         echo "       (or set NO_SYSROOT=1 to compile against the builder image's glibc)" >&2
         exit 1
     fi
-    # Read-only: the sysroot is an input. It is usually the same tree as the DESTDIR
-    # mount below, which stays writable.
+    # Read-only: the sysroot is an input, and a separate tree from the DESTDIR mount
+    # below, which stays writable.
     sysroot_abs=$(realpath "$SYSROOT_DIR")
-    sysroot_mount=(--volume "$sysroot_abs":/usr/local/sysroot:ro
+    sysroot_mount=(--volume "$sysroot_abs":/usr/local/sysroot:ro,z
                    --env SYSROOT=/usr/local/sysroot)
 fi
 
-mkdir -p rootfs output
+# Where this build installs. Normally the cumulative staging tree; for the one package
+# that *fills* the sysroot, the sysroot — which is then mirrored into rootfs/ below, so
+# that the staging tree an image is assembled from still has a glibc in it.
+#
+# FILLS_SYSROOT rather than a `[ "$PKG" = glibc ]` here, for the same reason NO_SYSROOT
+# and LOCAL_SOURCE are flags in an env.sh: what is special about a package is a fact
+# about that package, and this driver stays generic.
+if [ -n "$FILLS_SYSROOT" ]; then
+    destdir_tree="$SYSROOT_DIR"
+else
+    destdir_tree=rootfs
+fi
+
+mkdir -p rootfs output "$SYSROOT_DIR"
 
 # Pull or build the one image everything compiles in, and fetch the sources — the only
 # two steps here that need the network. Its output is two lines and it is the only place
@@ -94,10 +130,10 @@ BUILDER=$(./tools/image-tags.sh builder)
 if [ -z "$NO_SYSROOT" ]; then
     while read -r path; do
         ours="$sysroot_abs/usr/lib/$(basename "$path")"
-        [ -f "$ours" ] && sysroot_mount+=(--volume "$ours:$path:ro")
+        [ -f "$ours" ] && sysroot_mount+=(--volume "$ours:$path:ro,z")
         # iconv() dlopens its character-set modules, and they are part of glibc too.
         if [ "$(basename "$path")" = "libc.so.6" ] && [ -d "$sysroot_abs/usr/lib/gconv" ]; then
-            sysroot_mount+=(--volume "$sysroot_abs/usr/lib/gconv:$(dirname "$path")/gconv:ro")
+            sysroot_mount+=(--volume "$sysroot_abs/usr/lib/gconv:$(dirname "$path")/gconv:ro,z")
         fi
     done < <(podman run --rm "$BUILDER" \
         sh -c 'dpkg -L libc6 | while read -r p; do [ -f "$p" ] && printf "%s\n" "$p"; done')
@@ -116,7 +152,7 @@ if [ -n "${LOCAL_SOURCE:-}" ]; then
         echo "error: $PKG sets LOCAL_SOURCE but has no $PKG_DIR/src directory" >&2
         exit 1
     fi
-    src_mount=(--volume "$PWD/$PKG_DIR/src":/usr/local/src:ro)
+    src_mount=(--volume "$PWD/$PKG_DIR/src":/usr/local/src:ro,z)
 else
     # Tarballs are shared across packages' rebuilds and never belong to any one of them,
     # so they live in one gitignored directory rather than next to whichever package
@@ -145,7 +181,7 @@ else
     else
         echo "Directory $PKG_DIR/$PACKAGE already exists, skipping extraction."
     fi
-    src_mount=(--volume "$PWD/$PKG_DIR/$PACKAGE":/usr/local/src)
+    src_mount=(--volume "$PWD/$PKG_DIR/$PACKAGE":/usr/local/src:z)
 fi
 
 # The pins, handed across the container boundary so the build can record what it is —
@@ -178,11 +214,36 @@ fi
 # --network=none is the point of splitting prep out: the sources are on disk and the
 # toolchain is in the image, so a compile that reaches for the internet is a bug, and
 # this is what turns that from a claim into something it cannot do.
+#
+# Every bind mount carries `z`, which is podman asking SELinux to relabel the host path
+# so a confined container may read it. Without it none of this works on a host running
+# SELinux in enforcing mode — Fedora, RHEL and their derivatives — where the first thing
+# a build does is fail with "install: cannot create directory
+# '/usr/local/rootfs/usr': Permission denied", which names a permission the user plainly
+# has and does not mention SELinux at all. It costs nothing on the Debian and Ubuntu
+# hosts CI runs on: with no SELinux policy loaded, podman ignores the flag.
+#
+# `z` rather than `Z`: the shared label, because rootfs/ and the sysroot are read by more
+# than one container — the package builds, and then the image assembly — and a private
+# label would make each of those the only reader of a tree the next one has to open.
 podman run --rm \
     --network=none \
     "${src_mount[@]}" \
-    --volume "$PWD/$PKG_DIR/build.sh":/package-build.sh:ro \
-    --volume "$PWD/rootfs":/usr/local/rootfs \
+    --volume "$PWD/$PKG_DIR/build.sh":/package-build.sh:ro,z \
+    --volume "$PWD/$destdir_tree":/usr/local/rootfs:z \
     "${sysroot_mount[@]}" \
     "${component_env[@]}" \
     "$BUILDER" /build.sh
+
+# The sysroot is also an ingredient of the image, so glibc has to end up in both trees.
+# It is built into the sysroot rather than copied out of rootfs/ because that is the only
+# way to get a tree that is *exactly* glibc: rootfs/ is cumulative, so a glibc rebuilt
+# into a populated one could not be told apart from everything else in it afterwards.
+#
+# cp -a, so the loader, the merged-/usr symlinks and every mode survive. Not a fresh
+# rootfs/ each time: this mirrors, the way a package build adds to the tree, because a
+# glibc rebuild in the middle of a working tree should not throw the other packages away.
+if [ -n "$FILLS_SYSROOT" ]; then
+    echo ">> mirroring the sysroot into rootfs/"
+    cp -a "$SYSROOT_DIR/." rootfs/
+fi

@@ -36,6 +36,12 @@ Apache-2.0
 AFL-2.1                 # Academic Free License; one half of dbus's dual license
 curl                    # MIT plus the advertising clause, i.e. X11 in all but wording;
                         # SPDX gives it its own identifier because the text differs
+SSH-OpenSSH             # Tatu Ylonen's terms for the original ssh code, which openssh
+                        # still carries: use freely for any purpose, mark derived
+                        # versions as such. Items 1 and 2 of openssh's LICENCE
+ssh-keyscan             # David Mazieres' terms for ssh-keyscan: modify and redistribute
+                        # provided the copyright notice stays. Item 3 of the same file.
+                        # Lower-case because SPDX publishes the identifier that way
 
 # --- copyleft -----------------------------------------------------------------------
 GPL-2.0-only
@@ -57,3 +63,11 @@ Linux-syscall-note      # what keeps userspace off the kernel's GPL
 LicenseRef-IANA         # IANA's protocol registries: published for anyone to use, but
                         # the tarball carries no license text of its own. See
                         # packages/iana-etc/env.sh — this one is not settled.
+LicenseRef-PublicDomain # A public-domain dedication, which SPDX deliberately has no
+                        # identifier for: "public domain" is a legal status a work is in
+                        # rather than a license somebody granted, and whether a
+                        # dedication achieves it depends on the jurisdiction. Debian
+                        # accepts such files in main and has for decades, which is the
+                        # bar here. Used by openssh, whose LICENCE item 4 is the
+                        # Rijndael implementation its authors placed in the public
+                        # domain.

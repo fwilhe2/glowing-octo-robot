@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Does the SBOM this build produced actually say what is in the image?
 #
-#     ./test/check-sbom.sh                       # both flavours from output/
+#     ./test/check-sbom.sh                       # every image's document in output/
 #     ./test/check-sbom.sh output/sbom-oci.json  # one document
 #
 # image/build-rootfs.sh writes the document by hand, because the alternative is putting a
@@ -31,13 +31,17 @@ fi
 
 docs=("$@")
 if [ ${#docs[@]} -eq 0 ]; then
-    for f in output/sbom-ext4.json output/sbom-oci.json; do
+    # Every document the build wrote, rather than a fixed pair: image/build-rootfs.sh
+    # writes one per (variant, platform), named sbom-<id>.json — sbom-ext4.json and
+    # sbom-oci.json for the default variant, sbom-minimal-ext4.json and friends for the
+    # rest. See docs/image-variants.md.
+    for f in output/sbom-*.json; do
         [ -f "$f" ] && docs+=("$f")
     done
 fi
 
 if [ ${#docs[@]} -eq 0 ]; then
-    echo "error: no SBOM in output/ — image/build-rootfs.sh writes one per flavour" >&2
+    echo "error: no SBOM in output/ — image/build-rootfs.sh writes one per image" >&2
     echo "       and is supposed to fail rather than skip it, so its absence is the bug" >&2
     exit 1
 fi

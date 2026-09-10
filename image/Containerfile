@@ -23,6 +23,20 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
 COPY image/build-rootfs.sh /usr/local/bin/
 RUN chmod +X /usr/local/bin/build-rootfs.sh
 
+# The declared images, and the parser that reads them. tools/variants.sh reads the same
+# two directories from the working tree on the host — one parser, two callers on opposite
+# sides of this container boundary, because a host that thinks `net` builds for `oci` and
+# a container that thinks it does not is a wrong image nobody would go looking for.
+COPY image/variant-lib.sh /usr/local/bin/
+COPY image/variants /variants
+COPY image/platforms /platforms
+
+# The accepted backlog of unresolved libraries. build-rootfs.sh now *fails* an image
+# whose binaries need something it does not ship — which a subset can be and the superset
+# never is — and it holds every variant to the same allowlist test/check-rootfs-deps.sh
+# holds the staging tree to. Two lists would drift.
+COPY test/known-missing-libs.txt /known-missing-libs.txt
+
 COPY image/files /files
 
 WORKDIR /usr/local/src

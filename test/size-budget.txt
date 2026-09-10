@@ -52,8 +52,49 @@
 # directories neither touched — image/build-rootfs.sh strips in parallel with
 # `xargs -P`, and the batching depends on find's order.
 #
-# flavour  arch   MiB
-ext4       amd64  126
-ext4       arm64  186
-oci        amd64  96
-oci        arm64  121
+# The rows gained a column with image variants (docs/image-variants.md): an image is a
+# variant on a platform, and `full` is the variant that was the only one there used to
+# be. The `full` rows below are unchanged numbers under a wider heading — deliberately
+# unchanged, even though the first run to measure them found all four sitting well under
+# their ceiling. Lowering the ceiling on the flagship image is a decision of its own and
+# does not belong inside a change about variants.
+#
+# The `minimal` and `net` rows are measurements plus 8%, the same way the original rows
+# were set, from the first CI run that built them (arm64/amd64, run 33331282731):
+#
+#              ext4 amd64   ext4 arm64   oci amd64   oci arm64
+#   full          95.0        133.7         54.0        66.1
+#   net           91.0        128.5         50.0        60.9
+#   minimal       77.0        114.0         36.0        46.3
+#
+# Which is the finding docs/image-variants.md asked for — "if `minimal` comes out at 90%
+# of `full`, that is a finding worth having early". It comes out at 67% of `full` as a
+# container and 81% as a disk, and the gap between those two is the kernel: /boot is 11
+# MiB of the amd64 disk and 34 MiB of the arm64 one, and every variant carries it. That
+# is the single largest thing a future variant could drop, and `drop boot` is a
+# legitimate line to write once something boots from outside the image.
+#
+# openssh joined `full` (and only `full` — `package *` is what puts it there) without a
+# row moving, and the number is written down here rather than left to be rediscovered:
+# it is 8.4 MiB stripped on amd64, which took the full/ext4 image from 75% of its ceiling
+# to 82%. Most of that is not the daemon: openssh builds a static libssh.a and links it
+# into each of its eleven installed binaries, so `ssh`, `sshd`, `scp`, `sftp`,
+# `ssh-keygen`, `ssh-agent`, `ssh-add`, `ssh-keyscan`, `sshd-session`, `sshd-auth` and
+# `sftp-server` each carry their own copy of the protocol code. Another 0.66 MiB is
+# /etc/ssh/moduli, a data file for a key exchange modern clients no longer negotiate.
+# Both are the places to look first if this ceiling ever needs defending rather than
+# raising.
+#
+# variant  platform  arch   MiB
+full       ext4      amd64  126
+full       ext4      arm64  186
+full       oci       amd64  96
+full       oci       arm64  121
+net        ext4      amd64  99
+net        ext4      arm64  139
+net        oci       amd64  54
+net        oci       arm64  66
+minimal    ext4      amd64  84
+minimal    ext4      arm64  124
+minimal    oci       amd64  39
+minimal    oci       arm64  50

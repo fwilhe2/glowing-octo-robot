@@ -16,12 +16,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# The default variant's archive; a named one is output/flfs-<variant>-oci.tar.
 ARCHIVE="${1:-output/flfs-oci.tar}"
 
 [ -f "$ARCHIVE" ] || {
     echo "error: no OCI archive at $ARCHIVE" >&2
-    echo "       build it with: podman run --volume \"\$PWD\"/rootfs:/usr/local/src \\" >&2
-    echo "         --volume \"\$PWD\"/output:/usr/local/output rootfs-builder \\" >&2
+    echo "       build it with: podman run --volume \"\$PWD\"/rootfs:/usr/local/src:z \\" >&2
+    echo "         --volume \"\$PWD\"/output:/usr/local/output:z rootfs-builder \\" >&2
     echo "         /usr/local/bin/build-rootfs.sh oci" >&2
     exit 1
 }
@@ -34,6 +35,9 @@ ref=${loaded##*: }
 echo "loaded $ref"
 
 # Everything below runs inside the image, with nothing but bash builtins and coreutils —
+# which is also why the checks that name a specific binary have to ask whether it is
+# there first: with image variants (docs/image-variants.md) this runs against `minimal`
+# and `net` as well as `full`, and crun is in `full` alone.
 # that is all a base image has, and asking for more is how a test starts depending on the
 # host. --network=none because none of it needs a network, and an image that quietly did
 # would be worth finding out about.
@@ -96,9 +100,14 @@ check "and can read the passwd file"         test "$(id -un)" = root
 check "the loader has a cache to read"       test -s /etc/ld.so.cache
 # The other side of the subtractions above: these two are what still links libsystemd
 # (crun) and libmount, so they are what a deletion one file too far would break — at
-# exec, which nothing notices unless something execs them.
-check "crun starts"                          sh -c "crun --version >/dev/null"
+# exec, which nothing notices unless something execs them. libsystemd.so.0 is the one
+# library image/platforms/oci.conf rescues from an omitted systemd, and these are why.
 check "mount starts"                         sh -c "mount --version >/dev/null"
+if command -v crun >/dev/null; then
+    check "crun starts"                      sh -c "crun --version >/dev/null"
+else
+    echo "  --    crun is not in this variant"
+fi
 
 # The one assertion here that is about a symlink rather than a binary, and the cheapest
 # place in CI to make it: nothing else notices a /bin/sh that is missing or dangling
