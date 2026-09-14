@@ -1,6 +1,6 @@
-VERSION="9.11"
+VERSION="9.12"
 PACKAGE="coreutils-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"
 URL="https://ftp.fau.de/gnu/coreutils/${TARBALL}"
-SHA256="2033b8a3049c06bff49a9e3cea72bdf4683bcd0cbeb975211dd56dbaf8b736ae"
+SHA256="14cbf5a4de0c7b7fa3b9fa7fada4c58b2defe33336aa8fd83d7622c5c4ebdc13"
 LICENSE="GPL-3.0-or-later"
