@@ -103,6 +103,7 @@ jobs:
           CURRENT: ${{ matrix.update.current }}
           LATEST: ${{ matrix.update.latest }}
           URL: ${{ matrix.update.url }}
+          RELEASE_NOTES: ${{ matrix.update.release_notes }}
         run: |
           set -euo pipefail
           BRANCH="update/$PKG-$LATEST"
@@ -180,10 +181,16 @@ jobs:
           EOF
           )
           else
+            NOTES_LINE=""
+            if [ -n "$RELEASE_NOTES" ]; then
+              NOTES_LINE="Release notes: $RELEASE_NOTES"
+            fi
             BODY=$(cat <<EOF
           \`$PKG\` $CURRENT -> $LATEST.
 
           Source: $URL
+
+          $NOTES_LINE
 
           Opened automatically by \`.github/workflows/update-packages.yml\`. CI builds
           the package and boots the resulting image; if either fails, this version

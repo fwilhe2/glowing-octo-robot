@@ -78,9 +78,12 @@ for PKG in "${PACKAGES[@]}"; do
         continue
     fi
 
+    release_notes=$(./tools/release-notes.sh "$PKG" "$latest" 2>/dev/null || true)
+
     $JSON || printf '%-12s %-10s -> %-10s %s\n' "$PKG" "$current" "$latest" "$url"
     updates+=("$(jq -nc --arg p "$PKG" --arg c "$current" --arg l "$latest" --arg u "$url" \
-        '{package:$p, current:$c, latest:$l, url:$u}')")
+        --arg n "$release_notes" \
+        '{package:$p, current:$c, latest:$l, url:$u} + (if $n == "" then {} else {release_notes:$n} end)')")
 done
 
 if $JSON; then
