@@ -78,7 +78,7 @@ systemd_opts=(
     -Dlibcurl=disabled -Dgnutls=disabled -Dmicrohttpd=disabled -Dgcrypt=disabled
     -Dp11kit=disabled -Dlibfido2=disabled -Dqrencode=disabled -Dlibarchive=disabled
     -Dxkbcommon=disabled -Dpcre2=disabled -Dglib=disabled -Dxenctrl=disabled
-    -Dlibiptc=disabled -Dpwquality=disabled -Dpasswdqc=disabled
+    -Dpwquality=disabled -Dpasswdqc=disabled
     -Dbzip2=disabled -Dlz4=disabled -Didn=false -Dlibidn2=disabled
 
     # Access control with no userspace behind it: no polkitd, no SMACK/IMA/IPE/AppArmor.
