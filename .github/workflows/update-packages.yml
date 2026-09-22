@@ -87,6 +87,7 @@ jobs:
       contents: write
       pull-requests: write
       actions: write # to dispatch the CI run for the branch
+      checks: write # to show the dispatched CI result on the pull request
     strategy:
       fail-fast: false
       max-parallel: 1 # they all push to the same repository
@@ -198,10 +199,18 @@ jobs:
             --body "$BODY")
           echo "opened $PR_URL"
 
+          CHECK_ID=$(gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f name='Package update CI' \
+            -f head_sha="$(git rev-parse HEAD)" \
+            -f status=in_progress \
+            -f details_url="$PR_URL" \
+            --jq '.id')
+          echo "created check run $CHECK_ID"
+
           # GitHub starts no workflow run for a push made with GITHUB_TOKEN, so ask for
           # one: workflow_dispatch is the event the token is allowed to trigger. The run
-          # belongs to the branch rather than to the pull request, so it does not appear
-          # in the checks list — hence the comment linking to it.
+          # belongs to the branch rather than to the pull request. The check run above is
+          # completed by update-package-status.yml when this dispatched run finishes.
           gh workflow run ci.yml --ref "$BRANCH"
 
           RUN_URL=""
@@ -213,7 +222,7 @@ jobs:
           done
 
           if [ -n "$RUN_URL" ]; then
-            gh pr comment "$PR_URL" --body "CI: $RUN_URL (dispatched separately, so it is not listed under the checks above)"
+            gh pr comment "$PR_URL" --body "CI: $RUN_URL (the Package update CI check above will be updated when it finishes)"
           else
             echo "::warning::dispatched ci.yml for $BRANCH but no run showed up within a minute"
           fi
