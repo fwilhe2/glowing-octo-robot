@@ -216,20 +216,48 @@ jobs:
 
           # GitHub starts no workflow run for a push made with GITHUB_TOKEN, so ask for
           # one: workflow_dispatch is the event the token is allowed to trigger. The run
-          # belongs to the branch rather than to the pull request. The check run above is
-          # completed by update-package-status.yml when this dispatched run finishes.
+          # belongs to the branch rather than to the pull request, so wait for this exact
+          # run and complete the check directly below.
           gh workflow run ci.yml --ref "$BRANCH"
 
+          RUN_ID=""
           RUN_URL=""
           for _ in $(seq 12); do
             sleep 5
-            RUN_URL=$(gh run list --workflow ci.yml --branch "$BRANCH" --event workflow_dispatch \
-              --limit 1 --json url --jq '.[0].url' || true)
-            if [ -n "$RUN_URL" ]; then break; fi
+            RUN=$(gh run list --workflow ci.yml --branch "$BRANCH" --event workflow_dispatch \
+              --limit 1 --json databaseId,url --jq '.[0] | "\(.databaseId) \(.url)"' || true)
+            if [ -n "$RUN" ]; then
+              read -r RUN_ID RUN_URL <<< "$RUN"
+              break
+            fi
           done
 
-          if [ -n "$RUN_URL" ]; then
-            gh pr comment "$PR_URL" --body "CI: $RUN_URL (the Package update CI check above will be updated when it finishes)"
-          else
+          if [ -z "$RUN_ID" ]; then
             echo "::warning::dispatched ci.yml for $BRANCH but no run showed up within a minute"
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/check-runs/$CHECK_ID" \
+              -f status=completed \
+              -f conclusion=failure \
+              -f details_url="$PR_URL" \
+              -f 'output[title]=Package update CI' \
+              -f 'output[summary]=CI did not start after it was dispatched' \
+              >/dev/null
+            exit 0
           fi
+
+          gh pr comment "$PR_URL" --body "CI: $RUN_URL (the Package update CI check above will be updated when it finishes)"
+
+          # workflow_run is not emitted for a workflow dispatched with this token, so
+          # the updater has to remain alive until CI reaches a terminal state. This is
+          # normally a few minutes, and it avoids leaving a permanently pending check.
+          gh run watch "$RUN_ID" --exit-status || true
+          CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq '.conclusion')
+
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/check-runs/$CHECK_ID" \
+            -f status=completed \
+            -f conclusion="$CONCLUSION" \
+            -f details_url="$RUN_URL" \
+            -f 'output[title]=Package update CI' \
+            -f "output[summary]=CI finished with conclusion: $CONCLUSION" \
+            >/dev/null
+
+          echo "updated check $CHECK_ID: $CONCLUSION"
