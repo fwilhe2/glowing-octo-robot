@@ -107,9 +107,9 @@ jobs:
           set -euo pipefail
           BRANCH="update/$PKG-$LATEST"
 
-          # --state all: a pull request that was closed unmerged is a decision to skip
-          # this version, so don't reopen the argument every Monday.
-          if [ -n "$(gh pr list --state all --head "$BRANCH" --json number --jq '.[].number')" ]; then
+          # An open pull request is already being reviewed. A closed pull request is
+          # eligible for recreation, including when its branch was deleted.
+          if [ -n "$(gh pr list --state open --head "$BRANCH" --json number --jq '.[].number')" ]; then
             echo "$BRANCH already has a pull request, nothing to do"
             exit 0
           fi
