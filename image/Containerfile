@@ -8,8 +8,8 @@
 # the filesystem and strip decides what comes out of every ELF object. An unpinned
 # e2fsprogs or binutils means the same tree produces a different image, which is the one
 # thing test/size-budget.txt has to be able to compare across runs.
-ARG SNAPSHOT=20260824
-FROM debian:sid-${SNAPSHOT}@sha256:c1acdb109bacb5adf0f2078892ac177ee2e2ce6f88e96c5b743998b5489d36a9
+ARG SNAPSHOT=20260918
+FROM debian:sid-${SNAPSHOT}@sha256:a2aa46262453eba3f464d8b1c7a8c31db85eb15af180ae34dd400615d7208547
 
 ARG SNAPSHOT
 
