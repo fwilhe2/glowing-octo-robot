@@ -139,9 +139,24 @@ jobs:
           if [ "$PKG" = debian-snapshot ]; then
             ./tools/bump-snapshot.sh "$LATEST"
             TITLE="Update the Debian snapshot to $LATEST"
+            COMMIT_BODY=$(cat <<EOF
+          Debian snapshot \`$CURRENT\` -> \`$LATEST\`.
+
+          Tag: $URL
+          EOF
+            )
           else
             ./tools/bump-version.sh "$PKG" "$LATEST"
             TITLE="Update $PKG to $LATEST"
+            COMMIT_BODY=$(cat <<EOF
+          \`$PKG\` $CURRENT -> $LATEST.
+
+          Source: $URL
+          EOF
+            )
+            if [ -n "$RELEASE_NOTES" ]; then
+              COMMIT_BODY+=$'\nRelease notes: '$RELEASE_NOTES
+            fi
           fi
 
           # Over the worktree rather than one named file, so it covers both bumpers: sed
@@ -149,7 +164,7 @@ jobs:
           # nothing would otherwise become an empty pull request.
           git diff --quiet && { echo "error: nothing changed for $PKG" >&2; exit 1; }
 
-          git commit -am "$TITLE"
+          git commit -am "$TITLE" -m "$COMMIT_BODY"
 
           # --force, because this line is only reached when the branch has no pull
           # request of its own: a branch left behind by a run that pushed and then
