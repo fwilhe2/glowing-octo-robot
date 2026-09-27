@@ -16,7 +16,7 @@ name: Package updates
 # getting a workflow of its own.
 on:
   schedule:
-    - cron: "0 18 * * *"
+    - cron: "0 15 * * *"
   workflow_dispatch:
     inputs:
       packages:
