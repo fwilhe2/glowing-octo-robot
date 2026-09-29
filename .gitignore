@@ -17,3 +17,7 @@ artifacts
 # assembles one in before moving it into place.
 /packages/*/*-[0-9]*/
 /packages/*/.extracting/
+
+# Local additions laid over the image by tools/build-image.sh (see the header of
+# tools/build-image.sh). Never part of a CI build.
+/extra

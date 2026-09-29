@@ -475,6 +475,17 @@ if [ -d usr/share/terminfo ]; then
 fi
 # ---------------------------------------------------------------------------------
 
+# Local additions: whatever is in /extra (bind-mounted from the host's extra/ directory by
+# tools/build-image.sh, absent in CI) is laid over the assembled tree, for both flavours.
+# Deliberately *after* the trim and the subtractions -- a debugging tool you asked for is not
+# something the trim gets to decide about -- and *before* ldconfig, so a library that comes
+# with one is in ld.so.cache. Not in the SBOM: it is generated from the component records
+# packages leave, and these are not packages.
+if [ -d /extra ] && [ -n "$(ls -A /extra)" ]; then
+    echo "extra: overlaying $(find /extra -type f | wc -l) file(s) from extra/"
+    cp -a /extra/. .
+fi
+
 # Build the shared-library search path and cache so the loader finds our libs. This is
 # the last step that touches libraries: ld.so.cache indexes what is there when it runs.
 cat > etc/ld.so.conf <<EOF

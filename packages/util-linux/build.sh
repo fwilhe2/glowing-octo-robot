@@ -16,6 +16,12 @@
 # builder image has no python3-dev for configure to find, which is luck rather than a
 # decision — the same shape as the --without- list in packages/curl/build.sh.
 #
+# --without-udev: --with-udev defaults to `auto`, and the builder image has libudev.so.1
+# (libsystemd-dev brings it in), so lsblk and findmnt link it. The container image
+# deletes libudev along with udev itself and image/build-rootfs.sh refuses to continue
+# while a binary still names it. All that is lost is lsblk reading device properties from
+# udev's database; it falls back to sysfs, which a VM with virtio disks has in full.
+#
 # THE REST OF THIS FILE IS A DENYLIST, AND IT HAS TO BE.
 #
 # util-linux offers --disable-all-programs, which reads like the right tool: it would
@@ -86,6 +92,7 @@
     --disable-poman \
     --disable-nls \
     --disable-liblastlog2 \
+    --without-udev \
     --disable-pylibmount \
     --disable-fdisks \
     --disable-partx \
@@ -129,6 +136,14 @@
 
 make
 make install DESTDIR=/usr/local/rootfs
+
+# Check the binary rather than trusting the flag (see packages/iproute2/build.sh).
+for bin in lsblk findmnt; do
+    if readelf -d "/usr/local/rootfs/usr/bin/$bin" | grep -q 'libudev'; then
+        echo "util-linux: $bin still links libudev despite --without-udev" >&2
+        exit 1
+    fi
+done
 
 # The ones with no AC_ARG_ENABLE, per the note above: configure cannot be asked not to
 # build them, so they are removed after the install rather than left to ship. This is
