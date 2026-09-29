@@ -178,8 +178,12 @@ fi
 # --network=none is the point of splitting prep out: the sources are on disk and the
 # toolchain is in the image, so a compile that reaches for the internet is a bug, and
 # this is what turns that from a claim into something it cannot do.
+# --security-opt label=disable is for SELinux hosts (Fedora): the bind mounts are plain
+# home-directory files the container's confined domain may not write, and relabelling
+# them with :z would rewrite the labels of the checkout. A no-op where SELinux is off.
 podman run --rm \
     --network=none \
+    --security-opt label=disable \
     "${src_mount[@]}" \
     --volume "$PWD/$PKG_DIR/build.sh":/package-build.sh:ro \
     --volume "$PWD/rootfs":/usr/local/rootfs \
