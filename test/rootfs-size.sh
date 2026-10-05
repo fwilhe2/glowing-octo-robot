@@ -18,6 +18,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
 FLAVOUR="${1:-ext4}"
 case "$FLAVOUR" in
@@ -28,12 +29,7 @@ esac
 REPORT="${2:-output/rootfs-size-$FLAVOUR.txt}"
 BUDGET=test/size-budget.txt
 
-ARCH="${ARCH:-$(uname -m)}"
-case "$ARCH" in
-    x86_64|amd64)  ARCH=amd64 ;;
-    aarch64|arm64) ARCH=arm64 ;;
-    *) echo "error: unsupported architecture: $ARCH (expected amd64 or arm64)" >&2; exit 1 ;;
-esac
+ARCH=$(normalize_arch "${ARCH:-}")
 
 [ -f "$REPORT" ] || {
     echo "error: no size report at $REPORT" >&2
@@ -60,11 +56,6 @@ while read -r kind bytes path; do
 done < "$REPORT"
 
 [ "$total" -gt 0 ] || { echo "error: $REPORT has no total" >&2; exit 1; }
-
-mib() {  # bytes -> "12.3"
-    local tenths=$(( ($1 * 10 + 524288) / 1048576 ))
-    printf '%d.%d' $(( tenths / 10 )) $(( tenths % 10 ))
-}
 
 # The budget, in MiB, keyed by flavour and architecture: all four are different sizes for
 # reasons that have nothing to do with anything going wrong (see the file).

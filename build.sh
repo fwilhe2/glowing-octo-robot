@@ -28,26 +28,17 @@
 #     ./build.sh glibc && ./build.sh coreutils
 set -euo pipefail
 
-PKG="${1:-}"
+source tools/lib.sh
 
-if [ -z "$PKG" ]; then
+if [ -z "${1:-}" ]; then
     echo "usage: $0 <package>" >&2
-    echo "packages: $(for e in packages/*/env.sh; do basename "$(dirname "$e")"; done | tr '\n' ' ')" >&2
+    echo "packages: $(all_packages | tr '\n' ' ')" >&2
     exit 1
 fi
 
-# Accept both `coreutils` and the path a shell tab-completes to, `packages/coreutils/`.
-PKG="${PKG%/}"
-PKG="${PKG#packages/}"
+PKG=$(package_name "$1")
 PKG_DIR="packages/$PKG"
-
-if [ ! -f "$PKG_DIR/env.sh" ]; then
-    echo "error: unknown package '$PKG' (no $PKG_DIR/env.sh)" >&2
-    exit 1
-fi
-
-# env.sh may refer to $PKG when composing its download URL.
-source "$PKG_DIR/env.sh"
+load_env "$PKG"
 
 NO_SYSROOT="${NO_SYSROOT:-}"
 SYSROOT_DIR="${SYSROOT_DIR:-rootfs}"

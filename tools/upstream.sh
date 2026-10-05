@@ -31,26 +31,13 @@ set -euo pipefail
 
 # Package directories are relative to the repository root, not to tools/.
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
 NUM='[0-9]+(\.[0-9]+)*'
 
-fetch() {
-    curl -fsSL --max-time 60 --retry 2 --retry-delay 2 "$@"
-}
-
-# GitHub's API allows 60 unauthenticated requests an hour, which a couple of full runs
-# exhaust; the workflow passes GH_TOKEN, and locally gh's own token does the job.
-gh_api() {
-    local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
-    if [ -z "$token" ] && command -v gh >/dev/null; then
-        token=$(gh auth token 2>/dev/null || true)
-    fi
-    if [ -n "$token" ]; then
-        fetch -H "Authorization: Bearer $token" -H 'Accept: application/vnd.github+json' "$1"
-    else
-        fetch -H 'Accept: application/vnd.github+json' "$1"
-    fi
-}
+# fetch and gh_api come from tools/lib.sh. GitHub's API allows 60 unauthenticated
+# requests an hour, which a couple of full runs exhaust; the workflow passes GH_TOKEN, and
+# locally gh's own token does the job.
 
 # Tags and releases both, because neither is complete on its own: kmod tags every
 # release but only writes release notes for some (its newest GitHub release is v34
@@ -84,20 +71,12 @@ default_regex() {
     printf '%s' "${escaped/@@V@@/($NUM)}"
 }
 
-PKG="${1:-}"
-if [ -z "$PKG" ]; then
+if [ -z "${1:-}" ]; then
     echo "usage: $0 <package>" >&2
     exit 1
 fi
 
-PKG="${PKG%/}"
-PKG="${PKG#packages/}"
-if [ ! -f "packages/$PKG/env.sh" ]; then
-    echo "error: unknown package '$PKG' (no packages/$PKG/env.sh)" >&2
-    exit 1
-fi
-
-source "packages/$PKG/env.sh"
+load_env "$(package_name "$1")"
 
 UPSTREAM_GITHUB="${UPSTREAM_GITHUB:-}"
 UPSTREAM_SUBDIR="${UPSTREAM_SUBDIR:-}"

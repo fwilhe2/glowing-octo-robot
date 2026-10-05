@@ -26,6 +26,7 @@
 # A long run: use `run_in_background` or a terminal multiplexer.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
 clean=0 image_only=0 flavours="ext4 oci" skip="" only=""
 while [ $# -gt 0 ]; do
@@ -52,7 +53,7 @@ if [ "$clean" = 1 ]; then
 fi
 
 if [ "$image_only" = 0 ]; then
-    all=$(for e in packages/*/env.sh; do basename "$(dirname "$e")"; done)
+    all=$(all_packages)
     if [ -n "$only" ]; then
         order=$(echo "$only" | tr ',' ' ')
     else

@@ -18,6 +18,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
 ALLOWLIST=test/dfsg-licenses.txt
 
@@ -37,11 +38,8 @@ done < "$ALLOWLIST"
 undeclared=()
 rejected=()
 
-for env_file in packages/*/env.sh; do
-    pkg=$(basename "$(dirname "$env_file")")
-
-    # shellcheck disable=SC1090
-    license=$( PKG="$pkg"; . "$env_file"; printf '%s' "${LICENSE:-}" )
+for pkg in $(all_packages); do
+    license=$(env_get "$pkg" LICENSE)
 
     if [ -z "$license" ]; then
         printf '  %-12s %s\n' "$pkg" "(no LICENSE declared)"

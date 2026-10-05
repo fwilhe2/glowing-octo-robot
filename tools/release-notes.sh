@@ -7,6 +7,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
 PKG="${1:-}"
 TARGET_VERSION="${2:-}"
@@ -14,23 +15,7 @@ if [ -z "$PKG" ] || [ -z "$TARGET_VERSION" ] || [ ! -f "packages/$PKG/env.sh" ];
     exit 1
 fi
 
-source "packages/$PKG/env.sh"
-
-fetch() {
-    curl -fsSL --max-time 60 --retry 2 --retry-delay 2 "$@"
-}
-
-gh_api() {
-    local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
-    if [ -z "$token" ] && command -v gh >/dev/null; then
-        token=$(gh auth token 2>/dev/null || true)
-    fi
-    if [ -n "$token" ]; then
-        fetch -H "Authorization: Bearer $token" -H 'Accept: application/vnd.github+json' "$1"
-    else
-        fetch -H 'Accept: application/vnd.github+json' "$1"
-    fi
-}
+load_env "$PKG"
 
 if [ "$PKG" = kernel ]; then
     printf 'https://cdn.kernel.org/pub/linux/kernel/v%s.x/ChangeLog-%s\n' \
