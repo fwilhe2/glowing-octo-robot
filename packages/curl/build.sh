@@ -101,11 +101,11 @@
     --disable-alt-svc \
     --disable-doh
 
-make -j"$(nproc)"
-make install DESTDIR=/usr/local/rootfs
+make
+make install DESTDIR=$ROOTFS
 
 # curl-config exists to tell a compiler where libcurl's headers and libraries are, and
 # there is no compiler in the image and no headers either — the trim deletes them. That
 # was always the load-bearing half of this deletion; the other half, that its #!/bin/sh
 # had no interpreter here, stopped being true when packages/bash/build.sh linked sh.
-rm -f /usr/local/rootfs/usr/bin/curl-config
+drop_installed curl-config

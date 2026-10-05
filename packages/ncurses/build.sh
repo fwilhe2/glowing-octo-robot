@@ -19,12 +19,12 @@
   --without-normal --without-debug --without-ada --without-tests \
   --enable-pc-files --disable-stripping
 make
-make install DESTDIR=/usr/local/rootfs
+make install DESTDIR=$ROOTFS
 
 # The wide and non-wide terminfo ABIs are identical — widec only changes the curses
 # layer on top — so libtinfo.so.6 can just point at libtinfow.so.6. Debian likewise
 # ships a single libtinfo built from its wide-character configuration.
-libdir=/usr/local/rootfs/usr/lib
+libdir=$ROOTFS/usr/lib
 if [ ! -e "$libdir/libtinfow.so.6" ]; then
     echo "error: --with-termlib produced no libtinfow.so.6 in $libdir" >&2
     exit 1
@@ -49,15 +49,7 @@ ln -sfv libtinfow.so.6 "$libdir/libtinfo.so.6"
 # --without-progs would be the tidier switch and takes clear and tput with it, so this
 # is a list instead.
 #
-# The test is `-e || -L` rather than plain `-e`, because several of these are symlinks
-# onto each other — captoinfo and infotocap point at tic, reset points at tset — and
-# removing the target first leaves the alias dangling, where `-e` is false and a plain
-# check would fail the build on its own previous iteration.
-for prog in tic captoinfo infotocap infocmp toe tset reset tabs ncursesw6-config; do
-    f=/usr/local/rootfs/usr/bin/$prog
-    if [ ! -e "$f" ] && [ ! -L "$f" ]; then
-        echo "ncurses: $prog is not installed — this removal list is stale" >&2
-        exit 1
-    fi
-    rm -f "$f"
-done
+# drop_installed counts a dangling symlink as installed, which matters here: captoinfo and
+# infotocap point at tic and reset points at tset, so removing the target first leaves
+# the alias dangling, and a plain `-e` check would fail on its own previous iteration.
+drop_installed tic captoinfo infotocap infocmp toe tset reset tabs ncursesw6-config

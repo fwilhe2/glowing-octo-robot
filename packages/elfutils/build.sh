@@ -25,8 +25,8 @@
   --without-bzlib \
   --disable-nls \
   CFLAGS="${CFLAGS:-} -Wno-error"
-make -j"$(nproc)"
-make install DESTDIR=/usr/local/rootfs
+make
+make install DESTDIR=$ROOTFS
 
 # The eu-* tools (readelf, nm, strip, addr2line, …) are not why elfutils is here, and
 # shipping them is what makes the build fail check-rootfs-deps: eu-srcfiles is the one
@@ -38,4 +38,4 @@ make install DESTDIR=/usr/local/rootfs
 # which is all libbpf and systemd ever wanted, and leaves the image with no dependency the
 # rootfs cannot resolve. The glob covers the bin_SCRIPTS entry (eu-make-debug-archive)
 # too: configure defaults program_prefix to "eu-" for everything in bin_PROGRAMS.
-rm -f /usr/local/rootfs/usr/bin/eu-*
+rm -f $ROOTFS/usr/bin/eu-*

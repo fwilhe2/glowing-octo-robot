@@ -28,4 +28,4 @@
     --disable-scripts \
     --disable-doc
 make
-make install DESTDIR=/usr/local/rootfs
+make install DESTDIR=$ROOTFS

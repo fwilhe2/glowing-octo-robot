@@ -1,6 +1,6 @@
 # The OCI runtime. crun rather than runc or youki because it is the only one written in
 # C: the other two would mean a Go or Rust toolchain in the builder image, and a binary
-# that never passes through the --sysroot machinery in lib/build-package.sh.
+# that never passes through the --sysroot machinery in builder/build-package.sh.
 #
 # What stays on:
 #   caps     — libcap is a package already, and dropping capabilities is the whole point
@@ -32,5 +32,5 @@
   --disable-libcrun \
   --disable-seccomp \
   --disable-criu
-make -j"$(nproc)"
-make install DESTDIR=/usr/local/rootfs
+make
+make install DESTDIR=$ROOTFS

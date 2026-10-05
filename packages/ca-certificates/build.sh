@@ -14,11 +14,11 @@ make -C mozilla
 # and its default CApath $OPENSSLDIR/certs, both fixed at configure time, and curl is
 # built --with-ca-bundle pointing at this name.
 cat mozilla/*.crt > ca-certificates.crt
-install -D -m 644 ca-certificates.crt /usr/local/rootfs/etc/ssl/certs/ca-certificates.crt
+install -D -m 644 ca-certificates.crt $ROOTFS/etc/ssl/certs/ca-certificates.crt
 
 # ...and the other name OpenSSL looks under, so `openssl s_client` verifies a chain with
 # no -CAfile argument. Relative, so it resolves inside the image rather than against
 # whatever /etc/ssl the builder container has.
-ln -sfn certs/ca-certificates.crt /usr/local/rootfs/etc/ssl/cert.pem
+ln -sfn certs/ca-certificates.crt $ROOTFS/etc/ssl/cert.pem
 
 echo "installed $(grep -c 'BEGIN CERTIFICATE' ca-certificates.crt) root certificates"

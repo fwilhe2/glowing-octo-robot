@@ -7,5 +7,5 @@
 # configure out. --disable-static because the trim deletes *.a anyway, and not building
 # it is cheaper than building it to throw away.
 ./configure --prefix=/usr --disable-static
-make -j"$(nproc)"
-make install DESTDIR=/usr/local/rootfs
+make
+make install DESTDIR=$ROOTFS

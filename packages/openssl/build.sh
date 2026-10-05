@@ -46,13 +46,13 @@
     no-capieng \
     no-loadereng
 
-make -j"$(nproc)"
+make
 
 # install_sw is the libraries, the openssl binary and the headers; install_ssldirs is
 # /etc/ssl and the two configuration files that live in it. The plain `install` target is
 # those two plus install_docs, which no-docs has already made empty — naming the two says
 # what is wanted rather than relying on that.
-make install_sw install_ssldirs DESTDIR=/usr/local/rootfs
+make install_sw install_ssldirs DESTDIR=$ROOTFS
 
 # The perl that does survive `make install`, and the only place CLAUDE.md's constraint 5
 # actually bites this package: c_rehash builds the hashed symlink farm in a CApath
@@ -60,16 +60,16 @@ make install_sw install_ssldirs DESTDIR=/usr/local/rootfs
 # image has no perl, so they would ship as files that cannot run. Nothing needs them —
 # the trust store here is a single concatenated bundle, not a CApath, so there is
 # nothing to rehash.
-rm -f  /usr/local/rootfs/usr/bin/c_rehash
-rm -rf /usr/local/rootfs/etc/ssl/misc
+drop_installed c_rehash
+rm -rf $ROOTFS/etc/ssl/misc
 
 # install_ssldirs writes each configuration file twice — openssl.cnf and openssl.cnf.dist,
 # the second being the pristine copy so that an upgrade can tell whether the first was
 # edited. There is no upgrade here: the image is rebuilt from source every time and
 # nothing edits /etc/ssl in place, so the second copy is 13 KB of the same bytes.
-rm -f /usr/local/rootfs/etc/ssl/*.dist
+rm -f $ROOTFS/etc/ssl/*.dist
 
 # ...and the two module directories the install creates whether or not anything goes in
 # them, which after the options above is both of them. An empty engines-3 next to four
 # `no-*eng` flags reads as something having gone wrong; it has not.
-rmdir /usr/local/rootfs/usr/lib/engines-3 /usr/local/rootfs/usr/lib/ossl-modules 2>/dev/null || true
+rmdir $ROOTFS/usr/lib/engines-3 $ROOTFS/usr/lib/ossl-modules 2>/dev/null || true

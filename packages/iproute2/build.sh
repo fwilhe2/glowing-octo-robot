@@ -28,25 +28,22 @@ chmod +x /tmp/pkg-config-no-selinux
 # `tc` as where its action plugins live.
 PKG_CONFIG=/tmp/pkg-config-no-selinux ./configure --prefix=/usr --libdir /usr/lib
 
-make -j"$(nproc)"
+make
 
 # SBINDIR is /sbin by default and this tree is merged-/usr, so an install would land in
 # /usr/bin anyway by following two symlinks. Name it instead: builder/build-package.sh
 # stages those links, and a package that installs through them rather than to a real
 # path is one staging change away from writing outside the tree.
-make install DESTDIR=/usr/local/rootfs PREFIX=/usr SBINDIR=/usr/bin LIBDIR=/usr/lib
+make install DESTDIR=$ROOTFS PREFIX=/usr SBINDIR=/usr/bin LIBDIR=/usr/lib
 
 # `routel` is #!/usr/bin/env python3, and `make install` puts it beside `ip`. This is
 # exactly the case CLAUDE.md's constraint 5 is about — the image ships bash and no other
 # interpreter, so this would install as a file that cannot run. Nothing is lost: it
 # prints `ip route list` in a different table layout.
-rm -f /usr/local/rootfs/usr/bin/routel
+drop_installed routel
 
 # And the assertion the PKG_CONFIG override above is worth nothing without, since the
 # thing it prevents is a check that passes. `ip` is the binary this whole package exists
 # for; if it came out linked against a library the image has no copy of, stop here rather
 # than four CI jobs later in qemu.
-if readelf -d /usr/local/rootfs/usr/bin/ip | grep -q selinux; then
-    echo "error: ip is linked against libselinux — the PKG_CONFIG override stopped working" >&2
-    exit 1
-fi
+assert_not_linked libselinux usr/bin/ip

@@ -135,15 +135,10 @@
     --disable-lslogins
 
 make
-make install DESTDIR=/usr/local/rootfs
+make install DESTDIR=$ROOTFS
 
 # Check the binary rather than trusting the flag (see packages/iproute2/build.sh).
-for bin in lsblk findmnt; do
-    if readelf -d "/usr/local/rootfs/usr/bin/$bin" | grep -q 'libudev'; then
-        echo "util-linux: $bin still links libudev despite --without-udev" >&2
-        exit 1
-    fi
-done
+assert_not_linked libudev usr/bin/lsblk usr/bin/findmnt
 
 # The ones with no AC_ARG_ENABLE, per the note above: configure cannot be asked not to
 # build them, so they are removed after the install rather than left to ship. This is
@@ -156,16 +151,8 @@ done
 # persistent reservations, isosize for CD images), and small queries with no caller
 # (namei, lsclocks, mcookie, uuidparse, swaplabel, fadvise).
 #
-# The loop insists each name is really there rather than using a bare `rm -f`. A plain
-# `rm -f` of a name upstream has renamed removes nothing and says nothing, and the
-# binary ships — which is the exact failure mode CLAUDE.md's "breaks silently" section
-# is about. Every name below is a program this version installs, so absence means the
-# list has gone stale and the build should say so.
-for prog in colrm look namei lsclocks mcookie uuidparse ldattach rtcwake readprofile \
-            ctrlaltdel isosize blkzone blkpr swaplabel fadvise; do
-    if [ ! -e "/usr/local/rootfs/usr/bin/$prog" ]; then
-        echo "util-linux: $prog is not installed — this removal list is stale" >&2
-        exit 1
-    fi
-    rm -f "/usr/local/rootfs/usr/bin/$prog"
-done
+# drop_installed (builder/build-package.sh) insists each name is really there rather than
+# using a bare `rm -f`: a name upstream has renamed would remove nothing and say nothing,
+# and the binary would ship.
+drop_installed colrm look namei lsclocks mcookie uuidparse ldattach rtcwake readprofile \
+               ctrlaltdel isosize blkzone blkpr swaplabel fadvise

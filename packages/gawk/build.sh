@@ -13,4 +13,4 @@
 # in its debugger. libreadline.so.8 is already a known-missing-lib (util-linux fdisk).
 ./configure --prefix=/usr --disable-mpfr --with-readline=no
 make
-make install DESTDIR=/usr/local/rootfs
+make install DESTDIR=$ROOTFS

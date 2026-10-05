@@ -7,4 +7,4 @@
 # packages we build and ship.
 ./configure --prefix=/usr --without-selinux
 make
-make install DESTDIR=/usr/local/rootfs
+make install DESTDIR=$ROOTFS
