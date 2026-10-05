@@ -37,12 +37,12 @@ runs:
         # already a content hash of builder/, so a changed dependency list rebuilds every
         # package, which is what we want and what listing the files by hand used to do.
         #
-        # $PKG/src is a LOCAL_SOURCE package's actual source, and it has to be in the key
-        # for the same reason env.sh is: for every other package a source change means a
-        # new VERSION and so a new env.sh, but here the source can change with env.sh
-        # untouched, and a cache hit would then ship the previous build's binary. Sorted,
-        # because find's order is the filesystem's and a key has to be deterministic.
-        echo "build_script_sum=$(cat build.sh tools/lib.sh builder/build-package.sh packages/glibc/env.sh $PKG/build.sh $PKG/env.sh <(./tools/image-tags.sh builder) <(find $PKG/src -type f -print0 2>/dev/null | sort -z | xargs -0r cat) | md5sum | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+        # Every file git tracks in the package directory, rather than env.sh and build.sh by
+        # name: the source of a LOCAL_SOURCE package changes with neither touched, and the
+        # kernel keeps its config fragments and locks beside build.sh, so a hit on a key
+        # that listed only those two would ship the previous build. The unpacked tarball is
+        # gitignored and not in it. ls-files is sorted, so the key is deterministic.
+        echo "build_script_sum=$(cat build.sh tools/lib.sh builder/build-package.sh packages/glibc/env.sh <(./tools/image-tags.sh builder) <(git ls-files -z "$PKG" | xargs -0 cat) | md5sum | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
 
     # rootfs/ stays this package's own files only, so the artifact doesn't ship a copy
     # of glibc with every package. The sysroot is a separate tree.
@@ -73,6 +73,17 @@ runs:
       if: steps.cache-build.outputs.cache-hit != 'true'
       shell: bash
       run: SYSROOT_DIR=sysroot ./build.sh ${{ inputs.package }}
+
+    # A build that stopped on a lock mismatch — the kernel's config-<arch>.lock — leaves the
+    # lock it resolved beside the source as *.lock.new. Uploaded so it can be read and
+    # accepted without rebuilding on that arch: tools/kernel-config-lock.sh <run-id>.
+    - name: Upload proposed lock files
+      if: failure()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: proposed-${{ inputs.package }}-${{ inputs.arch }}
+        path: packages/${{ inputs.package }}/*/*.lock.new
+        if-no-files-found: ignore
 
     - name: Tar files to preserve permissions
       shell: bash

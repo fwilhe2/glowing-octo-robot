@@ -4,7 +4,7 @@
 #
 # Bind mounts set up by ../build.sh:
 #   /usr/local/src      unpacked source tree (working directory)
-#   /package-build.sh   the package's build.sh
+#   /usr/local/package  packages/<pkg>, read-only: build.sh and anything beside it
 #   /usr/local/rootfs   staging tree all packages install into (DESTDIR)
 #   /usr/local/sysroot  tree with our glibc in it, compiled against as $SYSROOT
 set -euo pipefail
@@ -12,6 +12,9 @@ set -euo pipefail
 # The DESTDIR every package installs into, named once. packages/<pkg>/build.sh files use
 # $ROOTFS too.
 ROOTFS=/usr/local/rootfs
+
+# The package's own directory, read-only, for files a build.sh keeps beside itself.
+PKGDIR=/usr/local/package
 
 # merged-/usr staging: /bin /sbin /lib /lib64 become symlinks into /usr, and /usr/sbin
 # into /usr/bin — the bin/sbin merge. Both halves are load-bearing: systemd checks them
@@ -141,7 +144,7 @@ meson_install() {
 }
 
 cd /usr/local/src
-source /package-build.sh
+source "$PKGDIR/build.sh"
 
 # What just got installed, written down where it was installed. ../build.sh passes the
 # pins from env.sh across as FLFS_*; this stages one record per package into the tree

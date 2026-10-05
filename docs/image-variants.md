@@ -87,7 +87,7 @@ Producing the manifest is a before-and-after diff of the tree, because `rootfs/`
 cumulative and a package cannot simply be told "everything here is yours":
 
 ```sh
-# before `source /package-build.sh`
+# before `source "$PKGDIR/build.sh"`
 find /usr/local/rootfs -printf '%y %s %T@ %p\n' | sort > /tmp/before
 # after
 find /usr/local/rootfs -printf '%y %s %T@ %p\n' | sort > /tmp/after

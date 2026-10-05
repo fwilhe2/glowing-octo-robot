@@ -200,6 +200,11 @@ jobs:
             if [ -n "$RELEASE_NOTES" ]; then
               NOTES_LINE="Release notes: $RELEASE_NOTES"
             fi
+            # A kernel bump is expected to go red once: the kernel job stops before
+            # compiling when the resolved config differs from packages/kernel/config-*.lock.
+            if [ "$PKG" = kernel ]; then
+              NOTES_LINE+=$'\n\n'"The kernel job will fail if this release changes what is built in. The diff is in its log; accept it with \`./tools/kernel-config-lock.sh <run-id>\` (both arches, from the run's \`proposed-kernel-*\` artifacts) or clear lines in \`packages/kernel/vm.config\`, and push to this branch. See docs/how-it-works.md, section 6."
+            fi
             BODY=$(cat <<EOF
           \`$PKG\` $CURRENT -> $LATEST.
 

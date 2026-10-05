@@ -196,7 +196,7 @@ entry. Everything else is shared and should stay that way:
   sources images (content-hash tags from `tools/image-tags.sh`), then unpack the tarballs.
 - `build.sh` (root) → the only driver: prep, extract, assemble podman mounts, run.
 - `builder/build-package.sh` → container entrypoint: merged-`/usr` staging, sysroot flags,
-  then `source /package-build.sh`.
+  then `source "$PKGDIR/build.sh"`.
 
 **The compile runs `--network=none`.** Prep has already fetched every tarball (verified
 against the `SHA256` in its `env.sh`) and got the builder image, so a build that reaches
@@ -219,9 +219,9 @@ something like OpenSSL is not what built it but what its `make install` leaves i
 `DESTDIR` — helper scripts land there and ship as dead files unless `build.sh` or the trim
 removes them.
 
-`packages/<pkg>/build.sh` is bind-mounted, not copied into the image, and is *sourced* with the
-unpacked source tree as the working directory. Install with `DESTDIR=$ROOTFS` and
-`--prefix=/usr`.
+`packages/<pkg>/` is bind-mounted read-only at `$PKGDIR`, not copied into the image, and
+its `build.sh` is *sourced* with the unpacked source tree as the working directory.
+Install with `DESTDIR=$ROOTFS` and `--prefix=/usr`.
 
 Because it is sourced, `builder/build-package.sh` can hand every package the same
 vocabulary, and a rule that is a function there is one no package has to remember:
@@ -229,6 +229,7 @@ vocabulary, and a rule that is a function there is one no package has to remembe
 | name | what it is for |
 | --- | --- |
 | `$ROOTFS` | the staging tree, `/usr/local/rootfs` — the `DESTDIR` |
+| `$PKGDIR` | `packages/<pkg>/`, read-only — for inputs kept beside `build.sh` |
 | `MAKEFLAGS` | exported as `-j$(nproc)`, so a plain `make` is parallel; do not add `-j` |
 | `meson_install [opts]` | setup/compile/install with `--prefix /usr --buildtype=release -Dlibdir=lib` |
 | `drop_installed prog…` | delete from `usr/bin`, and **fail** if one was not installed |
@@ -617,10 +618,10 @@ default `crun spec` output does. eBPF costs nothing here, being a raw syscall pl
 `linux/bpf.h` with no library to ship. There is no image tooling: skopeo/umoci/podman
 are all Go, so bundles are made by hand with `crun spec`.
 
-The container kernel options are a `container.config` fragment written out by
-`packages/kernel/build.sh` as a heredoc and merged with `make container.config` — a *file* next
-to `build.sh` would not work, because `build.sh` is the only thing in `packages/kernel/` that is
-bind-mounted into the builder. `x86_64_defconfig` has `CGROUPS`, the pid/net/ipc/uts
+The container kernel options are `packages/kernel/container.config`, a fragment
+`build.sh` copies into the kernel tree and merges with `make container.config` (the whole
+package directory is mounted read-only at `$PKGDIR`, so a package's inputs can be files
+beside its script). `x86_64_defconfig` has `CGROUPS`, the pid/net/ipc/uts
 namespaces and `SECCOMP_FILTER` and nothing else that matters here, so the fragment is
 load-bearing: `USER_NS`, `MEMCG` (without it `memory.max` does not exist and any bundle
 with a memory limit fails), `OVERLAY_FS`, `VETH`/`BRIDGE`/`TUN`, `BPF_SYSCALL` +
@@ -692,6 +693,30 @@ still allowed to name symbols that do not exist on this architecture — that is
 x86-only lines behave on arm64 — it just may not name one that exists and stayed on.
 When adding to `vm.config`, expect to clear the symbol that *selects* the one you want
 gone, not only the one you want gone.
+
+That allowance had a hole, now closed: "does not exist on this arch" and "does not exist
+any more" looked the same, so a cleared symbol upstream renamed was a line that did
+nothing, and the driver came back under its new name. So every symbol either fragment
+names must also be defined by *some* `Kconfig` in the tree, on any architecture.
+
+**The fragments constrain only the symbols they name; the lock covers everything else.**
+Everything not named comes from defconfig, which changes with every release — a new
+`default y` driver, or one added to defconfig, is built in with no fragment saying so.
+`packages/kernel/config-<arch>.lock` is every symbol the config resolves to, sorted, and
+`build.sh` stops *before compiling* when the resolved config differs, printing a `+`/`-`
+diff and leaving the proposal as `config-<arch>.lock.new` beside the source. Each line in
+that diff is a decision: accept it (`tools/kernel-config-lock.sh`, or with a run id to
+fetch CI's `proposed-kernel-<arch>` artifacts) or clear it in `vm.config`. A kernel bump
+pull request is therefore red until somebody has read what it adds — that is the point,
+not a nuisance to automate away.
+
+Two details. The lock leaves out symbols Kconfig derives from the toolchain — prompt-less
+symbols with a `$(…)` in their defaults or dependencies, closed over the prompt-less
+symbols that depend on them (`CC_HAS_COUNTED_BY` is `default y if GCC_VERSION >= …`) — so
+a Debian snapshot bump does not churn it; a symbol with a prompt is always kept, whatever
+moved it. And the arm64 lock can only be produced on arm64: kconfig asks the compiler what
+it supports, and the builder's compiler targets its own arch. Without an arm64 machine,
+the arm64 lock comes from CI.
 
 `tools/fetch-image.sh` / `tools/boot-qemu.sh` are for poking at CI artifacts locally. The `rootfs-dir`
 CI artifact is lossy (`upload-artifact` dereferences symlinks); never rebuild a bootable

@@ -61,7 +61,7 @@ image. Without that, an old base image would install today's packages.
    | host | container | mode |
    | --- | --- | --- |
    | unpacked source | `/usr/local/src` | rw (ro for local source) |
-   | `packages/<pkg>/build.sh` | `/package-build.sh` | ro |
+   | `packages/<pkg>/` | `/usr/local/package` (`$PKGDIR`) | ro: `build.sh` and anything beside it |
    | `rootfs/` | `/usr/local/rootfs` | rw: the install target |
    | `$SYSROOT_DIR` (default `rootfs/`) | `/usr/local/sysroot` | ro: the glibc to compile against |
    | each file of Debian's `libc6`, replaced by ours | its own path | ro |
@@ -95,12 +95,13 @@ Debian's gcc, make and perl keep working.
    | name | effect |
    | --- | --- |
    | `$ROOTFS` | `/usr/local/rootfs`, the `DESTDIR` |
+   | `$PKGDIR` | `packages/<pkg>/`, read-only |
    | `MAKEFLAGS=-j$(nproc)` | every `make` runs in parallel |
    | `meson_install [opts]` | `meson setup --prefix /usr --buildtype=release -Dlibdir=lib`, then compile and install |
    | `drop_installed prog…` | `rm` from `usr/bin`; fails if a name is not installed |
    | `assert_not_linked lib bin…` | fails if `readelf -d` shows `lib` as `NEEDED` |
 
-4. **Sources `packages/<pkg>/build.sh`**, with the source tree as the working
+4. **Sources `$PKGDIR/build.sh`**, with the source tree as the working
    directory, under `set -euo pipefail`.
 5. **Component record.** It writes `usr/share/flfs/components/<pkg>` (name, version,
    license, URL, SHA256, builder tag). This only runs if the build succeeded, so a
@@ -182,7 +183,7 @@ sources ─────────┼─► glibc (×arch) ──► build (×a
   - builds with `SYSROOT_DIR=sysroot`;
   - uploads only that package's files.
 - **The cache key** hashes `build.sh`, `tools/lib.sh`, `build-package.sh`, glibc's
-  `env.sh`, the package's own `env.sh`/`build.sh`/`src`, and the builder tag. A glibc
+  `env.sh`, every file git tracks in `packages/<pkg>/`, and the builder tag. A glibc
   bump or a builder change rebuilds everything.
 - **`rootfs`** unpacks every package artifact for its arch, runs the static checks, and
   then calls `tools/build-image.sh --image-only`, the same path as a local build.
@@ -190,7 +191,50 @@ sources ─────────┼─► glibc (×arch) ──► build (×a
   `&telemetry` step through YAML anchors.
 - **`publish-oci`** only runs on `main`, so a pull request never exercises it.
 
-## 6. Keeping versions current
+## 6. The kernel config
+
+`packages/kernel/build.sh` builds the config in layers, checks it, and only then
+compiles:
+
+1. `make defconfig`, then `make kvm_guest.config`: upstream's base, plus its KVM guest
+   fragment.
+2. `container.config`, an allowlist: what a container runtime needs.
+3. `vm.config`, a denylist: hardware a VM never has. It is merged last, so its
+   subtractions win.
+4. **Fragment check.**
+   - Everything `container.config` sets must be `=y`.
+   - Nothing either fragment clears may come back `=y`.
+   - Every symbol either fragment names must be defined by *some* Kconfig file, on
+     any arch.
+5. **Lock check.** The resolved config, minus toolchain-derived symbols, must equal
+   `config-<arch>.lock`.
+6. `make`.
+
+What a new kernel version does, and what notices:
+
+| upstream change | caught by |
+| --- | --- |
+| new `default y` option, or one added to defconfig | lock diff (`+`) |
+| option removed, or its default turned off | lock diff (`-`) |
+| a `container.config` symbol renamed or given a new dependency | fragment check |
+| a `vm.config` symbol renamed or removed | fragment check (defined by no Kconfig) |
+| a cleared symbol selected back by something new | fragment check (`=y` again) |
+| `defconfig`/`kvm_guest.config` content changed | lock diff |
+| compiler or pahole version changed | not in the lock unless it moves a prompted symbol |
+
+When the lock check fails:
+
+1. Read the `+`/`-` lines.
+2. Clear the unwanted ones in `vm.config`, keeping in mind that the symbol that
+   *selects* one may be what needs clearing.
+3. Accept the rest:
+   - `./tools/kernel-config-lock.sh` takes this host's arch from the local tree;
+   - `./tools/kernel-config-lock.sh <run-id>` takes every arch from a CI run's
+     `proposed-kernel-<arch>` artifacts. This is the only way to get the arm64 lock
+     without an arm64 machine.
+4. Commit the lock together with the change that caused it.
+
+## 7. Keeping versions current
 
 | tool | job |
 | --- | --- |
@@ -267,6 +311,15 @@ Those files belong to the container's root, which is a sub-UID on the host. Use
 **A change to `image/files/` does not show up.**
 `image/files` is copied into the assembly image with `COPY`. `build-image.sh` rebuilds
 that image every time; a manual `podman run` does not.
+
+**The kernel build stops with "the resolved kernel config differs from …lock".**
+Something changed what is built in: a kernel bump, a fragment edit, or a toolchain change
+that moved a prompted symbol. This is intended. Read the diff, then clear lines in
+`vm.config` or accept them with `tools/kernel-config-lock.sh` (see section 6).
+
+**The kernel build stops with "no Kconfig in this kernel defines it".**
+A fragment names a symbol that upstream renamed or removed. Find the new name, or drop
+the line.
 
 **A kernel option you set is not in `.config`.**
 A fragment line whose dependencies are not met is dropped silently. `packages/kernel/build.sh`

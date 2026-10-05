@@ -172,11 +172,16 @@ fi
 # --security-opt label=disable is for SELinux hosts (Fedora): the bind mounts are plain
 # home-directory files the container's confined domain may not write, and relabelling
 # them with :z would rewrite the labels of the checkout. A no-op where SELinux is off.
+#
+# The whole package directory goes in read-only, not just build.sh, so a package can keep
+# its inputs as files beside its script — the kernel's config fragments and lock files
+# are the reason. The unpacked tarball inside it is visible there too, read-only; the
+# writable copy a build works in is the /usr/local/src mount above.
 podman run --rm \
     --network=none \
     --security-opt label=disable \
     "${src_mount[@]}" \
-    --volume "$PWD/$PKG_DIR/build.sh":/package-build.sh:ro \
+    --volume "$PWD/$PKG_DIR":/usr/local/package:ro \
     --volume "$PWD/rootfs":/usr/local/rootfs \
     "${sysroot_mount[@]}" \
     "${component_env[@]}" \

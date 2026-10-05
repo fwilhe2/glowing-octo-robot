@@ -511,12 +511,13 @@ writes.
 
 `x86_64_defconfig` enables almost none of what a container needs — it has `CGROUPS`, the
 pid/net/ipc/uts namespaces and `SECCOMP_FILTER`, and stops there. `kernel/build.sh`
-writes out a `container.config` fragment and merges it with `make container.config`:
+merges the `packages/kernel/container.config` fragment with `make container.config`:
 `USER_NS` and `MEMCG`, `OVERLAY_FS` for image layers, `VETH`/`BRIDGE`/`TUN` for
 container networking, `BPF_SYSCALL`/`CGROUP_BPF` for the cgroup v2 device controller,
-and nftables, which is hidden behind `NETFILTER_ADVANCED` that defconfig leaves off. The
-fragment is a heredoc rather than a file next to `build.sh` because only `build.sh` is
-bind-mounted into the builder.
+and nftables, which is hidden behind `NETFILTER_ADVANCED` that defconfig leaves off.
+`vm.config` beside it clears the hardware a VM never has, and `config-<arch>.lock`
+records what the result resolved to — a kernel bump that changes what is built in stops
+the build with a diff until the lock is accepted with `tools/kernel-config-lock.sh`.
 
 ## systemd's BPF sandboxing
 
