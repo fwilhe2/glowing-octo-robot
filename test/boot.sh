@@ -28,8 +28,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source test/qemu-lib.sh
 
-ROOTFS="${1:-${ROOTFS:-boot-image/rootfs.ext4}}"
-KERNEL="${2:-${KERNEL:-boot-image/bzImage}}"
+ROOTFS="${1:-${ROOTFS:-output/rootfs.ext4}}"
+KERNEL="${2:-${KERNEL:-rootfs/boot/bzImage}}"
 INIT="${INIT:-/bin/bash}"
 LOG="${LOG:-output/boot-test.log}"
 TEST_NAME=boot

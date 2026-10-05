@@ -14,14 +14,16 @@ FROM debian:sid-${SNAPSHOT}@sha256:a2aa46262453eba3f464d8b1c7a8c31db85eb15af180a
 ARG SNAPSHOT
 
 # binutils is here for strip: build-rootfs.sh drops the debug symbols the packages are
-# compiled with, which is about half the size of the shipped tree.
+# compiled with, which is about half the size of the shipped tree. e2fsprogs is mkfs.ext4.
 RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
     && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%sT000000Z sid main\n' "$SNAPSHOT" \
        > /etc/apt/sources.list \
-    && apt-get update && apt-get -y install e2fsprogs cpio binutils
+    && apt-get update \
+    && apt-get install -y --no-install-recommends e2fsprogs binutils \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY image/build-rootfs.sh /usr/local/bin/
-RUN chmod +X /usr/local/bin/build-rootfs.sh
+RUN chmod +x /usr/local/bin/build-rootfs.sh
 
 COPY image/files /files
 
