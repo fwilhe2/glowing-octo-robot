@@ -183,9 +183,10 @@ stops making sense.
 ## How a package build works
 
 A package is normally exactly two files, `packages/<pkg>/env.sh` (version, tarball,
-checksum) and `packages/<pkg>/build.sh` (configure/compile/install only) — plus an entry in
-the `build` matrix in `.github/workflows/ci.yml`. Everything else is shared and should stay
-that way:
+checksum) and `packages/<pkg>/build.sh` (configure/compile/install only). The `build`
+matrix in `.github/workflows/ci.yml` is generated from `packages/` by the `sources` job —
+every package except the `NO_SYSROOT` ones, which have jobs of their own — so it needs no
+entry. Everything else is shared and should stay that way:
 
 - `builder/Containerfile` + `builder/deps.txt` → the one builder image every package is
   compiled in. `deps.txt` is its entire contents, one apt package per line; there is no
@@ -262,7 +263,7 @@ Not every package has to come from a tarball. `LOCAL_SOURCE=1` in `env.sh` means
 source is tracked in git at `packages/<pkg>/src/`, and the package has no `TARBALL`, `URL`
 or `SHA256` at all. `packages/flfsfetch/` is the worked example — a small neofetch-alike
 in one C file. Everything downstream of the source is unchanged: the same builder image,
-the same sysroot flags, the same `DESTDIR=/usr/local/rootfs`, the same entry in the `build`
+the same sysroot flags, the same `DESTDIR=$ROOTFS`, the same entry in the `build`
 matrix, the same artifact.
 
 What the flag changes, in the four places that assume a tarball exists:
@@ -298,7 +299,7 @@ the whole staging tree and the trim removes nothing from `usr/bin`.
 `/etc/protocols` from IANA's registries, so the tarball ships both files ready to install
 and `build.sh` is two `install` commands with no `configure` or `make` anywhere. Nothing
 about the machinery needs telling — the same builder image, the same
-`DESTDIR=/usr/local/rootfs`, the same matrix entry.
+`DESTDIR=$ROOTFS`, the same matrix entry.
 
 The one thing it does differently is install outside `--prefix=/usr`. That is not a
 liberty: glibc hardcodes these paths (`_PATH_SERVICES` is `"/etc/services"`), which is why

@@ -107,8 +107,8 @@ below, answer these in the pull request, where they can be argued with:
 * **Is it DFSG-free?** Every package declares `LICENSE=` and CI rejects anything not on
   the list; see [Licensing](#licensing).
 
-Then create a directory under `packages/` named after the package with two files in it,
-and add it to the CI matrix in `.github/workflows/ci.yml`:
+Then create a directory under `packages/` named after the package with two files in it.
+CI picks it up from there — the `build` matrix is generated from `packages/`:
 
 * `env.sh` — the source tarball, plus optional knobs:
 
