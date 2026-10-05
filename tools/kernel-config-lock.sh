@@ -47,12 +47,13 @@ else
     trap 'rm -rf "$tmp"' EXIT
     gh run download "$1" --pattern 'proposed-kernel-*' --dir "$tmp"
     found=
-    for new in "$tmp"/proposed-kernel-*/config-*.lock.new; do
-        [ -f "$new" ] || continue
+    # Searched for rather than globbed: upload-artifact keeps the path below the wildcard,
+    # so the file arrives as proposed-kernel-<arch>/linux-<version>/config-<arch>.lock.new.
+    while IFS= read -r -d '' new; do
         arch="${new##*/config-}"
         accept "$new" "${arch%.lock.new}"
         found=1
-    done
+    done < <(find "$tmp" -name 'config-*.lock.new' -print0 | sort -z)
     if [ -z "$found" ]; then
         echo "error: run $1 proposed no kernel config lock" >&2
         exit 1
