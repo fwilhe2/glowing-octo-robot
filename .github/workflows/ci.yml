@@ -35,10 +35,11 @@ permissions:
 # Every job below is matrixed on arch (amd64/arm64) and runs on a runner native to that
 # arch — nothing here cross-compiles, so a native runner is what makes `make defconfig`,
 # `gcc -print-multiarch` and friends pick the right target on their own (see
-# packages/kernel/build.sh, image/build-rootfs.sh). The `runner` value
-# each matrix carries via `include` is the GitHub-hosted arm64 label as of this writing;
-# adjust it if your plan/org exposes it under a different name or you're pointing this
-# at self-hosted arm64 runners instead.
+# packages/kernel/build.sh, image/build-rootfs.sh). The runner is derived from the arch
+# once, in the `&runner` anchor on the builder job, and every per-arch job aliases it;
+# `ubuntu-26.04-arm` is the GitHub-hosted arm64 label as of this writing — adjust it there
+# if your plan/org exposes it under a different name or you're pointing this at
+# self-hosted arm64 runners instead.
 #
 # `needs:` is a job-level dependency, not a matrix-aware one: e.g. `rootfs`'s `needs:
 # [build, kernel]` waits for *both* arches of `build` and `kernel` to finish before
@@ -55,23 +56,21 @@ jobs:
   # One per architecture: the toolchain is compiled software and nothing here
   # cross-compiles, so the tag carries the arch and each native runner pushes its own.
   builder:
-    runs-on: ${{ matrix.runner }}
+    # Anchored here and aliased by every per-arch job below: the runner follows from the
+    # arch, so the matrix is just the arch.
+    runs-on: &runner ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
     permissions:
       contents: read
       packages: write
-    strategy:
+    strategy: &per-arch
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
-        include:
-          - arch: amd64
-            runner: ubuntu-26.04
-          - arch: arm64
-            runner: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Collect Workflow Telemetry
+      - &telemetry
+        name: Collect Workflow Telemetry
         uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
         with:
           # Text rather than mermaid, which is about the run summary page and
@@ -82,8 +81,9 @@ jobs:
           # through. Sparklines in a markdown table cost the page nothing and
           # carry the same shape, peak and mean at lower resolution.
           #
-          # Set on every telemetry step in this workflow for that one reason —
-          # the cost is the page they share, so they share the setting.
+          # Every other job aliases this step for that one reason — the cost
+          # is the page they share, so they share the setting. The build
+          # matrix spells it out, adding to it.
           charts: sparkline
 
       - name: Log in to ghcr.io
@@ -99,46 +99,44 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      packages: ${{ steps.packages.outputs.json }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
-        with:
-          charts: sparkline # see the builder job
+      - *telemetry
 
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
 
       - run: ./tools/prep.sh --push sources
 
+      # The build matrix, as JSON. Here rather than in a job of its own because this one
+      # already runs first and every build job already waits for it.
+      - name: List the packages the build matrix compiles
+        id: packages
+        run: |
+          source tools/lib.sh
+          for pkg in $(all_packages); do
+              if [ -z "$(env_get "$pkg" NO_SYSROOT)" ]; then echo "$pkg"; fi
+          done | jq -Rnc '[inputs]' | sed 's/^/json=/' >> "$GITHUB_OUTPUT"
+
   # Everything else is compiled against this glibc rather than the Debian builder's, so
   # it has to be staged before the matrix below can start. The kernel is the exception:
   # it links no libc at all, so it runs alongside instead of queueing behind.
   glibc:
-    runs-on: ${{ matrix.runner }}
+    runs-on: *runner
     permissions:
       contents: read
       packages: read
     needs:
       - builder
       - sources
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-        include:
-          - arch: amd64
-            runner: ubuntu-26.04
-          - arch: arm64
-            runner: ubuntu-26.04-arm
+    strategy: *per-arch
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
-        with:
-          charts: sparkline # see the builder job
+      - *telemetry
 
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
@@ -147,32 +145,20 @@ jobs:
         with:
           package: glibc
           arch: ${{ matrix.arch }}
-          sysroot: 'false'
 
   kernel:
-    runs-on: ${{ matrix.runner }}
+    runs-on: *runner
     permissions:
       contents: read
       packages: read
     needs:
       - builder
       - sources
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-        include:
-          - arch: amd64
-            runner: ubuntu-26.04
-          - arch: arm64
-            runner: ubuntu-26.04-arm
+    strategy: *per-arch
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
-        with:
-          charts: sparkline # see the builder job
+      - *telemetry
 
       - name: Log in to ghcr.io
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
@@ -181,67 +167,24 @@ jobs:
         with:
           package: kernel
           arch: ${{ matrix.arch }}
-          sysroot: 'false'
 
   build:
-    runs-on: ${{ matrix.runner }}
+    runs-on: *runner
     permissions:
       contents: read
       packages: read
     needs:
       - glibc
+      - sources
 
     strategy:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
-        package:
-          - acl
-          - attr
-          - bash
-          # Data again, and from a distribution rather than an upstream: Mozilla's root
-          # certificates as Debian snapshots and parses them. Nothing to compile.
-          - ca-certificates
-          - coreutils
-          - crun
-          - curl
-          - dbus
-          - e2fsprogs
-          - elfutils
-          - expat
-          - findutils
-          # Not an upstream project: packages/flfsfetch/src is this repository's own C,
-          # built by the same machinery as everything else. See CLAUDE.md.
-          - flfsfetch
-          - gawk
-          - grep
-          - gzip
-          # Data, not code: IANA's registries as the /etc/services and /etc/protocols
-          # that nsswitch.conf has been naming all along. Its build.sh compiles nothing.
-          - iana-etc
-          - iproute2
-          - iputils
-          - json-c
-          - kmod
-          - libbpf
-          - libcap
-          - libmnl
-          - libxcrypt
-          - ncurses
-          - openssl
-          - pam
-          - sed
-          - systemd
-          - tar
-          - util-linux
-          - xz
-          - zlib
-          - zstd
-        include:
-          - arch: amd64
-            runner: ubuntu-26.04
-          - arch: arm64
-            runner: ubuntu-26.04-arm
+        # Every packages/<pkg> except the NO_SYSROOT ones (glibc and the kernel, which have
+        # jobs of their own above), listed by the sources job. Adding a package is its two
+        # files; nothing here has to be told.
+        package: ${{ fromJSON(needs.sources.outputs.packages) }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -285,7 +228,7 @@ jobs:
           arch: ${{ matrix.arch }}
 
   rootfs:
-    runs-on: ${{ matrix.runner }}
+    runs-on: *runner
     # Spelled out because the "Image size over time" step reads the size artifact from
     # *previous* runs, and `actions: read` is what lets the job's token list and download
     # them. Same-run artifacts need none of this — actions/download-artifact uses the
@@ -302,22 +245,11 @@ jobs:
     needs:
       - build
       - kernel
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-        include:
-          - arch: amd64
-            runner: ubuntu-26.04
-          - arch: arm64
-            runner: ubuntu-26.04-arm
+    strategy: *per-arch
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
-        with:
-          charts: sparkline # see the builder job
+      - *telemetry
 
       # Only this arch's packages: every package-<name>-<arch> artifact this run
       # produced matches the pattern, which is glibc, kernel and the whole build
@@ -348,17 +280,12 @@ jobs:
       - name: Check the kernel can run containers
         run: ./test/kernel-caps.sh rootfs
 
-      - run: mkdir -p output
-
-      - name: Create disk image
-        run: |
-            podman build -t rootfs-builder -f image/Containerfile .
-            podman run -e FLFS_BUILD="$GITHUB_SHA" --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh ext4
-
-      # The second output of the same staging tree: the same userspace with the kernel
-      # and systemd taken back out, as an OCI image. It reuses the container built above.
-      - name: Create OCI image
-        run: podman run -e FLFS_BUILD="$GITHUB_SHA" --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output rootfs-builder /usr/local/bin/build-rootfs.sh oci
+      # Both outputs of the same staging tree — the disk image, and the same userspace with
+      # the kernel and systemd taken back out as an OCI image — assembled by the same
+      # script a local build uses, so the two cannot drift apart. FLFS_BUILD is the
+      # checked-out commit, which is $GITHUB_SHA.
+      - name: Create disk and OCI images
+        run: ./tools/build-image.sh --image-only
 
       # Loading it proves the hand-written OCI layout is well formed, and running it is
       # the only check in this job that executes a binary we shipped. It is not a
@@ -458,25 +385,14 @@ jobs:
   # An image that builds and resolves all its libraries can still fail to boot, so
   # actually boot it: the kernel we build is in rootfs/boot/bzImage.
   boot:
-    runs-on: ${{ matrix.runner }}
+    runs-on: *runner
     needs:
       - rootfs
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-        include:
-          - arch: amd64
-            runner: ubuntu-26.04
-          - arch: arm64
-            runner: ubuntu-26.04-arm
+    strategy: *per-arch
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Collect Workflow Telemetry
-        uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
-        with:
-          charts: sparkline # see the builder job
+      - *telemetry
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
