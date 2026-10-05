@@ -1,9 +1,9 @@
-VERSION="2.8.5"
+VERSION="2.9.0"
 PACKAGE="expat-${VERSION}"
 TARBALL="$PACKAGE.tar.xz"
 # Release assets on GitHub, filed under a tag that spells the version with underscores.
 URL="https://github.com/libexpat/libexpat/releases/download/R_${VERSION//./_}/${TARBALL}"
-SHA256="1e727b8933ec51a77a9a9d9afcf8e688bce45d907c13e36ab7393fe36e703182"
+SHA256="1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051"
 LICENSE="MIT"
 UPSTREAM_GITHUB="libexpat/libexpat"
 # ...and those tags are what the version check sees, so undo the spelling: R_2_8_2.
