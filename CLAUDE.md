@@ -106,7 +106,8 @@ test/             everything CI runs to verify a build, plus known-missing-libs.
                   tests and tools/boot-qemu.sh all source
 tools/            local conveniences and maintenance, not part of a build — except
                   lib.sh, the helpers build.sh, tools/ and test/ all source
-docs/             design notes for work not done yet — proposals, not descriptions
+docs/             design notes for work not done yet — proposals, not descriptions —
+                  except how-it-works.md, the mechanics and pitfalls of the system as it is
 downloads/        source tarballs (gitignored)
 rootfs/           shared, cumulative staging tree every package installs into (gitignored)
 output/           built images, fetched CI artifacts, test console logs (gitignored)
