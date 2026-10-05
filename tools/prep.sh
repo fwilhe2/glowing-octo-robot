@@ -12,6 +12,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
 push=
 [ "${1:-}" = "--push" ] && { push=1; shift; }
@@ -87,10 +88,10 @@ else
     stage=$(mktemp -d)
     trap 'rm -rf "$stage"' EXIT
     mkdir -p "$stage/sources"
-    for e in packages/*/env.sh; do
+    for pkg in $(all_packages); do
         # LOCAL_SOURCE packages have no tarball to vendor — their source is in git, which
         # is a better copy than this image could be.
-        ( PKG=$(basename "$(dirname "$e")"); . "$e"
+        ( load_env "$pkg"
           if [ -z "${LOCAL_SOURCE:-}" ]; then
               cp "downloads/$TARBALL" "$stage/sources/$TARBALL"
           fi )

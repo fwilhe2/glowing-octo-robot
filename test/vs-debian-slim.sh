@@ -23,6 +23,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
 OURS="${1:-output/rootfs-size-oci.txt}"
 BASELINE="${DEBIAN_SLIM:-debian:trixie-slim}"
@@ -32,12 +33,7 @@ THEIRS=output/rootfs-size-debian-slim.txt
 # comparison under a build that changed nothing, and "CI went red because Debian cut a
 # release" is not a signal about this image.
 
-ARCH="${ARCH:-$(uname -m)}"
-case "$ARCH" in
-    x86_64|amd64)  ARCH=amd64 ;;
-    aarch64|arm64) ARCH=arm64 ;;
-    *) echo "error: unsupported architecture: $ARCH (expected amd64 or arm64)" >&2; exit 1 ;;
-esac
+ARCH=$(normalize_arch "${ARCH:-}")
 
 [ -f "$OURS" ] || {
     echo "error: no size report at $OURS" >&2
@@ -106,11 +102,6 @@ read_report "$THEIRS" theirs
 
 [ "$ours_total" -gt 0 ] && [ "$theirs_total" -gt 0 ] || {
     echo "error: one of the reports has no total" >&2; exit 1
-}
-
-mib() {  # bytes -> "12.3"
-    local tenths=$(( ($1 * 10 + 524288) / 1048576 ))
-    printf '%d.%d' $(( tenths / 10 )) $(( tenths % 10 ))
 }
 
 percent=$(( ours_total * 100 / theirs_total ))

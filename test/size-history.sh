@@ -21,13 +21,9 @@
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
-ARCH="${1:-${ARCH:-$(uname -m)}}"
-case "$ARCH" in
-    x86_64|amd64)  ARCH=amd64 ;;
-    aarch64|arm64) ARCH=arm64 ;;
-    *) echo "usage: ${0##*/} [amd64|arm64]" >&2; exit 2 ;;
-esac
+ARCH=$(normalize_arch "${1:-${ARCH:-}}") || { echo "usage: ${0##*/} [amd64|arm64]" >&2; exit 2; }
 
 RUNS="${RUNS:-12}"          # how many past builds to plot
 BASE_BRANCH="${BASE_BRANCH:-main}"
@@ -37,11 +33,6 @@ FLAVOURS="ext4 oci"
 # stdout always; the job summary as well when there is one. Same shape as the summary()
 # in test/rootfs-size.sh — a local run should print the thing CI would show.
 out() { printf '%s\n' "$*"; [ -n "${GITHUB_STEP_SUMMARY:-}" ] && printf '%s\n' "$*" >> "$GITHUB_STEP_SUMMARY"; return 0; }
-
-mib() {  # bytes -> "12.3"
-    local tenths=$(( ($1 * 10 + 524288) / 1048576 ))
-    printf '%d.%d' $(( tenths / 10 )) $(( tenths % 10 ))
-}
 
 delta() {  # bytes -> "+1.2" / "-1.2" / "0.0", with a real minus sign for the table
     local d=$1

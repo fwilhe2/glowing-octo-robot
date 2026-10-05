@@ -26,6 +26,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
 PKG="${1:-}"
 NEW="${2:-}"
@@ -35,12 +36,8 @@ if [ -z "$PKG" ] || [ -z "$NEW" ]; then
     exit 2
 fi
 
-# Accept both `kernel` and the path a shell tab-completes to, `packages/kernel/`.
-PKG="${PKG%/}"
-PKG="${PKG#packages/}"
+PKG=$(package_name "$PKG")
 env_file="packages/$PKG/env.sh"
-
-[ -f "$env_file" ] || { echo "error: unknown package '$PKG' (no $env_file)" >&2; exit 1; }
 
 old_version=$(sed -n -E 's|^VERSION="?([^"]*)"?.*|\1|p' "$env_file" | head -n1)
 old_sha=$(sed -n -E 's|^SHA256="?([^"]*)"?.*|\1|p' "$env_file" | head -n1)
@@ -54,11 +51,7 @@ sed -i -E "s|^VERSION=.*|VERSION=\"$NEW\"|" "$env_file"
 # runs of it and drops leading empties, so a LOCAL_SOURCE package — which has neither a
 # TARBALL nor a URL — would hand its "1" to the first variable and read as an ordinary
 # package with no URL set.
-mapfile -t env_values < <(
-    # shellcheck disable=SC1090
-    PKG="$PKG"; . "$env_file"
-    printf '%s\n' "${TARBALL:-}" "${URL:-}" "${LOCAL_SOURCE:-}"
-)
+mapfile -t env_values < <(env_get "$PKG" TARBALL URL LOCAL_SOURCE)
 tarball="${env_values[0]:-}"
 url="${env_values[1]:-}"
 local_source="${env_values[2]:-}"
@@ -82,9 +75,7 @@ echo "$PKG: fetching $url"
 # starts from nothing, and resuming onto a previous version's leftovers is how a
 # download of the wrong size gets a plausible name.
 rm -f "downloads/$tarball"
-curl --location --fail --silent --show-error \
-     --retry 5 --retry-all-errors --retry-delay 2 \
-     -o "downloads/$tarball" "$url"
+"${CURL_DOWNLOAD[@]}" -o "downloads/$tarball" "$url"
 
 new_sha=$(sha256sum <"downloads/$tarball" | cut -d' ' -f1)
 

@@ -12,6 +12,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
 JSON=false
 PACKAGES=()
@@ -22,12 +23,12 @@ for arg in "$@"; do
         -h|--help) sed -n '2,11p' "$0" | sed 's/^# \?//'; exit 0 ;;
         -*) echo "error: unknown option: $arg" >&2; exit 1 ;;
         # Accept both `coreutils` and the path a shell tab-completes to.
-        *) arg="${arg%/}"; PACKAGES+=("${arg#packages/}") ;;
+        *) PACKAGES+=("$arg") ;;
     esac
 done
 
 if [ ${#PACKAGES[@]} -eq 0 ]; then
-    for e in packages/*/env.sh; do PACKAGES+=("$(basename "$(dirname "$e")")"); done
+    mapfile -t PACKAGES < <(all_packages)
 fi
 
 # The URL a package would download if its env.sh said VERSION=$2. env.sh derives
@@ -43,17 +44,16 @@ updates=()
 failed=false
 
 for PKG in "${PACKAGES[@]}"; do
-    if [ ! -f "packages/$PKG/env.sh" ]; then
-        echo "error: unknown package '$PKG' (no packages/$PKG/env.sh)" >&2
+    if ! PKG=$(package_name "$PKG"); then
         failed=true
         continue
     fi
 
-    current=$(source "packages/$PKG/env.sh"; printf '%s\n' "$VERSION")
+    { read -r current; read -r local_source; } < <(env_get "$PKG" VERSION LOCAL_SOURCE)
 
     # A package whose source is in this repository has no upstream to compare against —
     # its VERSION is ours, and nothing announces releases of it.
-    if [ -n "$(source "packages/$PKG/env.sh"; printf '%s' "${LOCAL_SOURCE:-}")" ]; then
+    if [ -n "$local_source" ]; then
         $JSON || printf '%-12s %-10s local source, no upstream\n' "$PKG" "$current"
         continue
     fi

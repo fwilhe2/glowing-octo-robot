@@ -21,6 +21,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
 REPO="fwilhe2/glowing-octo-robot"
 
@@ -28,17 +29,12 @@ REPO="fwilhe2/glowing-octo-robot"
 # arm64 in every run, tagging each artifact with the arch that produced it, so this has
 # to pick one. Both uname's spelling (x86_64/aarch64) and this repo's (amd64/arm64) are
 # accepted.
-ARCH="${ARCH:-$(uname -m)}"
-case "$ARCH" in
-    x86_64|amd64)  ARCH=amd64 ;;
-    aarch64|arm64) ARCH=arm64 ;;
-    *) echo "error: unsupported architecture: $ARCH (expected amd64 or arm64)" >&2; exit 1 ;;
-esac
+ARCH=$(normalize_arch "${ARCH:-}")
 
 # Only suffix the default output directory when ARCH was overridden away from the
 # host's own, so the common case — fetch, then boot, both with no ARCH set — still lands
 # in plain output/boot-image on both sides.
-host_arch=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
+host_arch=$(normalize_arch)
 if [ "$ARCH" = "$host_arch" ]; then
     OUT="${OUT:-output/boot-image}"
 else

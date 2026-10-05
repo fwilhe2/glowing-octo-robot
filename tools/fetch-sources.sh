@@ -16,25 +16,20 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
 mkdir -p downloads
 
 # A transfer that dies at 80% is the normal failure of a bad link, so resume rather than
 # start over — restarting the 150 MB kernel tarball is how a flaky connection turns into
-# an infinite loop. --retry-all-errors covers the 5xx a mirror serves while it syncs.
-CURL=(curl --location --fail --silent --show-error
-      --retry 5 --retry-all-errors --retry-delay 2 --continue-at -)
+# an infinite loop.
+CURL=("${CURL_DOWNLOAD[@]}" --continue-at -)
 
+# Run in a subshell (see the loop below), so one package's env.sh cannot leak into the
+# next — an unset list kept by hand here used to be what prevented that.
 fetch_one() {
     local pkg="$1"
-    local VERSION PACKAGE TARBALL URL SHA256 MIRRORS LOCAL_SOURCE
-
-    # Subshell would hide the values, so unset what the previous package set instead.
-    unset VERSION PACKAGE TARBALL URL SHA256 MIRRORS LOCAL_SOURCE
-    # env.sh may refer to $PKG when composing its URL.
-    local PKG="$pkg"
-    # shellcheck disable=SC1090
-    source "packages/$pkg/env.sh"
+    load_env "$pkg"
 
     # A package whose source is in this repository has no tarball and no checksum, so
     # there is nothing here to fetch or verify. It is still a package everywhere else.
@@ -87,17 +82,15 @@ verify() {
 
 packages=("$@")
 if [ ${#packages[@]} -eq 0 ]; then
-    packages=()
-    for e in packages/*/env.sh; do packages+=("$(basename "$(dirname "$e")")"); done
+    mapfile -t packages < <(all_packages)
 fi
 
 failed=()
 for pkg in "${packages[@]}"; do
-    pkg="${pkg%/}"; pkg="${pkg#packages/}"
-    [ -f "packages/$pkg/env.sh" ] || { echo "error: unknown package '$pkg'" >&2; exit 1; }
+    pkg=$(package_name "$pkg")
     # One unreachable upstream should not hide the state of the other 22, so collect the
     # failures and report them together at the end.
-    fetch_one "$pkg" || failed+=("$pkg")
+    ( fetch_one "$pkg" ) || failed+=("$pkg")
 done
 
 if [ ${#failed[@]} -gt 0 ]; then

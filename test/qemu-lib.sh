@@ -19,7 +19,9 @@
 # ...and then drives the console with console_send / console_mark / await /
 # console_login. tools/boot-qemu.sh stops after qemu_argv and execs it instead, handing
 # the console to the terminal.
-#
+
+source tools/lib.sh   # normalize_arch
+
 # Defaults every caller shares. ROOTFS, KERNEL and INIT are deliberately not among them:
 # they differ per script and a wrong default there boots the wrong thing quietly.
 TIMEOUT="${TIMEOUT:-300}"   # qemu falls back to TCG in CI, where there is no KVM, and
@@ -36,13 +38,7 @@ QEMU_DIED='Kernel panic|Attempted to kill init|Requesting system (poweroff|reboo
 # qemu binary and machine type explicitly. Both uname's spelling (x86_64/aarch64) and this
 # repo's (amd64/arm64) are accepted.
 qemu_setup() {
-    ARCH="${ARCH:-$(uname -m)}"
-    case "$ARCH" in
-        x86_64|amd64)  ARCH=amd64 ;;
-        aarch64|arm64) ARCH=arm64 ;;
-        *) echo "error: unsupported architecture: $ARCH (expected amd64 or arm64)" >&2
-           exit 1 ;;
-    esac
+    ARCH=$(normalize_arch "${ARCH:-}")
 
     # amd64's "pc" machine and default cpu need no flags at all; arm64 has no implicit
     # machine type, so qemu-system-aarch64 refuses to start without one. ttyS0 is the 8250

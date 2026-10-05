@@ -104,7 +104,8 @@ image/            how the staging tree becomes an image, disk or OCI: Containerf
 test/             everything CI runs to verify a build, plus known-missing-libs.txt
                   and size-budget.txt; qemu-lib.sh is the boot harness the four qemu
                   tests and tools/boot-qemu.sh all source
-tools/            local conveniences and maintenance, not part of a build
+tools/            local conveniences and maintenance, not part of a build — except
+                  lib.sh, the helpers build.sh, tools/ and test/ all source
 docs/             design notes for work not done yet — proposals, not descriptions
 downloads/        source tarballs (gitignored)
 rootfs/           shared, cumulative staging tree every package installs into (gitignored)
@@ -112,7 +113,11 @@ output/           built images, fetched CI artifacts, test console logs (gitigno
 ```
 
 Paths in scripts are relative to the repository root, and the ones under `test/` and
-`tools/` `cd` there themselves, so they work from any directory. `artifacts/` is CI's
+`tools/` `cd` there themselves, so they work from any directory. Having done that, they
+`source tools/lib.sh` for what they share — `all_packages`, `package_name`, `load_env` /
+`env_get` (a package's `env.sh`, with `$PKG` set and without leaking into the caller),
+`normalize_arch`, the curl invocations and `mib`. Reach for it before writing another
+`for e in packages/*/env.sh` or another `x86_64|amd64)` case. `artifacts/` is CI's
 scratch directory for downloaded artifacts — it deliberately does not collide with
 `packages/` or `image/`.
 

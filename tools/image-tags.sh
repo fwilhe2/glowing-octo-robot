@@ -10,18 +10,14 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+source tools/lib.sh
 
 REGISTRY="${REGISTRY:-ghcr.io/fwilhe2/glowing-octo-robot}"
 
 # The builder is compiled software and every build here is native, so there is one per
 # architecture and the tag has to say which — two runners pushing the same tag would
 # clobber each other. The sources image is data, so it is one manifest list for both.
-ARCH="${ARCH:-$(uname -m)}"
-case "$ARCH" in
-    x86_64|amd64)  ARCH=amd64 ;;
-    aarch64|arm64) ARCH=arm64 ;;
-    *) echo "error: unsupported architecture: $ARCH" >&2; exit 1 ;;
-esac
+ARCH=$(normalize_arch "${ARCH:-}")
 
 case "${1:-}" in
     builder)
@@ -37,8 +33,8 @@ case "${1:-}" in
         # a changed URL that still yields the same bytes is the same image.
         # LOCAL_SOURCE packages contribute nothing: they put no tarball in the image, so
         # bumping one must not invalidate a tag that describes the tarballs.
-        hash=$(for e in packages/*/env.sh; do
-                   ( PKG=$(basename "$(dirname "$e")"); . "$e"
+        hash=$(for pkg in $(all_packages); do
+                   ( load_env "$pkg"
                      if [ -z "${LOCAL_SOURCE:-}" ]; then
                          printf '%s %s %s\n' "$PKG" "$TARBALL" "$SHA256"
                      fi )
