@@ -24,4 +24,4 @@ cmake -S . -B build \
   -DDISABLE_EXTRA_LIBS=ON \
   -DDISABLE_WERROR=ON
 cmake --build build -j"$(nproc)"
-DESTDIR=/usr/local/rootfs cmake --install build
+DESTDIR=$ROOTFS cmake --install build

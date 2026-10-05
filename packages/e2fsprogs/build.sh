@@ -36,7 +36,7 @@
     --disable-e2initrd-helper
 
 make
-make install DESTDIR=/usr/local/rootfs
+make install DESTDIR=$ROOTFS
 
 # The rest have no configure switch, so they go after the install. Same reasoning:
 # badblocks scans for media errors on a virtual disk that reports none, e4crypt
@@ -50,17 +50,10 @@ make install DESTDIR=/usr/local/rootfs
 # error-table or command-table description into C for a compiler to build. That is the
 # same argument the trim already makes for usr/include and the .a files, in binary form.
 #
-# The loop insists each name is present before removing it, so that a rename upstream
-# fails the build rather than silently shipping the binary. See the same pattern in
-# packages/util-linux/build.sh.
-for prog in badblocks e4crypt e2undo e2freefrag filefrag mklost+found logsave \
-            compile_et mk_cmds; do
-    if [ ! -e "/usr/local/rootfs/usr/bin/$prog" ]; then
-        echo "e2fsprogs: $prog is not installed — this removal list is stale" >&2
-        exit 1
-    fi
-    rm -f "/usr/local/rootfs/usr/bin/$prog"
-done
+# drop_installed (builder/build-package.sh) insists each name is present before removing
+# it, so that a rename upstream fails the build rather than silently shipping the binary.
+drop_installed badblocks e4crypt e2undo e2freefrag filefrag mklost+found logsave \
+               compile_et mk_cmds
 
 # e2scrub is an online-consistency-check harness: two shell scripts, a cron job, udev
 # rules and five systemd units that snapshot an LVM volume and fsck the snapshot. There
@@ -71,11 +64,11 @@ done
 # Unchecked, unlike the loop above: which of these get installed depends on what
 # configure found — the systemd and cron pieces are conditional — so absence is normal
 # here rather than a sign the list has gone stale.
-rm -f /usr/local/rootfs/usr/bin/e2scrub /usr/local/rootfs/usr/bin/e2scrub_all
-rm -f /usr/local/rootfs/usr/bin/e2scrub_all_cron
-rm -f /usr/local/rootfs/etc/e2scrub.conf
-rm -f /usr/local/rootfs/etc/cron.d/e2scrub_all
-rm -rf /usr/local/rootfs/usr/libexec/e2fsprogs
-rm -f /usr/local/rootfs/usr/lib/systemd/system/e2scrub*
-rm -f /usr/local/rootfs/usr/lib/udev/rules.d/*e2scrub.rules
-rm -f /usr/local/rootfs/usr/lib/udev/rules.d/*ext4.rules
+rm -f $ROOTFS/usr/bin/e2scrub $ROOTFS/usr/bin/e2scrub_all
+rm -f $ROOTFS/usr/bin/e2scrub_all_cron
+rm -f $ROOTFS/etc/e2scrub.conf
+rm -f $ROOTFS/etc/cron.d/e2scrub_all
+rm -rf $ROOTFS/usr/libexec/e2fsprogs
+rm -f $ROOTFS/usr/lib/systemd/system/e2scrub*
+rm -f $ROOTFS/usr/lib/udev/rules.d/*e2scrub.rules
+rm -f $ROOTFS/usr/lib/udev/rules.d/*ext4.rules

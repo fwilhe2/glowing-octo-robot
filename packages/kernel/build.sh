@@ -338,7 +338,7 @@ if [ -n "$unapplied" ]; then
     exit 1
 fi
 
-make -j"$(nproc)"
+make
 
 # Building natively rather than cross-compiling means `make defconfig` already picked
 # x86_64_defconfig or arm64 defconfig on its own, from SUBARCH's `uname -m` — nothing
@@ -357,7 +357,7 @@ esac
 # The rootfs image is what CI hands to qemu, so the kernel rides along inside it. It is
 # never loaded from there — qemu is passed -kernel — but keeping the two together means
 # a build artifact is always bootable on its own.
-install -D -m 644 "$kernel_image" /usr/local/rootfs/boot/bzImage
+install -D -m 644 "$kernel_image" $ROOTFS/boot/bzImage
 
 # The resolved config rides along beside it, the way a distro ships /boot/config-*. The
 # check above proves the fragments applied; test/kernel-caps.sh reads this to prove the
@@ -365,4 +365,4 @@ install -D -m 644 "$kernel_image" /usr/local/rootfs/boot/bzImage
 # defconfig used to provide for free can stop being provided without any fragment
 # changing. It is ~250 KB and it is the only record of how the kernel next to it was
 # configured, which is worth that on its own when a boot misbehaves.
-install -D -m 644 .config /usr/local/rootfs/boot/config
+install -D -m 644 .config $ROOTFS/boot/config

@@ -15,9 +15,9 @@
 # instead of the builder image's (builder/build-package.sh). They are passed through
 # rather than replaced, which is the whole of what CLAUDE.md warns about for build
 # systems that overwrite them.
-install -d /usr/local/rootfs/usr/bin
+install -d $ROOTFS/usr/bin
 
 gcc $CPPFLAGS $CFLAGS $LDFLAGS \
     -std=gnu11 -O2 -Wall -Wextra \
-    -o /usr/local/rootfs/usr/bin/flfsfetch \
+    -o $ROOTFS/usr/bin/flfsfetch \
     flfsfetch.c

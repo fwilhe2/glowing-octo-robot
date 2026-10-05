@@ -19,5 +19,5 @@
 # `install` deliberately does not pull in install_uapi_headers: that target drops the
 # kernel's linux/bpf.h and friends into /usr/include, which is a different package's job
 # on any normal system and nothing here compiles BPF programs anyway.
-make -C src -j"$(nproc)" PREFIX=/usr LIBDIR=/usr/lib
-make -C src install PREFIX=/usr LIBDIR=/usr/lib DESTDIR=/usr/local/rootfs
+make -C src PREFIX=/usr LIBDIR=/usr/lib
+make -C src install PREFIX=/usr LIBDIR=/usr/lib DESTDIR=$ROOTFS

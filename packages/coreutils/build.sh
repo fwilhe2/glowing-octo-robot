@@ -35,4 +35,4 @@ export gl_cv_func_mknod_works=yes
 # the same tree built here and in CI was producing different binaries.
 ./configure --prefix=/usr --without-selinux --without-openssl
 make
-make install DESTDIR=/usr/local/rootfs
+make install DESTDIR=$ROOTFS

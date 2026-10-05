@@ -213,8 +213,24 @@ something like OpenSSL is not what built it but what its `make install` leaves i
 removes them.
 
 `packages/<pkg>/build.sh` is bind-mounted, not copied into the image, and is *sourced* with the
-unpacked source tree as the working directory. Install with `DESTDIR=/usr/local/rootfs`
-and `--prefix=/usr`.
+unpacked source tree as the working directory. Install with `DESTDIR=$ROOTFS` and
+`--prefix=/usr`.
+
+Because it is sourced, `builder/build-package.sh` can hand every package the same
+vocabulary, and a rule that is a function there is one no package has to remember:
+
+| name | what it is for |
+| --- | --- |
+| `$ROOTFS` | the staging tree, `/usr/local/rootfs` — the `DESTDIR` |
+| `MAKEFLAGS` | exported as `-j$(nproc)`, so a plain `make` is parallel; do not add `-j` |
+| `meson_install [opts]` | setup/compile/install with `--prefix /usr --buildtype=release -Dlibdir=lib` |
+| `drop_installed prog…` | delete from `usr/bin`, and **fail** if one was not installed |
+| `assert_not_linked lib bin…` | fail if an installed binary has `lib` in `NEEDED` |
+
+`drop_installed` rather than `rm -f` whenever the file is one a reviewer would want to be
+sure is gone — an interpreter script above all. A bare `rm -f` of a name upstream has
+since renamed deletes nothing and says nothing, and the script ships. Keep `rm -f` for
+lists that are deliberately longer than any one build installs (gzip's wrappers).
 
 `PACKAGE`, `TARBALL` and `URL` are all derived from `VERSION` in `env.sh`. Never hardcode
 a version anywhere else.
@@ -310,9 +326,9 @@ the accepted backlog so new regressions stand out. Run it before booting.
 `configure`'s own default, so nothing has to say so; **meson's default buildtype is
 `debug`, which is `-O0`**, and it says nothing about it. The result compiles, links,
 passes every check here and boots — it is simply two to thirteen times the code it should
-be. Every `meson setup` in `packages/` therefore passes `--buildtype=release`
-explicitly. systemd's `-Dmode=release` is *not* that: it is a systemd option about
-logging and status-line format (see the `status-unit-format-default` note in the image
+be. Every meson package therefore goes through `meson_install`, which passes
+`--buildtype=release`; do not call `meson setup` directly. systemd's `-Dmode=release` is
+*not* that: it is a systemd option about logging and status-line format (see the `status-unit-format-default` note in the image
 section) and has nothing to do with the optimizer, which is what made this easy to miss
 for as long as it was.
 
@@ -337,8 +353,8 @@ is in deps.txt's deliberately-absent list, but `libblkid-dev` pulls it into the 
 anyway, and iproute2's configure links `ip` and `ss` against it with no `--without-selinux`
 to pass. Since `libselinux.so.1` is already allowlisted for nscd, the first sign would
 have been `ip` not starting in qemu. The fix is in `packages/iproute2/build.sh`: hide the
-library from `$PKG_CONFIG`, then `readelf` the installed binary and fail the build if it
-came back. **When packaging something that might reach for an allowlisted library, check
+library from `$PKG_CONFIG`, then `assert_not_linked` the installed binary so the build
+fails if it came back. **When packaging something that might reach for an allowlisted library, check
 the binary rather than the check.**
 
 ## Image assembly and boot

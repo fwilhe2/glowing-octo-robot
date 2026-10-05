@@ -79,5 +79,5 @@ for feature in HAVE_POSIX_ACLS HAVE_XATTRS; do
     fi
 done
 
-make -j"$(nproc)"
-make install DESTDIR=/usr/local/rootfs
+make
+make install DESTDIR=$ROOTFS

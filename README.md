@@ -133,7 +133,8 @@ and add it to the CI matrix in `.github/workflows/ci.yml`:
 
 * `build.sh` — only the configure/compile/install commands. It is sourced inside the
   container by `builder/build-package.sh` with the unpacked source tree as the working
-  directory; install with `DESTDIR=/usr/local/rootfs`.
+  directory; install with `DESTDIR=$ROOTFS`. That script also provides `meson_install`,
+  `drop_installed` and `assert_not_linked` — see CLAUDE.md.
 
 A package says nothing about its build dependencies. There is one builder image for all of
 them and `builder/deps.txt` is the whole list of what it contains, one apt package per

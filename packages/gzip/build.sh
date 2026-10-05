@@ -20,15 +20,15 @@
 export CPPFLAGS="${CPPFLAGS:-} -DGNU_STANDARD=0"
 
 ./configure --prefix=/usr
-make -j"$(nproc)"
-make install DESTDIR=/usr/local/rootfs
+make
+make install DESTDIR=$ROOTFS
 
 # The wrappers, and the two that earn a symlink instead. zless is only built when
 # configure found a `less` to wrap, which is a property of the builder image rather than
 # of this package, so the list is longer than any one build installs.
-rm -f /usr/local/rootfs/usr/bin/{gunzip,gzexe,zcat,zcmp,zdiff,zegrep,zfgrep,zforce,zgrep,zless,zmore,znew}
-ln -s gzip /usr/local/rootfs/usr/bin/gunzip
-ln -s gzip /usr/local/rootfs/usr/bin/zcat
+rm -f $ROOTFS/usr/bin/{gunzip,gzexe,zcat,zcmp,zdiff,zegrep,zfgrep,zforce,zgrep,zless,zmore,znew}
+ln -s gzip $ROOTFS/usr/bin/gunzip
+ln -s gzip $ROOTFS/usr/bin/zcat
 
 # ...and the check the flag above is worth nothing without, because its failure is silent
 # and backwards. A gunzip that did not get GNU_STANDARD=0 *compresses*: `gunzip x.gz`
@@ -36,8 +36,8 @@ ln -s gzip /usr/local/rootfs/usr/bin/zcat
 # unpacks a layer with it. The builder container runs on our glibc — root build.sh binds
 # it over Debian's, because builds execute what they just compiled — so the installed
 # binary can simply be run under the installed name.
-printf 'flfs\n' | /usr/local/rootfs/usr/bin/gzip -c > /tmp/gnu-standard-check.gz
-if [ "$(/usr/local/rootfs/usr/bin/zcat /tmp/gnu-standard-check.gz)" != flfs ]; then
+printf 'flfs\n' | $ROOTFS/usr/bin/gzip -c > /tmp/gnu-standard-check.gz
+if [ "$($ROOTFS/usr/bin/zcat /tmp/gnu-standard-check.gz)" != flfs ]; then
     echo "error: zcat did not decompress — -DGNU_STANDARD=0 did not reach the compile" >&2
     exit 1
 fi

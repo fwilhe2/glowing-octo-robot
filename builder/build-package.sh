@@ -9,28 +9,32 @@
 #   /usr/local/sysroot  tree with our glibc in it, compiled against as $SYSROOT
 set -euo pipefail
 
+# The DESTDIR every package installs into, named once. packages/<pkg>/build.sh files use
+# $ROOTFS too.
+ROOTFS=/usr/local/rootfs
+
 # merged-/usr staging: /bin /sbin /lib /lib64 become symlinks into /usr, and /usr/sbin
 # into /usr/bin — the bin/sbin merge. Both halves are load-bearing: systemd checks them
 # at startup and tags the system "unmerged-usr" / "unmerged-bin" in its taint string when
 # either is a real directory. Packages install into /usr/sbin freely; with the symlink in
 # place before any of them runs, those files land in /usr/bin.
-install -d /usr/local/rootfs/usr/{bin,lib}
+install -d "$ROOTFS"/usr/{bin,lib}
 
 # rootfs/ is cumulative, so this can meet a tree staged before the bin/sbin merge, with a
 # real /usr/sbin that has files in it. Move them across first: `ln -sfn` against an
 # existing *directory* creates a link inside it rather than replacing it, so the result
 # would silently be /usr/sbin/bin and the taint would stay.
-if [ -d /usr/local/rootfs/usr/sbin ] && [ ! -L /usr/local/rootfs/usr/sbin ]; then
-    find /usr/local/rootfs/usr/sbin -mindepth 1 -maxdepth 1 \
-        -exec mv -t /usr/local/rootfs/usr/bin/ {} +
-    rmdir /usr/local/rootfs/usr/sbin
+if [ -d "$ROOTFS/usr/sbin" ] && [ ! -L "$ROOTFS/usr/sbin" ]; then
+    find "$ROOTFS/usr/sbin" -mindepth 1 -maxdepth 1 \
+        -exec mv -t "$ROOTFS/usr/bin/" {} +
+    rmdir "$ROOTFS/usr/sbin"
 fi
 
-ln -sfn bin      /usr/local/rootfs/usr/sbin
-ln -sfn usr/bin  /usr/local/rootfs/bin
-ln -sfn usr/sbin /usr/local/rootfs/sbin
-ln -sfn usr/lib  /usr/local/rootfs/lib
-ln -sfn usr/lib  /usr/local/rootfs/lib64
+ln -sfn bin      "$ROOTFS/usr/sbin"
+ln -sfn usr/bin  "$ROOTFS/bin"
+ln -sfn usr/sbin "$ROOTFS/sbin"
+ln -sfn usr/lib  "$ROOTFS/lib"
+ln -sfn usr/lib  "$ROOTFS/lib64"
 
 # Compile and link against our own glibc instead of the builder image's (issue #33).
 # Without this the shipped binaries carry GLIBC_x.y symbol requirements from whatever
@@ -78,6 +82,64 @@ if [ -n "${SYSROOT:-}" ]; then
     export LDFLAGS="$sysroot_ldflags${LDFLAGS:+ $LDFLAGS}"
 fi
 
+# What every packages/<pkg>/build.sh can use. They are sourced, not executed, so anything
+# defined here is in scope — which is what lets a rule live in one place instead of being
+# a convention each package has to remember.
+
+# Parallel by default. Before this, half the packages ran a serial `make` — glibc among
+# them — for no reason other than that nobody had typed -j. cmake and meson pick their own
+# parallelism; make picks this up from the environment, recursive makes included.
+export MAKEFLAGS="-j$(nproc)"
+
+# drop_installed <path-under-usr/bin>...
+#
+# Delete files a package's `make install` put in usr/bin that the image does not want —
+# and fail the build if one of them was not there. A removal that silently does nothing
+# after an upstream rename is exactly how a perl or python helper ends up shipping
+# (CLAUDE.md, constraint 5), so a stale list is an error rather than a no-op. Symlinks
+# count as installed: several of these are links to the real binary.
+drop_installed() {
+    local prog f
+    for prog in "$@"; do
+        f="$ROOTFS/usr/bin/$prog"
+        if [ ! -e "$f" ] && [ ! -L "$f" ]; then
+            echo "error: $prog is not installed — this removal list is stale" >&2
+            return 1
+        fi
+        rm -f "$f"
+    done
+}
+
+# assert_not_linked <library-substring> <path-under-rootfs>...
+#
+# Fail if an installed binary has the library in its DT_NEEDED. For dependencies that are
+# configured out but can come back without a word — see "a library that is already on the
+# allowlist" in CLAUDE.md: the rootfs checks cannot see these, the binary can.
+assert_not_linked() {
+    local lib="$1" bin
+    shift
+    for bin in "$@"; do
+        if readelf -d "$ROOTFS/$bin" | grep -q "NEEDED.*$lib"; then
+            echo "error: $bin is linked against $lib, which this package configures out" >&2
+            return 1
+        fi
+    done
+}
+
+# meson_install [meson setup options]...
+#
+# setup, compile and install, with the options every package here needs. The one that
+# matters is --buildtype=release: meson's default is `debug`, which is -O0, and nothing
+# complains — see "the three things that break silently" in CLAUDE.md. A wrapper makes
+# that the default rather than something each package has to say. -Dlibdir=lib because
+# meson otherwise defaults to the builder's multiarch path (lib/x86_64-linux-gnu), which
+# nothing in the image searches.
+meson_install() {
+    meson setup --prefix /usr --buildtype=release -Dlibdir=lib "$@" build
+    meson compile -C build
+    meson install -C build --destdir "$ROOTFS"
+}
+
 cd /usr/local/src
 source /package-build.sh
 
@@ -96,7 +158,7 @@ source /package-build.sh
 # format. rootfs/ is cumulative, so the record is overwritten on a rebuild the same way
 # the binaries are.
 if [ -n "${FLFS_PKG:-}" ]; then
-    components=/usr/local/rootfs/usr/share/flfs/components
+    components=$ROOTFS/usr/share/flfs/components
     install -d "$components"
     {
         printf 'name=%s\n'    "$FLFS_PKG"

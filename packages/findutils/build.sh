@@ -8,4 +8,4 @@
 # in a generated Makefile — more fragile than the couple of hundred kilobytes is worth.
 ./configure --prefix=/usr --without-selinux
 make
-make install DESTDIR=/usr/local/rootfs
+make install DESTDIR=$ROOTFS

@@ -11,4 +11,4 @@
 # pinned so it stays that way.
 ./configure --prefix=/usr --disable-perl-regexp --without-libsigsegv
 make
-make install DESTDIR=/usr/local/rootfs
+make install DESTDIR=$ROOTFS

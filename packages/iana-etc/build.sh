@@ -12,5 +12,5 @@
 # from — upstream's inputs, not anything a booted system reads — so they stay out.
 # /etc/services is around 550K on its own, which is the price of the complete registry;
 # trimming it would mean deciding which ports someone is allowed to look up.
-install -D -m 644 services  /usr/local/rootfs/etc/services
-install -D -m 644 protocols /usr/local/rootfs/etc/protocols
+install -D -m 644 services  $ROOTFS/etc/services
+install -D -m 644 protocols $ROOTFS/etc/protocols

@@ -1,6 +1,6 @@
 ./configure --prefix=/usr
 make
-make install DESTDIR=/usr/local/rootfs
+make install DESTDIR=$ROOTFS
 
 # /bin/sh, which upstream does not install: which shell answers to that name is the
 # distribution's decision, not bash's. This one had not made it, so the image had no
@@ -17,4 +17,4 @@ make install DESTDIR=/usr/local/rootfs
 # none the wiser. The cost is a symlink.
 #
 # -f because rootfs/ is cumulative: a rebuild would otherwise meet the previous one's.
-ln -sf bash /usr/local/rootfs/usr/bin/sh
+ln -sf bash $ROOTFS/usr/bin/sh

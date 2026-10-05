@@ -7,11 +7,8 @@
 # -Dpam=enabled builds pam_systemd, which is what registers a login as a session with
 # systemd-logind — without it logind runs but never sees a seat used, so `loginctl
 # list-sessions` stays empty. It is referenced from _files/etc/pam.d/login.
-# -Dlibdir=lib: meson defaults libdir to the Debian multiarch path
-# (lib/x86_64-linux-gnu) on this builder, which the rest of the system doesn't search.
-#
 # -Dc_args replaces the CFLAGS environment variable rather than adding to it, so the
-# sysroot flags lib/build-package.sh exports have to be carried over by hand or systemd
+# sysroot flags builder/build-package.sh exports have to be carried over by hand or systemd
 # would be the one package still compiled against the builder's glibc.
 #
 # The groups after that are the trim. systemd builds close to ninety components by
@@ -20,13 +17,10 @@
 # we do not use, or a daemon with no consumer in this image. Each one dropped is a
 # binary, its units and its dbus policy gone — and one less thing that can leave a boot
 # `degraded`.
-# --buildtype=release: meson's default is `debug`, which is -O0. -Dmode=release below is
-# a systemd option about logging and status format and does not touch it. See "the three
-# things that break silently" in CLAUDE.md — this is by far the worst-affected package.
+# meson_install supplies --buildtype=release. -Dmode=release below is a systemd option
+# about logging and status format and does not touch the optimizer. See "the three things
+# that break silently" in CLAUDE.md — this is by far the worst-affected package.
 systemd_opts=(
-    --prefix /usr
-    --buildtype=release
-    -Dlibdir=lib
     -Dmode=release
     -Dc_args="${CFLAGS:-} -Wno-error=override-init"
 
@@ -87,6 +81,4 @@ systemd_opts=(
     -Dtests=false
 )
 
-meson setup "${systemd_opts[@]}" build
-meson compile -C build
-meson install -C build --destdir /usr/local/rootfs
+meson_install "${systemd_opts[@]}"

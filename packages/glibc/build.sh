@@ -4,7 +4,7 @@ pushd build
 # own sys/mount.h also defines, which -Werror turns into a fatal build error.
 ../configure --prefix=/usr --disable-werror
 make
-make install DESTDIR=/usr/local/rootfs
+make install DESTDIR=$ROOTFS
 popd
 
 # glibc's install includes a developer's toolkit that a runtime image cannot reach. This
@@ -33,14 +33,8 @@ popd
 # Kept, so the list reads as deliberate: ldconfig (image/build-rootfs.sh runs it), ldd,
 # iconv, locale, getent and getconf — the last four being things a person debugging a
 # booted machine actually types.
-for prog in gencat makedb iconvconfig localedef mtrace sotruss sprof pcprofiledump \
-            xtrace pldd sln zic zdump tzselect; do
-    if [ ! -e "/usr/local/rootfs/usr/bin/$prog" ]; then
-        echo "glibc: $prog is not installed — this removal list is stale" >&2
-        exit 1
-    fi
-    rm -f "/usr/local/rootfs/usr/bin/$prog"
-done
+drop_installed gencat makedb iconvconfig localedef mtrace sotruss sprof pcprofiledump \
+               xtrace pldd sln zic zdump tzselect
 
 # nscd is a special case among those: it is not merely unused, it cannot start. It links
 # libselinux.so.1, which this image does not ship — that is the entry it holds in
@@ -51,7 +45,7 @@ done
 # Its configuration and unit go with it, unchecked: a service file whose binary is
 # missing is how a boot ends up `degraded`, and which of these glibc's install writes
 # depends on the build.
-rm -f /usr/local/rootfs/usr/bin/nscd
-rm -f /usr/local/rootfs/etc/nscd.conf
-rm -f /usr/local/rootfs/usr/lib/systemd/system/nscd.service
-rm -f /usr/local/rootfs/usr/lib/tmpfiles.d/nscd.conf
+rm -f $ROOTFS/usr/bin/nscd
+rm -f $ROOTFS/etc/nscd.conf
+rm -f $ROOTFS/usr/lib/systemd/system/nscd.service
+rm -f $ROOTFS/usr/lib/tmpfiles.d/nscd.conf

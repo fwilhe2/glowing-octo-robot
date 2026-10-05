@@ -9,4 +9,4 @@
 ./configure --prefix=/usr --enable-obsolete-api=glibc --disable-failure-tokens \
   --disable-werror
 make
-make install DESTDIR=/usr/local/rootfs
+make install DESTDIR=$ROOTFS
