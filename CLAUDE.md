@@ -144,6 +144,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ./tools/ssh.sh [cmd...]           # passwordless root ssh into the guest boot-qemu.sh started
+./tools/clean.sh [-n] [--downloads|--images|--all]  # delete build state, tarballs, stale images
 ```
 
 `vs-debian-slim.sh` is the other half of `rootfs-size.sh`: the budget is a number we chose,

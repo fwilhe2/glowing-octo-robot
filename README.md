@@ -86,6 +86,14 @@ produces binaries that can't start.
 The same script also writes `output/flfs-oci.tar`, the same userspace as a container image
 — see [The OCI image](#the-oci-image).
 
+To get the disk space back, `./tools/clean.sh` deletes everything a rebuild recreates
+without the network: `rootfs/`, the unpacked source trees under `packages/` (the
+kernel's alone is several GB), `output/` and fetched artifacts. `--downloads` adds the
+tarballs, `--images` this repository's podman images that no longer match the current
+tags (every `builder/deps.txt` change leaves a gigabyte-sized builder behind), `--all`
+everything including the current images, and `-n` lists what would go and its size
+without deleting anything. `extra/` and anything git tracks are never touched.
+
 ## Adding a package
 
 Packaging is the easy part; choosing is where the mistakes are. Before writing any of the
