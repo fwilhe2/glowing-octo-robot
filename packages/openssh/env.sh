@@ -22,11 +22,11 @@
 # The OpenSSL coupling curl's env.sh describes applies here too and for the same reason —
 # this compiles against sid's libssl-dev headers and asks libcrypto.so.3 for its symbols
 # at runtime, which packages/openssl answers only while it stays on a 3.x release.
-VERSION="10.5p1"
+VERSION="10.6p1"
 PACKAGE="openssh-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"
 URL="https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/${TARBALL}"
-SHA256="d44d28a839ea9daf969cc69150fde59910b2b39361dad81a3bd6cbd19218db11"
+SHA256="a9dc9565dffe8640f64d863cd29a32bc4a3dbdec0566a7fc44c5d6ee767d5f39"
 # Read off the tarball's LICENCE, which enumerates them rather than naming one: the
 # OpenSSH licence proper for Tatu Ylonen's original code (1 and 2), ssh-keyscan's own
 # terms (3), the public-domain Rijndael implementation (4), 3-clause BSD for the Berkeley
