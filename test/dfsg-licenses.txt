@@ -39,6 +39,10 @@ curl                    # MIT plus the advertising clause, i.e. X11 in all but w
 SSH-OpenSSH             # Tatu Ylonen's terms for the original ssh code, which openssh
                         # still carries: use freely for any purpose, mark derived
                         # versions as such. Items 1 and 2 of openssh's LICENCE
+Unicode-3.0             # Unicode's data-files licence: use, copy, modify and distribute
+                        # with the notice kept. Debian main carries it in ICU and in
+                        # every Rust package built on unicode-ident; here it comes in
+                        # with nspawn's URL-parsing crates
 ssh-keyscan             # David Mazieres' terms for ssh-keyscan: modify and redistribute
                         # provided the copyright notice stays. Item 3 of the same file.
                         # Lower-case because SPDX publishes the identifier that way

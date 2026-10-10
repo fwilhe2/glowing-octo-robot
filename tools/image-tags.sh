@@ -36,7 +36,10 @@ case "${1:-}" in
         hash=$(for pkg in $(all_packages); do
                    ( load_env "$pkg"
                      if [ -z "${LOCAL_SOURCE:-}" ]; then
-                         printf '%s %s %s\n' "$PKG" "$TARBALL" "$SHA256"
+                         # A CARGO_CRATES package also puts its crates in the image. Which
+                         # ones is fixed by the Cargo.lock inside the tarball, so SHA256
+                         # already covers them; the marker covers turning the flag on.
+                         printf '%s %s %s%s\n' "$PKG" "$TARBALL" "$SHA256" "${CARGO_CRATES:+ crates}"
                      fi )
                done | sort | sha256sum)
         ;;

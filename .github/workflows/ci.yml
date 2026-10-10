@@ -452,6 +452,12 @@ jobs:
       - name: Check containers
         run: ./test/container.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
 
+      # And a sixth, the other way to run one: nspawn pulls an image, systemd-nspawn
+      # runs it as a machine registered with machined, and its traffic leaves over the
+      # nspawn0 bridge through nft. Driven over ssh rather than the console.
+      - name: Check nspawn machines
+        run: ./test/nspawn.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
+
       - name: Upload console log
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

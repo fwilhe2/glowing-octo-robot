@@ -72,6 +72,16 @@ clang
 bpftool
 linux-bpf-dev
 
+# Rust, for packages/nspawn. Debian's rustc and cargo rather than rustup, for the same
+# reason gcc is Debian's: the builder image is the toolchain, pinned by SNAPSHOT in
+# builder/Containerfile, and a second installer fetching a toolchain from elsewhere would
+# be a build input nothing here describes. Two things about Rust packages are handled in
+# builder/build-package.sh rather than by each one: crates come from downloads/crates
+# (the build is --network=none), and the libgcc_s that every *-linux-gnu Rust binary
+# otherwise needs is replaced by the static unwinder. See cargo_install there.
+rustc
+cargo
+
 # The kernel package: BTF needs pahole out of dwarves. libssl-dev used to be here too,
 # for the signing tooling kbuild builds whether or not anything is signed; it has moved
 # down to the section below, now that openssl is a package we ship.
@@ -98,6 +108,7 @@ libkmod-dev
 liblzma-dev
 libmnl-dev
 libmount-dev
+libnftnl-dev
 libncurses-dev
 libpam0g-dev
 # ...and the sharpest case of that SONAME argument: curl compiles against sid's OpenSSL

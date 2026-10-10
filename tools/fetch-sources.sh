@@ -48,7 +48,8 @@ fetch_one() {
 
     if [ -f "$target" ] && verify "$target" "$SHA256"; then
         echo "  $pkg: $TARBALL already present and verified"
-        return 0
+        fetch_crates "$pkg" "$target"
+        return
     fi
 
     # A file that is present but wrong is either a half-finished download (which curl
@@ -61,7 +62,8 @@ fetch_one() {
         echo "  $pkg: fetching $url"
         if "${CURL[@]}" -o "$target" "$url"; then
             if verify "$target" "$SHA256"; then
-                return 0
+                fetch_crates "$pkg" "$target"
+                return
             fi
             # Not a transport problem: this URL serves the wrong bytes, and retrying it
             # or resuming onto it cannot help. Say so loudly and move to the next source.
@@ -74,6 +76,46 @@ fetch_one() {
 
     echo "error: could not fetch $TARBALL for $pkg from any source" >&2
     return 1
+}
+
+# A Rust package's crates, which the compile cannot fetch for itself — it runs
+# --network=none like every other. CARGO_CRATES=1 in env.sh asks for this. The list is the
+# Cargo.lock inside the tarball just verified, and each crate is checked against the
+# sha256 that lock records, so the chain of custody is the same as for the tarball: the
+# pin in env.sh covers Cargo.lock, and Cargo.lock covers every crate. A version bump
+# brings its own set with no further edit.
+#
+# One directory for every package's crates, named the way crates.io names them, so two
+# packages that lock the same crate share one file. Like downloads/ itself it is
+# cumulative; tools/prep.sh copies only the crates the current locks name into the
+# sources image.
+fetch_crates() {
+    local pkg="$1" tarball="$2" name ver sum file n=0
+    [ -n "${CARGO_CRATES:-}" ] || return 0
+    mkdir -p downloads/crates
+    while read -r name ver sum; do
+        file="downloads/crates/$name-$ver.crate"
+        if [ -f "$file" ] && verify "$file" "$sum"; then
+            continue
+        fi
+        rm -f "$file"
+        if ! "${CURL_DOWNLOAD[@]}" -o "$file" "https://static.crates.io/crates/$name/$name-$ver.crate"; then
+            echo "error: $pkg: could not fetch crate $name $ver" >&2
+            return 1
+        fi
+        if ! verify "$file" "$sum"; then
+            echo "  $pkg: CHECKSUM MISMATCH for crate $name $ver" >&2
+            echo "         expected $sum (from Cargo.lock)" >&2
+            echo "         got      $(sha256sum <"$file" | cut -d' ' -f1)" >&2
+            rm -f "$file"
+            return 1
+        fi
+        n=$((n + 1))
+    done < <(cargo_lock "$tarball" | cargo_lock_crates)
+    # The process substitution's own exit status is invisible to the loop, so a lock the
+    # reader refused (a git dependency) has to be checked separately.
+    cargo_lock "$tarball" | cargo_lock_crates >/dev/null
+    echo "  $pkg: crates verified ($n fetched)"
 }
 
 verify() {

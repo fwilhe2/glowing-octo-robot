@@ -48,10 +48,17 @@ systemd_opts=(
     # nothing to switch between and systemd's own translations nothing to translate.
     -Dlocaled=false -Dtranslations=false
 
-    # Container and image machinery we do not use: crun is the runtime (constraint 3),
-    # and there is no image tooling to feed nspawn/machined/importd a machine image.
-    # nss-mymachines resolves container hostnames through machined, so it goes too.
-    -Dmachined=false -Dnspawn=disabled -Dvmspawn=disabled -Dimportd=disabled
+    # systemd-nspawn and systemd-machined are on, for packages/nspawn: it starts, inspects
+    # and stops machines entirely through machined's and systemd's D-Bus APIs, and each
+    # machine is a systemd-nspawn process. crun is still the OCI runtime (constraint 3);
+    # these are a second, machine-shaped way to run a container, not a replacement.
+    #
+    # What stays off is the rest of that family, none of which nspawn calls. importd
+    # (`importctl`) — nspawn pulls OCI images itself, and importd would bring libcurl and
+    # libarchive with it. vmspawn — a VM inside a VM. nss-mymachines — nspawn writes its
+    # machines' names into /etc/hosts, so nothing needs machined in nsswitch.conf. portabled
+    # and sysext are image-based deployment this image does not do.
+    -Dmachined=true -Dnspawn=enabled -Dvmspawn=disabled -Dimportd=disabled
     -Dnss-mymachines=disabled -Dportabled=false -Dsysext=false
 
     # Deployment and provisioning: repartitioning the disk, A/B image updates, cloud

@@ -62,6 +62,19 @@
 # /etc/ssh/moduli, a data file for a key exchange modern clients no longer negotiate.
 # Both are the places to look first if a ceiling ever needs defending rather than raising.
 #
+# nspawn is the other one written down rather than rediscovered, because it is the
+# largest single file in the image: 21.8 MiB stripped, taking the amd64 ext4 image from
+# 95.2 to 117.0 MiB, 92% of its ceiling, and arm64's from a measured 134.8 to an
+# estimated ~160. It is one statically linked Rust binary carrying its whole dependency
+# tree — aws-lc, rustls, reqwest, zbus, sigstore, zstd — which is the normal shape for a
+# Rust program and the reason it is subtracted from the oci flavour rather than counted
+# there: no machines to manage without systemd, and 22 MiB would put that image past
+# debian-slim. The next thing on amd64 ext4 will hit this ceiling; when it does, nspawn is
+# where the argument starts (opt-level = "s", or which of its features this image needs).
+# What it drives cost far less: systemd-nspawn, systemd-machined, nft, libnftnl and
+# libnftables together took amd64 ext4 to 119.3 MiB (94%) and oci to 60.0 (nft stays in a
+# container, systemd-nspawn does not).
+#
 # flavour  arch   MiB
 ext4       amd64  126
 ext4       arm64  186

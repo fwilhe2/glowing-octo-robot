@@ -92,6 +92,15 @@ CONFIG_NF_TABLES_INET=y
 CONFIG_NFT_NAT=y
 CONFIG_NFT_MASQ=y
 CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
+
+# The two nf_tables expressions nspawn's bridge ruleset uses beyond NAT and masquerade:
+# `ct status dnat` (NFT_CT, conntrack state in a rule — also what every stateful
+# "established,related accept" firewall needs) and `fib daddr type local` (NFT_FIB_IPV4,
+# routing lookups, to publish a port only for traffic addressed to this host). Without
+# either, nft rejects the whole ruleset rather than the one rule.
+CONFIG_NFT_CT=y
+CONFIG_NFT_FIB=y
+CONFIG_NFT_FIB_IPV4=y
 EOF
 make container.config
 

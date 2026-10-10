@@ -94,6 +94,15 @@ else
         ( load_env "$pkg"
           if [ -z "${LOCAL_SOURCE:-}" ]; then
               cp "downloads/$TARBALL" "$stage/sources/$TARBALL"
+          fi
+          # A Rust package's crates, which fetch-sources.sh has just verified against its
+          # Cargo.lock. Only those this lock names: downloads/crates is cumulative too.
+          if [ -n "${CARGO_CRATES:-}" ]; then
+              mkdir -p "$stage/sources/crates"
+              cargo_lock "downloads/$TARBALL" | cargo_lock_crates |
+                  while read -r name ver _; do
+                      cp "downloads/crates/$name-$ver.crate" "$stage/sources/crates/"
+                  done
           fi )
     done
     printf 'FROM scratch\nCOPY sources /sources\n' > "$stage/Containerfile"

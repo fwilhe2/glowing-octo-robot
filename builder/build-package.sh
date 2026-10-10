@@ -140,6 +140,94 @@ meson_install() {
     meson install -C build --destdir "$ROOTFS"
 }
 
+# cargo_build [cargo build options]...
+#
+# `cargo build --release` for a package with CARGO_CRATES=1, offline, against our glibc,
+# and without libgcc_s. Leaves the binaries in target/release; installing them is the
+# package's business. Three things every Rust package would otherwise have to get right:
+#
+# The crates. The compile is --network=none, so cargo gets a vendored source in place of
+# crates.io, assembled here from the .crate files tools/fetch-sources.sh verified into
+# downloads/crates (mounted at /usr/local/crates). Exactly what Cargo.lock names is
+# unpacked, each one checked against the lock's sha256 again on the way in. The
+# `"files":{}` in .cargo-checksum.json is the documented form for a crate that has not
+# been tampered with file by file — cargo still compares "package" against Cargo.lock.
+# The awk is a copy of cargo_lock_crates in tools/lib.sh, which is not mounted here.
+#
+# The glibc. rustc links through `cc` but ignores LDFLAGS, so the sysroot flags above are
+# handed over one by one as -C link-arg. Without that a Rust binary would quietly be
+# linked against Debian's crt files — "the three things that break silently", number one.
+# Build scripts compiling C (aws-lc, zstd) go through the cc crate, which does read
+# CFLAGS, so that half needs nothing.
+#
+# libgcc_s. Every Rust binary for *-linux-gnu has libgcc_s.so.1 in NEEDED: std's unwinder
+# asks for -lgcc_s by name, so -static-libgcc does nothing and panic=abort does not remove
+# it either. The image does not ship gcc's runtime and should not have to, so -lgcc_s is
+# made to resolve to a linker script that names libgcc_eh.a, gcc's static unwinder, and the
+# binary carries its own copy (tens of KB). That is the same unwinder, linked in rather
+# than loaded; it only matters when an exception crosses between shared objects, which a
+# self-contained Rust binary never does. Checked afterwards, because a toolchain change
+# that bypassed the script would otherwise be found by somebody running the binary.
+cargo_build() {
+    local vendor=/tmp/cargo-vendor shim=/tmp/gcc-s-static name ver sum flag bin
+    rm -rf "$vendor" && mkdir -p "$vendor"
+    while read -r name ver sum; do
+        local crate="/usr/local/crates/$name-$ver.crate"
+        if [ "$(sha256sum < "$crate" | cut -d' ' -f1)" != "$sum" ]; then
+            echo "error: crate $name $ver does not match its Cargo.lock checksum" >&2
+            return 1
+        fi
+        mkdir -p "$vendor/$name-$ver"
+        tar -xzf "$crate" -C "$vendor/$name-$ver" --strip-components=1
+        printf '{"files":{},"package":"%s"}' "$sum" > "$vendor/$name-$ver/.cargo-checksum.json"
+    done < <(awk -F' = ' '
+        function flush() {
+            if (src == "") return
+            if (src != "\"registry+https://github.com/rust-lang/crates.io-index\"" || sum == "") {
+                print "error: crate " name " " ver " is from " src ", not crates.io" > "/dev/stderr"
+                exit 1
+            }
+            gsub(/"/, "", name); gsub(/"/, "", ver); gsub(/"/, "", sum)
+            print name, ver, sum
+        }
+        /^\[\[package\]\]/ { flush(); name = ver = src = sum = "" }
+        $1 == "name"     { name = $2 }
+        $1 == "version"  { ver = $2 }
+        $1 == "source"   { src = $2 }
+        $1 == "checksum" { sum = $2 }
+        END { flush() }' Cargo.lock)
+
+    export CARGO_HOME=/tmp/cargo-home
+    mkdir -p "$CARGO_HOME"
+    cat > "$CARGO_HOME/config.toml" <<EOF
+[source.crates-io]
+replace-with = "vendored"
+
+[source.vendored]
+directory = "$vendor"
+
+[net]
+offline = true
+EOF
+
+    mkdir -p "$shim"
+    echo 'INPUT(-lgcc_eh)' > "$shim/libgcc_s.so"
+    RUSTFLAGS="-L native=$shim"
+    for flag in ${LDFLAGS:-}; do
+        RUSTFLAGS+=" -C link-arg=$flag"
+    done
+    export RUSTFLAGS
+
+    cargo build --release --locked --offline "$@"
+
+    while IFS= read -r bin; do
+        if readelf -d "$bin" 2>/dev/null | grep -q 'NEEDED.*libgcc_s'; then
+            echo "error: $bin still needs libgcc_s.so.1 — the static unwinder was bypassed" >&2
+            return 1
+        fi
+    done < <(find target/release -maxdepth 1 -type f -perm -u+x)
+}
+
 cd /usr/local/src
 source /package-build.sh
 

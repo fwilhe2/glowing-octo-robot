@@ -261,6 +261,16 @@ if [ "$flavour" = oci ]; then
            usr/libexec/sftp-server etc/ssh/sshd_config etc/ssh/moduli
     rm -rf var/empty
 
+    # nspawn, all of it: it is a manager for systemd-nspawn machines, talking to
+    # systemd-machined over a bus, and a container has neither. It is also the single
+    # largest binary in the image (aws-lc, rustls and sigstore are compiled in), and
+    # leaving it would put the container image past debian-slim, which
+    # test/vs-debian-slim.sh treats as the line past which this image has no case. Its
+    # unit and journald drop-in went with usr/lib/systemd above.
+    rm -f  usr/bin/nspawn usr/share/dbus-1/system-services/org.nspawn.service \
+           usr/share/dbus-1/system.d/org.nspawn.conf
+    rm -rf etc/nspawn var/lib/nspawn
+
     # kmod, dead here for a reason that has nothing to do with containers: packages/kernel
     # builds with CONFIG_MODULES off, so there is no module to insert into anything. The
     # disk image keeps it anyway — systemd-modules-load and udev reach libkmod, and a
