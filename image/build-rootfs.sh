@@ -241,6 +241,26 @@ if [ "$flavour" = oci ]; then
     # A serial getty, in a container that has no serial line and no PID 1 to start one.
     rm -f usr/bin/agetty
 
+    # openssh's server half, which the PAM sweep above cannot see: sshd-session and
+    # sshd-auth are the two binaries in the package that link libpam — configure puts
+    # -lpam in SSHDLIBS rather than LIBS, so the clients and even the listener do not —
+    # and they live in usr/libexec, which that loop does not walk. Named instead, so
+    # the -f is the one place a rename would go unnoticed; a release that moved them
+    # into usr/bin would be collected by the sweep, and one that kept them here under a
+    # new name would ship a binary whose NEEDED names a deleted libpam, which is what
+    # test/check-rootfs-deps.sh is for.
+    #
+    # The rest of the package stays, and that is the line this draws: an ssh *client*
+    # in a container is ordinary, an ssh *server* in one has no PID 1 to be started by,
+    # no /etc/pam.d to authenticate through and no host key anything would generate. So
+    # the listener goes with its helpers, and so do the files that exist only to serve
+    # it — the sftp subsystem sshd execs, the config and moduli only sshd reads, and the
+    # privilege separation chroot only sshd enters. Its unit and sysusers.d snippet went
+    # with usr/lib/systemd above.
+    rm -f  usr/bin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth \
+           usr/libexec/sftp-server etc/ssh/sshd_config etc/ssh/moduli
+    rm -rf var/empty
+
     # kmod, dead here for a reason that has nothing to do with containers: packages/kernel
     # builds with CONFIG_MODULES off, so there is no module to insert into anything. The
     # disk image keeps it anyway — systemd-modules-load and udev reach libkmod, and a

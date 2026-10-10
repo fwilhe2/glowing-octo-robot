@@ -438,7 +438,15 @@ jobs:
       - name: Check networking
         run: ./test/network.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
 
-      # And a fourth, which starts an actual container: the kernel's container.config
+      # A fourth, which logs into the guest over ssh: once from inside the guest to itself,
+      # then from the runner through tools/ssh.sh and the ephemeral key qemu_ssh_setup
+      # hands the guest at boot. sshd is the first thing this image ever listens on and
+      # nothing above would notice it refusing every connection — test/systemd.sh only
+      # asks whether the unit *started*.
+      - name: Check ssh
+        run: ./test/ssh.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
+
+      # And a fifth, which starts an actual container: the kernel's container.config
       # fragment and crun are only useful together, and nothing above this exercises
       # either of them.
       - name: Check containers

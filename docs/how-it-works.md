@@ -160,6 +160,7 @@ There is no unit test suite. The checks, cheapest first:
 | `test/boot.sh` | kernel and loader: boots with `/bin/bash` as PID 1 |
 | `test/systemd.sh` | a failed unit (`degraded`), or a taint |
 | `test/network.sh` | DHCP, DNS and outbound TCP/TLS, first with builtins, then with `ip`/`curl` |
+| `test/ssh.sh` | sshd up, key login guest-to-itself with a logind session, then from the host via `tools/ssh.sh` |
 | `test/container.sh` | crun starts a container in the booted guest |
 
 The qemu tests share `test/qemu-lib.sh`, and so does `tools/boot-qemu.sh`, so an

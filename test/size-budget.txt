@@ -52,6 +52,16 @@
 # directories neither touched — image/build-rootfs.sh strips in parallel with
 # `xargs -P`, and the batching depends on find's order.
 #
+# openssh landed without a row moving, and the number is written down here rather than
+# left to be rediscovered: measured locally on amd64 it took the ext4 image from 86.9 to
+# 95.2 MiB (8.3) and the oci one from 54.3 to 58.5 (4.2 — the client half; the server
+# half is subtracted with PAM). Most of that is not the daemon: openssh builds a static
+# libssh.a and links it into each of its installed binaries, so `ssh`, `sshd`, `scp`,
+# `sftp`, `ssh-keygen`, `ssh-agent`, `ssh-add`, `ssh-keyscan`, `sshd-session`, `sshd-auth`
+# and `sftp-server` each carry their own copy of the protocol code. Another 0.66 MiB is
+# /etc/ssh/moduli, a data file for a key exchange modern clients no longer negotiate.
+# Both are the places to look first if a ceiling ever needs defending rather than raising.
+#
 # flavour  arch   MiB
 ext4       amd64  126
 ext4       arm64  186

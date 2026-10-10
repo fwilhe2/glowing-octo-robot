@@ -102,7 +102,7 @@ builder/          how a package is compiled: the one builder image, deps.txt (it
 image/            how the staging tree becomes an image, disk or OCI: Containerfile,
                   build-rootfs.sh, and files/ — the /etc the image ships
 test/             everything CI runs to verify a build, plus known-missing-libs.txt
-                  and size-budget.txt; qemu-lib.sh is the boot harness the four qemu
+                  and size-budget.txt; qemu-lib.sh is the boot harness the five qemu
                   tests and tools/boot-qemu.sh all source
 tools/            local conveniences and maintenance, not part of a build — except
                   lib.sh, the helpers build.sh, tools/ and test/ all source
@@ -135,6 +135,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/boot.sh output/rootfs.ext4 rootfs/boot/bzImage   # headless boot smoke test
 ./test/systemd.sh output/rootfs.ext4 rootfs/boot/bzImage  # no failed units
 ./test/network.sh output/rootfs.ext4 rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
+./test/ssh.sh output/rootfs.ext4 rootfs/boot/bzImage        # sshd, in-guest and from the host
 ./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage  # crun starts a container
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./test/rootfs-size.sh [ext4|oci]  # image size vs test/size-budget.txt, and where it went
@@ -142,6 +143,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
 ./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
+./tools/ssh.sh [cmd...]           # passwordless root ssh into the guest boot-qemu.sh started
 ```
 
 `vs-debian-slim.sh` is the other half of `rootfs-size.sh`: the budget is a number we chose,
@@ -496,14 +498,14 @@ is being assembled, and `systemd-sysusers` is ordered before `systemd-tmpfiles-s
 The kernel is a normal package (`packages/kernel/`, `defconfig` + `kvm_guest.config` +
 `container.config` + `vm.config`) staged at `rootfs/boot/bzImage`, so a CI run is self-contained. `test/boot.sh` runs `/bin/bash` as
 PID 1 by default, not systemd: it isolates "the kernel booted and the loader resolved a
-real binary" from everything systemd does on top. `test/systemd.sh`, `test/network.sh` and
-`test/container.sh` boot systemd for real (they reach `multi-user.target` and a login
+real binary" from everything systemd does on top. `test/systemd.sh`, `test/network.sh`,
+`test/ssh.sh` and `test/container.sh` boot systemd for real (they reach `multi-user.target` and a login
 prompt). `test/systemd.sh` is the cheap catch-all: it asserts `systemctl is-system-running`
 says `running`, which is `degraded` if and only if some unit failed — the failure mode a
 package gets for free by installing a unit whose binary needs a library we don't ship. It also
 asserts the `Tainted` property is empty.
 
-**None of the four spells out how to launch a guest — `test/qemu-lib.sh` does, and
+**None of the five spells out how to launch a guest — `test/qemu-lib.sh` does, and
 `tools/boot-qemu.sh` sources it too.** The machine type, console device, accel flags and
 kernel command line were copied into all five and were byte-identical in three of them,
 and the drift that invites is worse than untidy: `boot-qemu.sh` is what you reach for to
@@ -513,7 +515,7 @@ one. A test now sets its own `ROOTFS`/`KERNEL`/`INIT`/`LOG` and a `TEST_NAME`, t
 `console_mark`, `await` and `console_login`. `DIAGNOSE`, when a test sets it, is what
 `fail` types at the guest before dumping the transcript.
 
-All three that log in drive a real serial login, and `await` only matches console output
+All four that log in drive a real serial login, and `await` only matches console output
 that arrived *after* the point the caller passes in. That is load-bearing rather than tidy:
 matching the whole transcript once made the password get typed into the username prompt,
 because systemd (built `-Dmode=release`, so status lines are unit *descriptions* — see
@@ -555,8 +557,8 @@ Masking the tmpfiles snippet with a symlink to `/dev/null` is what switches one 
 mask stops tmpfiles restoring it, the `rm` removes the copy already staged. The reason is
 no longer that it shells out to `sed` on every prompt, which was true before `sed` was a
 package; it is that the drop-in wraps every prompt in OSC 3008 sequences, and the serial
-console is not a terminal here but the input `test/systemd.sh`, `test/network.sh` and
-`test/container.sh` parse. Unmasking it is a change to what those tests read, so it wants
+console is not a terminal here but the input `test/systemd.sh`, `test/network.sh`,
+`test/ssh.sh` and `test/container.sh` parse. Unmasking it is a change to what those tests read, so it wants
 its own commit rather than a ride inside another one.
 
 `nsswitch.conf` may only name modules that are actually in the image as
@@ -604,6 +606,39 @@ for `libcrypto.so.3`/`libssl.so.3` at runtime, which ours answers only while it 
 3.x release. `packages/openssl/env.sh` holds `tools/check-updates.sh` to the 3.5 series
 for that reason, and `test/check-symbol-versions.sh` is what would catch the other
 direction — a curl that wanted a symbol version our older OpenSSL does not define.
+
+**sshd is the first thing the image listens on, and the first package that arrives
+with a service** — which sets the rule: a package installs its own scaffolding into
+`DESTDIR`, not into `image/files`. `packages/openssh/build.sh` writes `sshd.service`,
+`sshd-keygen.service`, the `multi-user.target.wants` symlink that enables it, the
+`sysusers.d` entry for the privilege-separation account, `sshd_config` and
+`/etc/pam.d/sshd`. `image/files` is copied whatever was built, and a unit naming a binary
+the image does not contain is a failed unit and a `degraded` boot. Host keys are made at
+first boot (`ssh-keygen -A`) and `make install-nokeys` is what keeps them out of the image
+— never switch that to `install`. The OCI flavour drops the server half by name in the
+subtractions block: `sshd-session` and `sshd-auth` are the only libpam consumers in the
+package and they live in `usr/libexec`, which the PAM sweep does not walk.
+
+The OpenSSL coupling is curl's, plus a wrinkle: openssh's configure **runs** a test
+program to compare header and library versions, and the loader finds the builder image's
+libcrypto rather than the sysroot's, so it compares the wrong pair and fails on a minor
+version skew. `--without-openssl-header-check` is deliberate; sshd repeats the check at
+every start against the library it really runs on, requiring only the same major.
+
+**Passwordless login is a per-boot key handed in as a systemd credential, and sshd reads
+the credential, not the copy.** `qemu_ssh_setup` in `test/qemu-lib.sh` (called by
+`tools/boot-qemu.sh` by default and by `test/ssh.sh`) generates an ed25519 pair into
+`$SSH_DIR` (`output/ssh`), forwards `127.0.0.1:$SSH_PORT` to the guest's 22, passes the
+public key as `systemd.set_credential_binary=ssh.authorized_keys.root:<base64>` on the
+kernel command line — not SMBIOS, which arm64's firmware-less `virt` boot does not have —
+and writes an `ssh_config` that `tools/ssh.sh` hands to `ssh -F`. The directory is deleted
+when qemu exits. systemd's `tmpfiles.d/provision.conf` also copies that credential to
+`/root/.ssh/authorized_keys`, but with `f^`, which only creates a missing file: on a disk
+booted before, it keeps the first key and silently ignores every later one. That is why
+`sshd_config` ends in `Match User root` / `AuthorizedKeysFile .ssh/authorized_keys
+/run/credentials/@system/ssh.authorized_keys.root`. Remove that block and the wrapper works
+exactly once per disk image. `test/ssh.sh`'s third round is ordered after the second
+replaces `authorized_keys` precisely so it can only pass through that path.
 
 The OCI runtime is `crun` (constraint 3), plus `json-c` for `config.json`. crun is the
 only runtime written in C; runc (Go) and youki (Rust) would each mean a second toolchain

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The qemu plumbing shared by the boot tests and tools/boot-qemu.sh.
 #
-# Sourced, never executed. Four scripts in test/ and one in tools/ all have to launch the
+# Sourced, never executed. Five scripts in test/ and one in tools/ all have to launch the
 # same guest — same machine type, same console device, same accel flags, same kernel
-# command line — and three of them then have to drive a serial login. Written out per
+# command line — and four of them then have to drive a serial login. Written out per
 # script that was ~470 lines of identical text, and the failure mode of letting it drift
 # is nasty in a specific way: tools/boot-qemu.sh is what somebody reaches for to debug a
 # boot CI just failed, so a divergence there means debugging a different machine than the
@@ -13,6 +13,8 @@
 #
 #   qemu_setup       normalize $ARCH; pick the binary, console device and accel flags
 #   qemu_preflight   refuse now if the binary or the images are missing
+#   qemu_ssh_setup   optional: an ephemeral key, a port forward to the guest's sshd and
+#                    the credential that authorizes the one over the other (see below)
 #   qemu_argv        build the common command line into $QEMU_ARGV
 #   qemu_boot        run it in the background on a fifo, logging to $LOG
 #
@@ -79,14 +81,77 @@ qemu_preflight() {
     [ -f "$ROOTFS" ] || { echo "error: missing rootfs: $ROOTFS${QEMU_HINT:+ $QEMU_HINT}" >&2; exit 1; }
 }
 
+# Passwordless ssh into the guest, the way Vagrant and Lima do it: a key pair generated on
+# the host for this boot only, its public half handed to the guest as it boots, a host
+# port forwarded to the guest's 22, and an ssh_config tying the three together, so that
+# `ssh -F $SSH_DIR/config flfs` — which is all tools/ssh.sh is — needs nothing else.
+#
+# Nothing about it is in the image. The key reaches the guest as the systemd credential
+# ssh.authorized_keys.root on the kernel command line (systemd.set_credential_binary=,
+# base64 because a public key has spaces in it). That is systemd's own interface for
+# exactly this, and it works the same on both architectures, which SMBIOS — the other way
+# qemu passes credentials — does not: arm64's virt board has no SMBIOS without UEFI
+# firmware, and this boots the kernel directly. The command line is world-readable inside
+# the guest, which is fine for a *public* key and is the reason nothing else goes this
+# way. packages/openssh/build.sh has sshd read the credential where PID 1 put it, so a
+# disk that was booted before with another key still accepts this one.
+#
+# Ephemeral in the sense that matters: generated per call, never written into the image,
+# and deleted with $SSH_DIR when the guest goes away — by qemu_boot's cleanup, or by the
+# caller's when it launches qemu itself. A private key that outlives its guest is one more
+# file to keep track of for no gain; the next boot makes a new one in milliseconds.
+#
+# The forward binds 127.0.0.1 only. SSH_PORT picks the port; by default it is the first
+# from 2222 that nothing on this host is listening on, which is racy in theory and lets
+# two guests run side by side in practice.
+qemu_ssh_setup() {
+    command -v ssh-keygen >/dev/null || { echo "error: ssh-keygen not found (install an openssh client)" >&2; exit 1; }
+    SSH_DIR="${SSH_DIR:-output/ssh}"
+    if [ -z "${SSH_PORT:-}" ]; then
+        SSH_PORT=2222
+        while (exec 9<>"/dev/tcp/127.0.0.1/$SSH_PORT") 2>/dev/null; do
+            SSH_PORT=$((SSH_PORT + 1))
+        done
+    fi
+
+    rm -rf "$SSH_DIR"
+    mkdir -p -m 700 "$SSH_DIR"
+    ssh-keygen -q -t ed25519 -N '' -C "flfs-ephemeral@$(hostname)" -f "$SSH_DIR/id_ed25519"
+
+    # StrictHostKeyChecking/UserKnownHostsFile because the guest generates its host keys at
+    # its own first boot (sshd-keygen.service), so a rebuilt image is a new host on the
+    # same port and recording it would only buy a MITM warning next time. This is a
+    # loopback forward to a VM this shell just started, which is the one case where that
+    # trade is right; Lima and Vagrant make it too. IdentitiesOnly keeps an agent full of
+    # other keys from using up MaxAuthTries before this one is offered, and BatchMode
+    # turns "the key was refused" into an error rather than a password prompt root could
+    # never pass (PermitRootLogin prohibit-password).
+    cat > "$SSH_DIR/config" <<EOF
+Host flfs
+    HostName 127.0.0.1
+    Port $SSH_PORT
+    User root
+    IdentityFile $(realpath "$SSH_DIR/id_ed25519")
+    IdentitiesOnly yes
+    BatchMode yes
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+EOF
+
+    QEMU_NIC_EXTRA=",hostfwd=tcp:127.0.0.1:$SSH_PORT-:22"
+    QEMU_APPEND_EXTRA=" systemd.set_credential_binary=ssh.authorized_keys.root:$(base64 -w0 < "$SSH_DIR/id_ed25519.pub")"
+    QEMU_SSH_DIR="$SSH_DIR"
+}
+
 qemu_argv() {
     QEMU_ARGV=(
         "${accel[@]}" "${machine[@]}"
         -m "$MEM" -smp "$CPUS"
         -kernel "$KERNEL"
         -drive file="$ROOTFS",format=raw,if=virtio
-        -nic user,model=virtio-net-pci
-        -append "root=/dev/vda rw console=$CONSOLE init=$INIT"
+        -nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}"
+        -append "root=/dev/vda rw console=$CONSOLE init=$INIT${QEMU_APPEND_EXTRA:-}"
         -nographic
         -no-reboot
     )
@@ -112,6 +177,7 @@ qemu_boot() {
         kill "$qemu_pid" 2>/dev/null || true
         wait "$qemu_pid" 2>/dev/null || true
         rm -rf "$work"
+        [ -z "${QEMU_SSH_DIR:-}" ] || rm -rf "$QEMU_SSH_DIR"
     }
     trap cleanup EXIT
 

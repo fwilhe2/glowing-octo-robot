@@ -238,7 +238,8 @@ serial port and waits for the output to come back — proof that the kernel moun
 root filesystem, exec'd userspace and that the dynamic loader resolved a real binary's
 libraries. It runs `/bin/bash` as PID 1 rather than systemd, which keeps that failure
 apart from anything systemd does on top; the tests below are the ones that boot systemd
-for real. `./tools/boot-qemu.sh` is still the way to poke at an image interactively.
+for real. `./tools/boot-qemu.sh` is still the way to poke at an image interactively, and
+`./tools/ssh.sh` logs into the guest it started without a password — see [SSH](#ssh).
 
 ```sh
 ./test/systemd.sh output/rootfs.ext4 rootfs/boot/bzImage
@@ -429,6 +430,78 @@ console handshake is better off not depending on a package it is not testing. Th
 round is where that rule is deliberately broken, since those tools are the thing under
 test — it still parses their output with `[[ ]]`.
 
+## SSH
+
+`openssh` is the first thing the image listens on. It links only what is already here —
+libcrypto, libz, libpam, libcrypt — and installs its own unit, `sysusers.d` entry for the
+privilege-separation account, `sshd_config` and `/etc/pam.d/sshd` from
+`packages/openssh/build.sh` rather than from `image/files`, so the apparatus goes wherever
+the binary goes. Host keys are generated on the machine at its first boot by
+`sshd-keygen.service` (`ssh-keygen -A`), never in the image: a key baked into an image
+built from a public repository is the same key on every machine that boots it. `root`
+gets in over the network by key only (`PermitRootLogin prohibit-password`), because the
+`root`/`root` password in `image/files/etc/shadow` is for a serial console; `user`/`user`
+works with a password.
+
+Passwordless login from the host works the way Vagrant and Lima do it, with nothing
+written into the image:
+
+```sh
+./tools/boot-qemu.sh            # terminal one: the serial console
+./tools/ssh.sh                  # terminal two: a root shell over ssh
+./tools/ssh.sh uname -a         # or one command
+scp -F output/ssh/config file flfs:/tmp/
+```
+
+The key is generated on the host, by `tools/boot-qemu.sh`, every time it starts a guest:
+a fresh ed25519 pair in `output/ssh/`, deleted when qemu exits. It is not the guest's
+host key — `sshd-keygen.service` generates those inside the guest on its first boot, and
+they stay on that disk. The public half of the boot key goes to the guest as the systemd
+credential `ssh.authorized_keys.root` on the kernel command line, and qemu forwards a
+free host port from 2222 up to the guest's 22, bound to `127.0.0.1`. `output/ssh/config`
+ties those together, so `tools/ssh.sh` is just `ssh -F output/ssh/config flfs`. sshd
+reads the key straight from `/run/credentials/@system`, where PID 1 put it, rather than
+from the copy systemd's `provision.conf` writes into `/root/.ssh` — that copy is only
+written when no file exists yet, so a disk booted once keeps its first key forever and
+would refuse every later boot's. `SSH=0 ./tools/boot-qemu.sh` boots without any of it.
+
+Because nothing is baked in, a CI-built image works exactly the same way — as long as it
+was built from a commit that has openssh:
+
+```sh
+./tools/fetch-image.sh          # rootfs.ext4 + bzImage into output/boot-image
+./tools/boot-qemu.sh
+./tools/ssh.sh                  # in another terminal
+```
+
+Booting it with a qemu command of your own instead, supply the two pieces yourself — the
+port forward and the credential (on arm64 the console is `ttyAMA0`):
+
+```sh
+ssh-keygen -t ed25519 -N '' -f key
+qemu-system-x86_64 ... \
+  -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:2222-:22 \
+  -append "root=/dev/vda rw console=ttyS0 systemd.set_credential_binary=ssh.authorized_keys.root:$(base64 -w0 key.pub)"
+ssh -i key -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1
+```
+
+Without the credential, `user`/`user` still logs in with a password; root over ssh takes
+a key or nothing.
+
+The container image keeps the client and drops the server: `sshd`, its two PAM-linked
+helpers, `sftp-server`, `sshd_config`, `moduli` and `/var/empty` are all subtracted in
+`image/build-rootfs.sh` along with PAM itself.
+
+```sh
+./test/ssh.sh output/rootfs.ext4 rootfs/boot/bzImage
+```
+
+is the check, in the `boot` job, and it runs three rounds: the daemon is up and
+listening (systemctl and bash's `/dev/tcp`), the guest can log into itself with a key and
+logind registers the session (`$XDG_SESSION_ID`), and the runner can log in through
+`tools/ssh.sh` with the boot's ephemeral key. The last one runs after the second has
+replaced `/root/.ssh/authorized_keys`, so it can only pass through the credential.
+
 ## TLS and the trust store
 
 `curl` is the HTTP client, `openssl` is what it speaks TLS with, and `ca-certificates` is
@@ -476,7 +549,8 @@ themselves back off — so `packages/tar/build.sh` asserts on `config.h` instead
 would not do: the ACL half links `libacl`, but the xattr calls are glibc's, so a tar with
 no xattr support has exactly the same `NEEDED` as one with it and differs only in
 unpacking layers wrong. What is *not* built is `rmt`, the remote-tape server tar reaches
-for over rsh, there being no rsh, no ssh and no tape drive here.
+for over rsh, there being no rsh and no tape drive here — openssh is packaged, but `rmt`
+over ssh is a tape-backup protocol with no tape on either end.
 
 gzip installs a dozen wrapper scripts around the binary, and none of them ship. Most wrap
 a tool that is not here: `zdiff` and `zcmp` want diffutils, `znew` wants `compress`,
