@@ -137,6 +137,13 @@ else
         echo "Directory $PKG_DIR/$PACKAGE already exists, skipping extraction."
     fi
     src_mount=(--volume "$PWD/$PKG_DIR/$PACKAGE":/usr/local/src)
+
+    # A Rust package's crates, verified by fetch-sources.sh above. Read-only, and the
+    # whole cumulative directory rather than this lock's selection: cargo_install in
+    # builder/build-package.sh unpacks exactly what Cargo.lock names and nothing else.
+    if [ -n "${CARGO_CRATES:-}" ]; then
+        src_mount+=(--volume "$PWD/downloads/crates":/usr/local/crates:ro)
+    fi
 fi
 
 # The pins, handed across the container boundary so the build can record what it is —

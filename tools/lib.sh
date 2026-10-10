@@ -86,3 +86,42 @@ mib() {
     local tenths=$(( ($1 * 10 + 524288) / 1048576 ))
     printf '%d.%d' $(( tenths / 10 )) $(( tenths % 10 ))
 }
+
+# cargo_lock <tarball> — the Cargo.lock at the top of a package's source tarball, on
+# stdout. Top level only (--no-wildcards-match-slash): a workspace can carry lockfiles
+# for its examples or vendored sub-crates further down, and those describe nothing that
+# gets built.
+cargo_lock() {
+    tar -xOf "$1" --wildcards --no-wildcards-match-slash '*/Cargo.lock'
+}
+
+# cargo_lock_crates — read a Cargo.lock on stdin and print "name version sha256" for
+# every crate it pins, one per line. These are what a CARGO_CRATES package needs in
+# downloads/crates, and the checksum is the one Cargo.lock records, so every crate is
+# verified against a hash that came out of a tarball which was itself verified.
+#
+# Fails on anything that is not from crates.io — a git dependency has no checksum in the
+# lock and no stable download URL, so it cannot be pinned the way everything else here
+# is. The workspace's own packages have no `source` and are skipped.
+#
+# builder/build-package.sh has a copy of this reader (cargo_install), because tools/ is
+# not mounted into the builder. Keep the two in step.
+cargo_lock_crates() {
+    awk -F' = ' '
+        function flush() {
+            if (src == "") return
+            if (src != "\"registry+https://github.com/rust-lang/crates.io-index\"" || sum == "") {
+                print "error: crate " name " " ver " is from " src ", not crates.io" > "/dev/stderr"
+                bad = 1
+                return
+            }
+            gsub(/"/, "", name); gsub(/"/, "", ver); gsub(/"/, "", sum)
+            print name, ver, sum
+        }
+        /^\[\[package\]\]/ { flush(); name = ver = src = sum = "" }
+        $1 == "name"     { name = $2 }
+        $1 == "version"  { ver = $2 }
+        $1 == "source"   { src = $2 }
+        $1 == "checksum" { sum = $2 }
+        END { flush(); exit bad }'
+}

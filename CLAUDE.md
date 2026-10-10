@@ -236,6 +236,7 @@ vocabulary, and a rule that is a function there is one no package has to remembe
 | `meson_install [opts]` | setup/compile/install with `--prefix /usr --buildtype=release -Dlibdir=lib` |
 | `drop_installed prog…` | delete from `usr/bin`, and **fail** if one was not installed |
 | `assert_not_linked lib bin…` | fail if an installed binary has `lib` in `NEEDED` |
+| `cargo_build [opts]` | offline `cargo build --release` from vendored crates, our glibc, no `libgcc_s` |
 
 `drop_installed` rather than `rm -f` whenever the file is one a reviewer would want to be
 sure is gone — an interpreter script above all. A bare `rm -f` of a name upstream has
@@ -296,6 +297,38 @@ serve the previous build's binary. The key hashes `$PKG/src` for exactly this re
 
 Nothing has to be done to get the binary into the image — `image/build-rootfs.sh` copies
 the whole staging tree and the trim removes nothing from `usr/bin`.
+
+### Rust packages
+
+`packages/nspawn/` is the worked example, and the only one. `CARGO_CRATES=1` in `env.sh`
+is the whole opt-in; `rustc` and `cargo` are Debian's, in `builder/deps.txt`.
+
+**Crates are downloads like any tarball, pinned by the tarball's own `Cargo.lock`.** The
+compile is `--network=none`, so `tools/fetch-sources.sh` reads the `Cargo.lock` out of the
+verified tarball (`cargo_lock` / `cargo_lock_crates` in `tools/lib.sh`), fetches every
+crate it names from `static.crates.io` into `downloads/crates/`, and checks each against
+the lock's sha256. `tools/prep.sh` copies the ones the current locks name into the sources
+image, root `build.sh` mounts the directory read-only at `/usr/local/crates`, and
+`cargo_build` unpacks them as a vendored source. A version bump needs nothing beyond
+`tools/bump-version.sh`: a new tarball is a new lock is a new crate set. A git dependency
+is refused, having no checksum to pin. Windows-only crates are downloaded too — Cargo.lock
+names them and cargo wants them present to resolve — but never compiled.
+
+**`cargo_build` exists for three reasons, and they are the reason not to call `cargo`
+directly.** rustc links through `cc` but ignores `LDFLAGS`, so the sysroot flags are
+passed as `-C link-arg` one by one (silent failure number one otherwise). And every Rust
+binary for `*-linux-gnu` asks for `-lgcc_s` by name — std's unwinder — which the image
+does not ship and should not have to: `-static-libgcc` does nothing against an explicit
+`-l`, and `panic = "abort"` does not remove it on stable. `cargo_build` puts a
+`libgcc_s.so` linker script reading `INPUT(-lgcc_eh)` first on the library path, so the
+binary links gcc's static unwinder instead, then fails the build if any binary in
+`target/release` still has `libgcc_s` in `NEEDED`. Fully static glibc (`crt-static`) is
+not the alternative: a static `getaddrinfo` dlopens our `libnss_resolve.so.2`, built for a
+different glibc than the one linked in.
+
+The `LICENSE=` of a Rust package is not the crate's own: the binary contains every crate
+it links. Derive it from `cargo tree -e normal,build --target <linux triple> -f '{l}'`,
+taking the DFSG choice wherever a crate offers one, and write down how in `env.sh`.
 
 ### Packages that compile nothing
 
@@ -642,9 +675,11 @@ exactly once per disk image. `test/ssh.sh`'s third round is ordered after the se
 replaces `authorized_keys` precisely so it can only pass through that path.
 
 The OCI runtime is `crun` (constraint 3), plus `json-c` for `config.json`. crun is the
-only runtime written in C; runc (Go) and youki (Rust) would each mean a second toolchain
-in the builder image and binaries that bypass the sysroot machinery, so don't propose
-swapping to them. It is built `--disable-seccomp --disable-criu`, so a bundle's seccomp
+only runtime written in C; runc (Go) would mean a second toolchain in the builder image,
+and youki (Rust) would replace a C runtime that already does the job with one that needs
+`cargo_build`'s workarounds — the builder has Rust now, for nspawn, but that is a reason
+something with no C equivalent can be packaged, not a reason to swap — so don't propose
+either. It is built `--disable-seccomp --disable-criu`, so a bundle's seccomp
 profile is accepted and ignored rather than enforced — packaging `libseccomp` is what
 fixes that (and would let systemd stop being built `-Dseccomp=disabled`). Do **not** add
 `--disable-bpf` to that list: on cgroup v2 the device controller is a BPF program, so

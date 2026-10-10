@@ -600,6 +600,39 @@ and nftables, which is hidden behind `NETFILTER_ADVANCED` that defconfig leaves 
 fragment is a heredoc rather than a file next to `build.sh` because only `build.sh` is
 bind-mounted into the builder.
 
+## nspawn
+
+[nspawn](https://github.com/nspawn/nspawn) — Docker-like management of systemd-nspawn
+machines, with OCI images from a registry and a root service on the system bus — is the
+first Rust package, and is in the disk image at `/usr/bin/nspawn`. It links nothing but
+libc and libm: TLS is rustls on aws-lc and zstd is compiled in, and it trusts the same
+`/etc/ssl/certs/ca-certificates.crt` curl does.
+
+Two things make a Rust package fit here, and both live in `cargo_build` in
+`builder/build-package.sh` rather than in the package:
+
+- **The crates are pinned downloads.** `CARGO_CRATES=1` in `env.sh` makes
+  `tools/fetch-sources.sh` fetch every crate in the tarball's `Cargo.lock` from crates.io
+  into `downloads/crates/`, each verified against the lock's sha256, and the
+  `--network=none` build unpacks them as a vendored source.
+- **No `libgcc_s.so.1`.** Every Rust binary for `*-linux-gnu` needs it by default, for
+  std's unwinder, and the image does not ship gcc's runtime. `-lgcc_s` is pointed at a
+  linker script that pulls in gcc's static unwinder (`libgcc_eh.a`) instead, which costs
+  tens of KB per binary, and the build fails if a binary still asks for the library.
+  The same trick works for Rust binaries built elsewhere:
+
+  ```sh
+  mkdir -p /tmp/gcc_s_static && echo 'INPUT(-lgcc_eh)' > /tmp/gcc_s_static/libgcc_s.so
+  RUSTFLAGS="-L native=/tmp/gcc_s_static" cargo build --release
+  ```
+
+What nspawn drives is not all here yet, so today the binary runs and a machine does not:
+systemd is built with `systemd-nspawn` and `systemd-machined` disabled, and `nft` and
+polkit are not packaged. `nspawn.service` is bus-activated rather than enabled, so it
+costs nothing at boot until something asks for it. The container image leaves nspawn out
+entirely — no systemd there to manage machines with, and at 22 MB it would put that
+image past debian-slim.
+
 ## systemd's BPF sandboxing
 
 Separate from crun's use of BPF above. crun talks to the cgroup v2 device controller
