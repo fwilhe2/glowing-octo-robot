@@ -18,9 +18,10 @@
 # in, with the system trust store — /etc/ssl/certs/ca-certificates.crt from
 # packages/ca-certificates, found through openssl-probe. zstd is compiled in too.
 #
-# What it drives at runtime is not all here yet: systemd-nspawn and systemd-machined,
-# which packages/systemd builds disabled, and nft and polkit, which are not packaged. The
-# binary installs and runs; running a machine is the next step. See README.
+# What it drives at runtime: systemd-nspawn and systemd-machined (packages/systemd), nft
+# (packages/nftables) for its bridge, and the NFT_CT/NFT_FIB_IPV4 kernel expressions its
+# ruleset uses. Not polkit: there is none, and nspawn authorizes root without asking, so
+# root is who may call it. test/nspawn.sh runs a machine.
 VERSION="1.9.1"
 PACKAGE="nspawn-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"

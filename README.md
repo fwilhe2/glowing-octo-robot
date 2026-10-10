@@ -342,7 +342,7 @@ assembles the disk from the copy, dropping everything a booted system cannot rea
 
 That is the mechanical half. The other half is not building things in the first place:
 `packages/systemd/build.sh` turns off some fifty components (the EFI/bootloader half of
-the tree, `machined`/`nspawn`/`importd`, `portabled`, `repart`, `homed`, `oomd`,
+the tree, `importd`/`vmspawn`, `portabled`, `repart`, `homed`, `oomd`,
 `coredump`, the remote journal transports, backlight/rfkill/hibernate/quotas, the 22 MB
 hardware database) and `packages/kernel/build.sh` extends its `vm.config` fragment to
 subtract the hardware `x86_64_defconfig` assumes — the DRM stack, sound, USB, HID, SATA
@@ -596,7 +596,9 @@ pid/net/ipc/uts namespaces and `SECCOMP_FILTER`, and stops there. `kernel/build.
 writes out a `container.config` fragment and merges it with `make container.config`:
 `USER_NS` and `MEMCG`, `OVERLAY_FS` for image layers, `VETH`/`BRIDGE`/`TUN` for
 container networking, `BPF_SYSCALL`/`CGROUP_BPF` for the cgroup v2 device controller,
-and nftables, which is hidden behind `NETFILTER_ADVANCED` that defconfig leaves off. The
+and nftables, which is hidden behind `NETFILTER_ADVANCED` that defconfig leaves off —
+including `NFT_CT` and `NFT_FIB_IPV4`, the conntrack and routing expressions nspawn's
+bridge ruleset uses, and without which nft refuses the whole ruleset. The
 fragment is a heredoc rather than a file next to `build.sh` because only `build.sh` is
 bind-mounted into the builder.
 
@@ -626,10 +628,22 @@ Two things make a Rust package fit here, and both live in `cargo_build` in
   RUSTFLAGS="-L native=/tmp/gcc_s_static" cargo build --release
   ```
 
-What nspawn drives is not all here yet, so today the binary runs and a machine does not:
-systemd is built with `systemd-nspawn` and `systemd-machined` disabled, and `nft` and
-polkit are not packaged. `nspawn.service` is bus-activated rather than enabled, so it
-costs nothing at boot until something asks for it. The container image leaves nspawn out
+What it drives is here too: systemd is built with `systemd-nspawn` and
+`systemd-machined`, and `nftables` (with `libnftnl`) is packaged for the `nspawn0`
+bridge's NAT. There is no polkit, so only root may call the service — nspawn allows root
+without asking polkit, which is exactly the case it documents. `nspawn.service` is
+bus-activated rather than enabled, so it costs nothing at boot until something asks for
+it.
+
+```sh
+nspawn run --rm ghcr.io/fwilhe2/glowing-octo-robot/flfs:latest -- uname -a
+./test/nspawn.sh output/rootfs.ext4 rootfs/boot/bzImage
+```
+
+`test/nspawn.sh` boots the image, and over ssh — `qemu_ssh_setup`'s ephemeral key, not the
+serial console — asks for the machine list (machined is reachable), runs this
+repository's own published image as a machine and checks its hostname, then runs `curl`
+inside one, which is the bridge, nft's masquerade and the guest's NIC end to end. The container image leaves nspawn out
 entirely — no systemd there to manage machines with, and at 22 MB it would put that
 image past debian-slim.
 

@@ -108,6 +108,7 @@ libkmod-dev
 liblzma-dev
 libmnl-dev
 libmount-dev
+libnftnl-dev
 libncurses-dev
 libpam0g-dev
 # ...and the sharpest case of that SONAME argument: curl compiles against sid's OpenSSL

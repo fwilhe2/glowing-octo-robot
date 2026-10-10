@@ -162,6 +162,7 @@ There is no unit test suite. The checks, cheapest first:
 | `test/network.sh` | DHCP, DNS and outbound TCP/TLS, first with builtins, then with `ip`/`curl` |
 | `test/ssh.sh` | sshd up, key login guest-to-itself with a logind session, then from the host via `tools/ssh.sh` |
 | `test/container.sh` | crun starts a container in the booted guest |
+| `test/nspawn.sh` | nspawn runs a machine via machined, with a network over its nft-managed bridge (over ssh) |
 
 The qemu tests share `test/qemu-lib.sh`, and so does `tools/boot-qemu.sh`, so an
 interactive debug boot is the same guest that CI booted.

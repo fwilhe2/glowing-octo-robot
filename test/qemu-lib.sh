@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The qemu plumbing shared by the boot tests and tools/boot-qemu.sh.
 #
-# Sourced, never executed. Five scripts in test/ and one in tools/ all have to launch the
+# Sourced, never executed. Six scripts in test/ and one in tools/ all have to launch the
 # same guest — same machine type, same console device, same accel flags, same kernel
 # command line — and four of them then have to drive a serial login. Written out per
 # script that was ~470 lines of identical text, and the failure mode of letting it drift

@@ -63,6 +63,10 @@ TUN                 slirp4netns and friends
 NF_TABLES           port publishing is NAT
 NF_NAT              the same
 NETFILTER_XT_MATCH_ADDRTYPE  the address-type match port publishing generates
+NFT_NAT             nft's dnat/snat, which is what port publishing actually is
+NFT_MASQ            nft masquerade: outbound traffic from a bridge of machines
+NFT_CT              `ct status` in a rule; nspawn's bridge ruleset fails to load
+NFT_FIB_IPV4        `fib daddr type local`; the same, for its published ports
 SECCOMP             crun accepts a seccomp profile in the bundle
 SECCOMP_FILTER      and this is what would enforce it
 EXT4_FS             the root filesystem

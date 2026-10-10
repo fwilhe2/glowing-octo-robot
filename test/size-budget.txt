@@ -71,6 +71,9 @@
 # there: no machines to manage without systemd, and 22 MiB would put that image past
 # debian-slim. The next thing on amd64 ext4 will hit this ceiling; when it does, nspawn is
 # where the argument starts (opt-level = "s", or which of its features this image needs).
+# What it drives cost far less: systemd-nspawn, systemd-machined, nft, libnftnl and
+# libnftables together took amd64 ext4 to 119.3 MiB (94%) and oci to 60.0 (nft stays in a
+# container, systemd-nspawn does not).
 #
 # flavour  arch   MiB
 ext4       amd64  126

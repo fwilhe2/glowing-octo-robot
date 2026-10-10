@@ -102,7 +102,7 @@ builder/          how a package is compiled: the one builder image, deps.txt (it
 image/            how the staging tree becomes an image, disk or OCI: Containerfile,
                   build-rootfs.sh, and files/ — the /etc the image ships
 test/             everything CI runs to verify a build, plus known-missing-libs.txt
-                  and size-budget.txt; qemu-lib.sh is the boot harness the five qemu
+                  and size-budget.txt; qemu-lib.sh is the boot harness the six qemu
                   tests and tools/boot-qemu.sh all source
 tools/            local conveniences and maintenance, not part of a build — except
                   lib.sh, the helpers build.sh, tools/ and test/ all source
@@ -137,6 +137,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/network.sh output/rootfs.ext4 rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
 ./test/ssh.sh output/rootfs.ext4 rootfs/boot/bzImage        # sshd, in-guest and from the host
 ./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage  # crun starts a container
+./test/nspawn.sh output/rootfs.ext4 rootfs/boot/bzImage     # nspawn runs a machine, over ssh
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./test/rootfs-size.sh [ext4|oci]  # image size vs test/size-budget.txt, and where it went
 ./test/vs-debian-slim.sh          # the OCI image against debian-slim, with both breakdowns
@@ -539,7 +540,7 @@ says `running`, which is `degraded` if and only if some unit failed — the fail
 package gets for free by installing a unit whose binary needs a library we don't ship. It also
 asserts the `Tainted` property is empty.
 
-**None of the five spells out how to launch a guest — `test/qemu-lib.sh` does, and
+**None of the six spells out how to launch a guest — `test/qemu-lib.sh` does, and
 `tools/boot-qemu.sh` sources it too.** The machine type, console device, accel flags and
 kernel command line were copied into all five and were byte-identical in three of them,
 and the drift that invites is worse than untidy: `boot-qemu.sh` is what you reach for to
