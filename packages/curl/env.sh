@@ -5,11 +5,11 @@
 # neither is close: wget2 drags in its own TLS choice plus libpsl and gettext, httpie is
 # python. curl is C, it is in every distribution, and it is the client every registry API
 # in docs/container-runtime.md is written against.
-VERSION="8.22.0"
+VERSION="8.23.0"
 PACKAGE="curl-${VERSION}"
 TARBALL="$PACKAGE.tar.xz"
 URL="https://curl.se/download/${TARBALL}"
-SHA256="f7ef3ae8a22e521f289803fe93543eb64c329b58aa73a9e224dfd915a2a5f4f7"
+SHA256="8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5"
 # curl's own license: MIT with the "not to be used in advertising" clause, i.e. the same
 # shape as X11. SPDX gives it an identifier of its own because the text is not quite
 # either of them.
