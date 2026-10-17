@@ -126,6 +126,18 @@ CONFIG_NETFILTER_XT_NAT=y
 EOF
 make container.config
 
+# The root filesystem. The image is EROFS — read-only by construction, compressed, and
+# what image/build-rootfs.sh lays the tree out as — so the kernel has to mount it with no
+# initrd to load a driver from. ZIP is the compressed-file support; LZ4 decompression is
+# always built in with it, and LZ4HC is what mkfs.erofs writes. Its own fragment rather
+# than a line in container.config: it is what boots the machine, not what runs containers
+# on it, and the check below holds both to the same standard.
+cat > kernel/configs/rootfs.config <<'EOF'
+CONFIG_EROFS_FS=y
+CONFIG_EROFS_FS_ZIP=y
+EOF
+make rootfs.config
+
 # A second fragment for the other direction: the arch's defconfig is a general-purpose
 # config and turns on hardware a VM will never have. Only ever a guest (qemu today,
 # rust-vmm-style VMMs next), so this is dead code and, in the wireless case, a boot-time
@@ -345,16 +357,17 @@ make vm.config
 # under it, WIRELESS cleared and immediately selected back by WLAN. A fragment that
 # quietly does nothing is worse than one that fails, so fail.
 #
-# The two halves are not checked the same way. Everything container.config turns on has
-# to be there, no exceptions. vm.config is allowed to name symbols that do not exist on
-# this architecture — the x86-only lines above are expected to vanish on arm64 — so the
-# bar there is only that nothing it clears came back on.
+# The two halves are not checked the same way. Everything container.config and
+# rootfs.config turn on has to be there, no exceptions. vm.config is allowed to name
+# symbols that do not exist on this architecture — the x86-only lines above are expected
+# to vanish on arm64 — so the bar there is only that nothing it clears came back on.
 unapplied=""
 while read -r sym; do
     if ! grep -qx "$sym" .config; then
         unapplied="$unapplied  $sym  (asked for, not in .config)"$'\n'
     fi
-done < <(grep -E '^CONFIG_[A-Z0-9_]+=y$' kernel/configs/container.config)
+done < <(grep -hE '^CONFIG_[A-Z0-9_]+=y$' kernel/configs/container.config \
+             kernel/configs/rootfs.config)
 
 while read -r sym; do
     if grep -qx "$sym=y" .config; then

@@ -28,7 +28,7 @@ ARCH=$(normalize_arch "${1:-${ARCH:-}}") || { echo "usage: ${0##*/} [amd64|arm64
 RUNS="${RUNS:-12}"          # how many past builds to plot
 BASE_BRANCH="${BASE_BRANCH:-main}"
 WORKFLOW="${WORKFLOW:-ci.yml}"
-FLAVOURS="ext4 oci"
+FLAVOURS="erofs oci"
 
 # stdout always; the job summary as well when there is one. Same shape as the summary()
 # in test/rootfs-size.sh — a local run should print the thing CI would show.
@@ -105,6 +105,11 @@ else
         [ "$n" -ge "$RUNS" ] && break
         [ "$id" = "${GITHUB_RUN_ID:-}" ] && continue
         if gh run download "$id" --name "rootfs-size-$ARCH" --dir "$HIST/$id" >/dev/null 2>&1; then
+            # Builds from before the disk image was EROFS called it ext4. The report
+            # measures the same assembled tree either way, so it continues the series.
+            if [ -f "$HIST/$id/rootfs-size-ext4.txt" ] && [ ! -f "$HIST/$id/rootfs-size-erofs.txt" ]; then
+                mv "$HIST/$id/rootfs-size-ext4.txt" "$HIST/$id/rootfs-size-erofs.txt"
+            fi
             printf '%s %s %s\n' "$id" "$sha" "$date" >> "$HIST/index"
             n=$(( n + 1 ))
         fi
@@ -199,12 +204,12 @@ done
 # shape cannot answer.
 out "<details><summary>Run by run</summary>"
 out ""
-out "| date | commit | ext4 | oci |"
+out "| date | commit | erofs | oci |"
 out "| --- | --- | ---: | ---: |"
 while read -r id sha date; do
-    out "| ${date/T/ } | \`$sha\` | $(mib "$(field total "$HIST/$id/rootfs-size-ext4.txt")") | $(mib "$(field total "$HIST/$id/rootfs-size-oci.txt")") |"
+    out "| ${date/T/ } | \`$sha\` | $(mib "$(field total "$HIST/$id/rootfs-size-erofs.txt")") | $(mib "$(field total "$HIST/$id/rootfs-size-oci.txt")") |"
 done < "$HIST/index.asc"
 here=${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || echo local)}
-out "| **this build** | \`${here:0:7}\` | **$(mib "$(field total output/rootfs-size-ext4.txt)")** | **$(mib "$(field total output/rootfs-size-oci.txt)")** |"
+out "| **this build** | \`${here:0:7}\` | **$(mib "$(field total output/rootfs-size-erofs.txt)")** | **$(mib "$(field total output/rootfs-size-oci.txt)")** |"
 out ""
 out "</details>"

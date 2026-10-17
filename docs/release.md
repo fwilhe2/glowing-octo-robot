@@ -35,13 +35,13 @@ before it exists, which raises the bar on everything else here:
 The disk cannot boot itself. systemd is built `-Dbootloader=disabled -Defi=false
 -Dukify=disabled` — "no ESP to install a loader into and nothing to build a UKI for" — so
 every boot here is `qemu -kernel bzImage -append "root=/dev/vda …"`. A release of
-`rootfs.ext4` alone would be unbootable by anyone. So a release is the pair, per
+`rootfs.erofs` alone would be unbootable by anyone. So a release is the pair, per
 architecture:
 
 ```
-flfs-2026-08-09-amd64-rootfs.ext4.zst
+flfs-2026-08-09-amd64-rootfs.erofs
 flfs-2026-08-09-amd64-bzImage
-flfs-2026-08-09-arm64-rootfs.ext4.zst
+flfs-2026-08-09-arm64-rootfs.erofs
 flfs-2026-08-09-arm64-bzImage
 SHA256SUMS
 ```
@@ -54,9 +54,11 @@ An OCI *image* whose layer is a disk would be worse than neutral — it would pu
 holds. If a machine ever consumes these as part of a pipeline, revisit with a real OCI
 artifact and `oras`, not with an image.
 
-Compressed because `mkfs.ext4 -d … 1G` writes a fixed 1 GiB file holding ~118 MiB on amd64
-and ~171 MiB on arm64. Checksummed because this project pins a `SHA256` for every byte it
-consumes, across every package; shipping unverifiable output would be out of character.
+Not compressed again: the disk is EROFS, which is already lz4hc-compressed and sized to
+its contents — ~71 MiB on amd64 — so there is no empty 1 GiB to squeeze out of it, which
+was the reason the ext4 image needed zstd. Checksummed because this project pins a
+`SHA256` for every byte it consumes, across every package; shipping unverifiable output
+would be out of character.
 
 ### The version this wants to be
 

@@ -31,7 +31,7 @@ fi
 
 docs=("$@")
 if [ ${#docs[@]} -eq 0 ]; then
-    for f in output/sbom-ext4.json output/sbom-oci.json; do
+    for f in output/sbom-erofs.json output/sbom-oci.json; do
         [ -f "$f" ] && docs+=("$f")
     done
 fi

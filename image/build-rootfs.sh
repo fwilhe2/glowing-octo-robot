@@ -5,18 +5,19 @@ set -x
 
 # Two things come out of the same staging tree, and the argument says which:
 #
-#   ext4  a bootable disk for qemu — output/rootfs.ext4, the real output of this repo
-#   oci   a container image — output/flfs-oci.tar, the same userspace with the parts
-#         that only mean something to a machine that boots taken back out
+#   erofs  a bootable, read-only disk for qemu — output/rootfs.erofs, the real output of
+#          this repo. Nothing on it can be changed; an update is a new image.
+#   oci    a container image — output/flfs-oci.tar, the same userspace with the parts
+#          that only mean something to a machine that boots taken back out
 #
 # They are one script rather than two because everything that is hard-won here — the
 # merged-/usr skeleton, the loader path, the trim, ldconfig — is identical for both.
 # The container flavour is expressed as *subtractions* from the disk image, in one
 # block below, the same way vm.config is expressed as subtractions from defconfig.
-flavour=${1:-ext4}
+flavour=${1:-erofs}
 case "$flavour" in
-    ext4|oci) ;;
-    *) echo "usage: ${0##*/} [ext4|oci]" >&2; exit 2 ;;
+    erofs|oci) ;;
+    *) echo "usage: ${0##*/} [erofs|oci]" >&2; exit 2 ;;
 esac
 
 # The staging tree is an input, not the image. Everything below — the /etc we ship, the
@@ -46,17 +47,16 @@ mkdir -p usr/bin bin sbin boot
 mkdir -p {dev,etc,home,lib}
 mkdir -p {mnt,opt,proc,srv,sys}
 mkdir -p var/{lib,lock,log,spool}
-# journald's Storage=auto keeps the journal in /run — volatile, gone at reboot — unless
-# /var/log/journal exists, and creating it is the entire switch. Nothing else does:
-# systemd's tmpfiles snippet for it is `z`, which adjusts a directory that is already
-# there rather than creating one. The mode and group are left alone here because the
-# systemd-journal group does not exist yet in this container; systemd-tmpfiles fixes
-# both at boot, after systemd-sysusers has created it.
-mkdir -p var/log/journal
+# No var/log/journal, which used to be the switch for a persistent journal: journald's
+# Storage=auto writes to /var/log/journal only if the directory exists, and the disk
+# image's /var is a tmpfs now, so there is nowhere persistent for it to point. The
+# journal lives in /run, which is the same RAM by another name.
 install -d -m 0750 root
 # The unprivileged account's home. Nothing in the image would create it on first login —
 # pam_mkhomedir is not in image/files/etc/pam.d and there is no shadow-utils here — so a
-# missing directory means bash starts in a working directory that does not exist. The
+# missing directory means bash starts in a working directory that does not exist. This is
+# the container's copy; the disk image mounts a tmpfs over /home, and
+# image/files/etc/tmpfiles.d/flfs-home.conf makes it there at every boot. The
 # ownership is numeric because the names do not exist in *this* container, only in the
 # /etc being shipped; 1000:1000 is what image/files/etc/passwd says.
 install -d -m 0700 home/user
@@ -125,7 +125,7 @@ if [ -n "${FLFS_BUILD:-}" ]; then
     printf 'BUILD_ID="%s"\n' "$FLFS_BUILD" >> usr/lib/os-release
 fi
 
-if [ "$flavour" = ext4 ]; then
+if [ "$flavour" = erofs ]; then
     # systemd ships two shell drop-ins and systemd-tmpfiles symlinks both into
     # /etc/profile.d at every boot, so /etc/profile now sources them. One stays masked.
     #
@@ -259,7 +259,7 @@ if [ "$flavour" = oci ]; then
     # with usr/lib/systemd above.
     rm -f  usr/bin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth \
            usr/libexec/sftp-server etc/ssh/sshd_config etc/ssh/moduli
-    rm -rf var/empty
+    rm -rf usr/share/empty.sshd
 
     # kmod, dead here for a reason that has nothing to do with containers: packages/kernel
     # builds with CONFIG_MODULES off, so there is no module to insert into anything. The
@@ -516,37 +516,86 @@ cat > etc/ld.so.conf <<EOF
 EOF
 ldconfig -r "$IMAGE" || true
 
-# The other index the image needs generated rather than installed. The .catalog files
-# above are the source form; what journalctl actually opens is a compiled database at
-# /var/lib/systemd/catalog/database, and nothing was building it — so any `journalctl
-# -x`, and anything else resolving a MESSAGE_ID, answered "Failed to find catalog
-# entry" for every message in the image.
+# ---------------------------------------------------------------------------------
+# First boot, done here. The disk image's root is EROFS, so /etc cannot be written by
+# anything that runs on it, and every unit that would normally fill /etc in on first boot
+# has to have had its work done before mkfs. systemd already knows this shape: the
+# units that write /etc are ConditionNeedsUpdate=/etc, which is false on a read-only
+# /etc, so they skip rather than fail — but skipping only works if the result is already
+# here. What is left over is a degraded boot at best and a silently incomplete one at
+# worst (see the presets below), with a journal that says "Read-only file system" and
+# nothing about which of these was missed. test/systemd.sh fails on that line.
 #
-# It has to be *our* journalctl: this container has no systemd of its own, and a
-# Debian one would be writing a database for a different version to read. That binary
-# is compiled against our glibc, and its RUNPATH is an absolute /usr/lib/systemd, which
-# resolves inside this container to the container's copy — so invoke our loader by hand
-# and hand it the image's library directories. --library-path is searched ahead of
-# DT_RUNPATH, which is exactly what makes the override take. Same-arch only, which this
-# script already assumes.
+# Each tool has to be *our* build: this container has no systemd of its own, and a Debian
+# one would apply a different version's rules. Ours are compiled against our glibc with
+# an absolute RUNPATH of /usr/lib/systemd, which resolves inside this container to the
+# container's copy — so they are run through our loader by hand, with the image's library
+# directories. --library-path is searched ahead of DT_RUNPATH, which is exactly what makes
+# the override take. Same-arch only, which this script already assumes. Invoked this way,
+# ld.so reports a program it cannot open with the same "cannot open shared object file"
+# it uses for libraries, so a deleted binary reads as a missing library of its own.
 #
-# Not tolerant of failure the way ldconfig above is: an empty catalog is the state this
-# is fixing, and it should not be able to come back silently.
-#
-# Disk flavour only, and this is one of the two places where "the trim is identical for
-# both" stops being true. The subtractions block above has already deleted
-# usr/lib/systemd — the .catalog source files with it — and every binary linking
-# libsystemd-shared, which is exactly how journalctl goes. So there is nothing to
-# compile, nothing left to read the result, and the loader invocation below fails with
-# a message that names neither: run explicitly, ld.so reports a program it cannot open
-# through the same "cannot open shared object file" it uses for libraries, so a missing
-# journalctl reads as a missing library of journalctl's.
-if [ "$flavour" = ext4 ]; then
-    catalog_ld="$IMAGE/lib64/$ld_so"
-    [ -x "$catalog_ld" ] || catalog_ld="$IMAGE/usr/lib/$ld_so"
-    "$catalog_ld" --library-path "$IMAGE/usr/lib:$IMAGE/usr/lib/systemd" \
-        "$IMAGE/usr/bin/journalctl" --root="$IMAGE" --update-catalog
-    test -s "$IMAGE/var/lib/systemd/catalog/database"
+# Disk flavour only: the subtractions block above has already deleted these binaries,
+# their configuration and anything that would read the result from the container tree.
+if [ "$flavour" = erofs ]; then
+    ours_ld="$IMAGE/lib64/$ld_so"
+    [ -x "$ours_ld" ] || ours_ld="$IMAGE/usr/lib/$ld_so"
+    ours() {
+        local bin=$1; shift
+        "$ours_ld" --library-path "$IMAGE/usr/lib:$IMAGE/usr/lib/systemd" "$IMAGE/usr/bin/$bin" "$@"
+    }
+
+    # The accounts every sysusers.d snippet asks for — systemd's own groups, dbus'
+    # messagebus, openssh's privilege separation user — appended to the passwd and group
+    # image/files ships. systemd-sysusers.service would have done this at first boot.
+    ours systemd-sysusers --root="$IMAGE"
+
+    # The /etc half of tmpfiles.d: the profile.d and ssh_config.d symlinks, the credstore
+    # directories, /etc/mtab. The rest of it — /var, /run, /home — is on a tmpfs at boot
+    # and systemd-tmpfiles-setup.service makes it there, so --prefix keeps this to the
+    # one tree that has to be right before the image is sealed. --boot because these are
+    # first-boot lines in a world where every boot is the first.
+    ours systemd-tmpfiles --root="$IMAGE" --create --boot --prefix=/etc
+    # The osc-context drop-in is masked above with a symlink to /dev/null, and that has
+    # to have survived a tmpfiles run whose /dev/null is inside $IMAGE.
+    test ! -e etc/profile.d/80-systemd-osc-context.sh
+
+    # Unit presets. On first boot — which with an empty machine-id is every boot — PID 1
+    # applies systemd-preset files by writing enablement symlinks into /etc/systemd/system,
+    # and that is how systemd-networkd, systemd-resolved and timesyncd get enabled at all:
+    # nothing ships them with a .wants symlink of their own. On a read-only /etc the write
+    # fails, PID 1 logs it and carries on, and the machine boots `running` with no network.
+    # No failed unit, no degraded state — test/network.sh is what notices.
+    ours systemctl preset-all --root="$IMAGE"
+    test -L etc/systemd/system/multi-user.target.wants/systemd-networkd.service
+
+    # / itself at 0555, which is what systemd's tmpfiles.d/root.conf (`z / 555`) sets at
+    # every boot — and on EROFS the fchmod fails, once per boot, in the journal. Shipping
+    # the mode it wants turns that into a no-op. It is the mode of the directory mkfs is
+    # handed, so this is the one place it can be set.
+    chmod 555 "$IMAGE"
+
+    # An empty /etc/machine-id, rather than none. On a read-only root PID 1 generates an
+    # id at every boot and bind-mounts it over this file from /run; with no file to mount
+    # over it can do neither, and dbus, journald and networkd's DHCP client id all read
+    # it. Empty rather than "uninitialized", which would ask systemd-machine-id-commit to
+    # persist it — there is nowhere to persist it to.
+    : > etc/machine-id
+    chmod 444 etc/machine-id
+
+    # The journal catalogue is the one index this script used to compile and no longer
+    # does: what `journalctl -x` opens is /var/lib/systemd/catalog/database, and /var is a
+    # tmpfs, so a database written here would be hidden under it. The source files stay in
+    # /usr/lib/systemd/catalog, and systemd-journal-catalog-update.service compiles them at
+    # boot — it is ConditionNeedsUpdate=/var, and a /var that starts empty always needs
+    # one. That is the hermetic-/usr arrangement working as designed rather than a gap.
+
+    # And the mount points themselves, emptied. /var, /home and /root are tmpfs mounts
+    # (image/files/etc/fstab), so anything staged under them would ship and be invisible
+    # — including the /var/run symlink, which systemd's own var.conf recreates on the
+    # tmpfs. An empty directory says that plainly; a populated one would be a lie that
+    # costs bytes. The container keeps all of it: it has no fstab.
+    find var home root -mindepth 1 -delete
 fi
 
 chown -R root:root etc
@@ -555,10 +604,10 @@ chown -R root:root etc
 # already set the mode on the real file under /usr/lib.
 chmod 644 etc/passwd etc/group etc/hosts etc/profile etc/nsswitch.conf etc/ld.so.conf
 
-if [ "$flavour" = ext4 ]; then
+if [ "$flavour" = erofs ]; then
     chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
               etc/systemd/system/dbus.service.d
-    chmod 644 etc/fstab etc/hostname etc/pam.d/* \
+    chmod 644 etc/fstab etc/hostname etc/pam.d/* etc/tmpfiles.d/flfs-home.conf \
               etc/systemd/network/*.network \
               etc/systemd/system/dbus.service.d/*.conf
     # Password hashes must not be world-readable. Only reachable for this flavour: the
@@ -803,7 +852,7 @@ echo "sbom: $(wc -c < "$sbom") bytes, $(grep -c '"SPDXID"' "$sbom") elements"
 # Apparent bytes rather than blocks: it measures what the tree contains instead of what
 # one filesystem's rounding makes of it, which keeps the number comparable across the two
 # architectures, across a change to mkfs, and between a disk and a tar. What each flavour
-# then costs in its own container — `disk` for the ext4, `archive` for the OCI — is
+# then costs in its own container — `disk` for the EROFS image, `archive` for the OCI — is
 # appended below, once the thing that answers it has run.
 report=/usr/local/output/rootfs-size-$flavour.txt
 {
@@ -831,17 +880,28 @@ report=/usr/local/output/rootfs-size-$flavour.txt
     done < <(find "$IMAGE" -type f -printf '%s %p\n' | sort -rn | head -n 25)
 } > "$report"
 
-if [ "$flavour" = ext4 ]; then
-    /sbin/mkfs.ext4 -L root -d "$IMAGE" /usr/local/output/rootfs.ext4 1G
+if [ "$flavour" = erofs ]; then
+    # EROFS rather than ext4 with `ro` in fstab: a filesystem that has no write path at
+    # all, so "nothing modifies the image" is a property of the format rather than of a
+    # mount option somebody can remount away. It is also compressed and sized to its
+    # contents — there is no free space to choose, and so no 1G to outgrow.
+    #
+    # lz4hc: decompression is cheap enough that it is the right default for a root
+    # filesystem, and it is the one compressor packages/kernel's rootfs.config does not
+    # have to ask for separately. The label is what /etc/fstab mounts by. With
+    # SOURCE_DATE_EPOCH set — the same switch the SBOM honours below — every timestamp and
+    # the UUID are pinned, so the same tree makes the same bytes.
+    erofs_repro=()
+    if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+        erofs_repro=(-T "$SOURCE_DATE_EPOCH" --all-time -U 00000000-0000-0000-0000-000000000000)
+    fi
+    rm -f /usr/local/output/rootfs.erofs
+    mkfs.erofs -L root -zlz4hc,12 "${erofs_repro[@]}" \
+        /usr/local/output/rootfs.erofs "$IMAGE"
 
-    # What that came to once the filesystem's own metadata, journal and block rounding are
-    # counted: the number that says whether 1G is still the right size for the disk.
-    fs=$(/sbin/dumpe2fs -h /usr/local/output/rootfs.ext4 2>/dev/null)
-    block_count=$(echo "$fs" | grep '^Block count:'  | tr -dc '0-9')
-    block_free=$( echo "$fs" | grep '^Free blocks:'  | tr -dc '0-9')
-    block_size=$( echo "$fs" | grep '^Block size:'   | tr -dc '0-9')
-    echo "disk $(( (block_count - block_free) * block_size ))" >> "$report"
-    echo "capacity $(( block_count * block_size ))" >> "$report"
+    # What that came to once the compression and the filesystem's own metadata are
+    # counted. The file is the filesystem, with no slack, so its size is the answer.
+    echo "disk $(stat -c %s /usr/local/output/rootfs.erofs)" >> "$report"
 
     cat "$report"
     exit 0

@@ -4,7 +4,7 @@
 # refuses or a tools/ssh.sh that cannot get in fails CI instead of being discovered by
 # somebody trying to use the machine.
 #
-#     ./test/ssh.sh [rootfs.ext4] [bzImage]
+#     ./test/ssh.sh [rootfs.erofs] [bzImage]
 #
 # Overrides:
 #   TIMEOUT    seconds to wait                 (default 300 — qemu falls back to TCG in
@@ -48,7 +48,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source test/qemu-lib.sh
 
-ROOTFS="${1:-${ROOTFS:-output/rootfs.ext4}}"
+ROOTFS="${1:-${ROOTFS:-output/rootfs.erofs}}"
 KERNEL="${2:-${KERNEL:-rootfs/boot/bzImage}}"
 INIT="${INIT:-/usr/lib/systemd/systemd}"
 LOG="${LOG:-output/ssh-test.log}"
@@ -64,7 +64,7 @@ LOGIN_MARKER="SSH-LOGIN-OK"
 # socket rather than trusting `is-active` is the difference between "systemd started
 # something" and "something is listening".
 DAEMON_CHECK="[[ \$(systemctl is-active sshd.service) == active ]] \
-&& [[ -s /etc/ssh/ssh_host_ed25519_key ]] \
+&& [[ -s /var/lib/sshd/ssh_host_ed25519_key ]] \
 && (exec 3<>/dev/tcp/127.0.0.1/22) \
 && echo SSHD-IS'-UP'"
 
@@ -98,7 +98,7 @@ SSH_CHECK="install -d -m 700 /root/.ssh \
 
 DIAGNOSE="systemctl --no-pager --full status sshd.service sshd-keygen.service
 journalctl --no-pager -n 60 -u sshd.service -u sshd-keygen.service
-ls -l /etc/ssh; getent passwd sshd; ls -ld /var/empty
+ls -l /etc/ssh /var/lib/sshd; getent passwd sshd; ls -ld /usr/share/empty.sshd
 ls -l /run/credentials/@system; cat /proc/cmdline"
 
 command -v ssh >/dev/null || { echo "error: ssh not found (install an openssh client)" >&2; exit 1; }
@@ -115,7 +115,7 @@ console_login
 echo ">> logged in, checking that sshd is up"
 
 # Retried, for the same reason test/network.sh retries its first round: sshd-keygen has an
-# RSA key to generate on this first boot and multi-user.target is reached without waiting
+# RSA key to generate at every boot and multi-user.target is reached without waiting
 # for it. Re-asking costs nothing.
 until grep -qaF "$DAEMON_MARKER" "$LOG"; do
     [ "$SECONDS" -lt "$deadline" ] || fail "sshd is not running, has no host key, or is not listening"

@@ -1,10 +1,10 @@
 #!/bin/bash
 # Build everything and assemble the images, locally, in one go:
 #
-#     ./tools/build-image.sh                 # glibc, kernel, every package, then ext4 + oci
+#     ./tools/build-image.sh                 # glibc, kernel, every package, then erofs + oci
 #     ./tools/build-image.sh --clean         # delete rootfs/ first (after version bumps)
 #     ./tools/build-image.sh --image-only    # skip the packages, just re-assemble the images
-#     ./tools/build-image.sh --flavour ext4  # only one of ext4 / oci
+#     ./tools/build-image.sh --flavour erofs # only one of erofs / oci
 #     ./tools/build-image.sh --skip kernel,systemd   # leave packages out of this run
 #     ./tools/build-image.sh --only strace   # build just these packages, then the images
 #
@@ -28,12 +28,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tools/lib.sh
 
-clean=0 image_only=0 flavours="ext4 oci" skip="" only=""
+clean=0 image_only=0 flavours="erofs oci" skip="" only=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --clean)      clean=1 ;;
         --image-only) image_only=1 ;;
-        --flavour)    flavours="${2:?--flavour needs ext4 or oci}"; shift ;;
+        --flavour)    flavours="${2:?--flavour needs erofs or oci}"; shift ;;
         --skip)       skip="${2:?--skip needs a comma-separated list}"; shift ;;
         --only)       only="${2:?--only needs a comma-separated list}"; shift ;;
         -h|--help)    sed -n '2,/^set -e/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
@@ -43,7 +43,7 @@ while [ $# -gt 0 ]; do
 done
 
 for f in $flavours; do
-    case "$f" in ext4|oci) ;; *) echo "error: unknown flavour '$f'" >&2; exit 2 ;; esac
+    case "$f" in erofs|oci) ;; *) echo "error: unknown flavour '$f'" >&2; exit 2 ;; esac
 done
 
 if [ "$clean" = 1 ]; then
@@ -99,5 +99,5 @@ done
 
 echo
 echo "done:"
-ls -lh output/rootfs.ext4 output/flfs-oci.tar 2>/dev/null || true
-echo "boot it:  ./tools/boot-qemu.sh   (or ./test/systemd.sh output/rootfs.ext4 rootfs/boot/bzImage)"
+ls -lh output/rootfs.erofs output/flfs-oci.tar 2>/dev/null || true
+echo "boot it:  ./tools/boot-qemu.sh   (or ./test/systemd.sh output/rootfs.erofs rootfs/boot/bzImage)"

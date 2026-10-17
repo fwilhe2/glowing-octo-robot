@@ -51,9 +51,9 @@ RUN="${ROOTFS_RUN:-$(gh run list -R "$REPO" --workflow ci.yml --status success -
                        --json databaseId -q '.[0].databaseId')}"
 [ -n "$RUN" ] || { echo "error: no successful run found" >&2; exit 1; }
 
-echo ">> rootfs ($ARCH): $REPO run $RUN (artifact: rootfs.ext4-$ARCH)"
-gh run download "$RUN" -R "$REPO" -n "rootfs.ext4-$ARCH" -D "$tmp/rootfs"
-cp "$(find "$tmp/rootfs" -type f | head -1)" "$OUT/rootfs.ext4"
+echo ">> rootfs ($ARCH): $REPO run $RUN (artifact: rootfs.erofs-$ARCH)"
+gh run download "$RUN" -R "$REPO" -n "rootfs.erofs-$ARCH" -D "$tmp/rootfs"
+cp "$(find "$tmp/rootfs" -type f | head -1)" "$OUT/rootfs.erofs"
 
 # The kernel package artifact rather than the assembled rootfs one: it is a tar, so the
 # bzImage comes out byte-for-byte, and it is the same artifact the CI boot job uses.
@@ -64,7 +64,7 @@ cp "$tmp/kernel/rootfs/boot/bzImage" "$OUT/bzImage"
 
 echo
 echo "Downloaded into $OUT/:"
-ls -la "$OUT/rootfs.ext4" "$OUT/bzImage"
+ls -la "$OUT/rootfs.erofs" "$OUT/bzImage"
 if [ "$ARCH" = "$host_arch" ]; then
     echo "Boot it with: ./tools/boot-qemu.sh"
 else

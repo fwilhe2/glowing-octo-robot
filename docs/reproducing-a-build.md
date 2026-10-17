@@ -15,8 +15,8 @@ way to feed a package anything other than what upstream shipped, which means the
 
 Worth settling before anything else, because the two readings ask for very different work.
 
-**Bit-identical output is not the claim.** `mkfs.ext4` stamps a fresh UUID and superblock
-timestamps into every disk it writes, the OCI config carries a `created` field taken from
+**Bit-identical output is not the claim.** `mkfs.erofs` stamps a fresh UUID and the build
+time into every disk it writes unless `SOURCE_DATE_EPOCH` is set, which CI does not do, the OCI config carries a `created` field taken from
 `date`, and nothing here passes `SOURCE_DATE_EPOCH` down to the compilers. Getting to
 byte-for-byte would be a project of its own and it is not this one.
 
@@ -176,7 +176,7 @@ Stated plainly, so nobody reads more into the word than is there:
   apt resolved that morning, so an old `builder:<hash>` that is still in the registry can
   be pulled and reused, but rebuilding it from scratch produces a different toolchain.
   This is phase 4 of `docs/build-container.md` and it is the largest remaining hole.
-- **Timestamps and ordering.** The ext4 UUID, the OCI `created` field, `ldconfig`'s cache,
+- **Timestamps and ordering.** The EROFS UUID and timestamps, the OCI `created` field, `ldconfig`'s cache,
   and anything a parallel `make` orders differently.
 - **The runner.** `nproc` changes what `make -j` does, and a compiler is allowed to care.
 

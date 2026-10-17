@@ -1,4 +1,14 @@
 # <file system> <mount point> <type> <options> <dump> <pass>
-# By label, not by device node: build-rootfs.sh runs mkfs.ext4 -L root, the root disk
+# By label, not by device node: build-rootfs.sh runs mkfs.erofs -L root, the root disk
 # is virtio (/dev/vda) under qemu, and the next VMM may well name it something else.
-LABEL=root   /   ext4   defaults   0   1
+# EROFS cannot be written to at all, so `ro` is a statement rather than a choice, and
+# there is no fsck pass because there is nothing a boot could have left inconsistent.
+LABEL=root   /       erofs   ro                                0   0
+
+# Everything a running machine writes, in RAM and gone at the next boot. The image ships
+# these directories empty; what has to be in them is created at boot by systemd-tmpfiles
+# (and by StateDirectory= for units that ask), never copied from the image. /tmp is
+# systemd's own tmp.mount and /run is PID 1's, so neither appears here.
+tmpfs        /var    tmpfs   mode=0755,nosuid,nodev            0   0
+tmpfs        /home   tmpfs   mode=0755,nosuid,nodev            0   0
+tmpfs        /root   tmpfs   mode=0700,nosuid,nodev            0   0

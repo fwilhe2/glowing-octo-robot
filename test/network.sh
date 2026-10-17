@@ -3,7 +3,7 @@
 # inside the guest, so a change that leaves the image without an address, without DNS
 # or without a route fails CI instead of being discovered by hand.
 #
-#     ./test/network.sh [rootfs.ext4] [bzImage]
+#     ./test/network.sh [rootfs.erofs] [bzImage]
 #
 # Overrides:
 #   HOST/PORT  what to resolve and connect to  (default example.com / 80)
@@ -39,7 +39,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source test/qemu-lib.sh
 
-ROOTFS="${1:-${ROOTFS:-output/rootfs.ext4}}"
+ROOTFS="${1:-${ROOTFS:-output/rootfs.erofs}}"
 KERNEL="${2:-${KERNEL:-rootfs/boot/bzImage}}"
 INIT="${INIT:-/usr/lib/systemd/systemd}"
 HOST="${HOST:-example.com}"

@@ -14,7 +14,7 @@
 #
 # Both Containerfiles are rewritten together. They are pinned to the same day on purpose:
 # builder/Containerfile decides what the binaries are compiled by, image/Containerfile
-# decides what the shipped bytes are (mkfs.ext4 and strip), and two dates would mean two
+# decides what the shipped bytes are (mkfs.erofs and strip), and two dates would mean two
 # answers to "which Debian was this built against" for one image.
 #
 # What this does not do is decide whether the new toolchain is any good. That is CI's job,

@@ -3,7 +3,7 @@
 # units — so a package that ships a unit it cannot actually run fails CI instead of
 # leaving every boot `degraded` for someone to notice by hand.
 #
-#     ./test/systemd.sh [rootfs.ext4] [bzImage]
+#     ./test/systemd.sh [rootfs.erofs] [bzImage]
 #
 # Overrides:
 #   TIMEOUT    seconds to wait   (default 300 — qemu falls back to TCG in CI, where
@@ -31,7 +31,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source test/qemu-lib.sh
 
-ROOTFS="${1:-${ROOTFS:-output/rootfs.ext4}}"
+ROOTFS="${1:-${ROOTFS:-output/rootfs.erofs}}"
 KERNEL="${2:-${KERNEL:-rootfs/boot/bzImage}}"
 INIT="${INIT:-/usr/lib/systemd/systemd}"
 LOG="${LOG:-output/systemd-test.log}"
@@ -63,6 +63,15 @@ FETCH_RUN="flfsfetch --no-color; echo FLFSFETCH'-DONE'"
 # did. Keeping the "Tainted=" prefix in the output lets it tell "no taint" apart from
 # "never asked the right question".
 TAINT_CHECK="echo SYSTEMD'-TAINT':[\$(systemctl show -p Tainted)]"
+# The root filesystem is EROFS and /etc cannot be written, so anything that still tries to
+# at boot fails — and a lot of that failure is not a failed unit. PID 1's first-boot preset
+# is the case that made this check exist: it could not write the symlinks that enable
+# networkd and resolved, logged one line, and the system came up `running` with no
+# network. So count the boot's journal lines that carry EROFS's strerror, which is what
+# every one of those writes says however it is reported. Builtins only, for the reason
+# above; journalctl --grep would need pcre2, which systemd is built without.
+ROFS="SYSTEMD-ROFS:"
+ROFS_CHECK="n=0; while IFS= read -r l; do [[ \$l == *'Read-only file system'* ]] && { n=\$((n+1)); echo \"ROFS> \$l\"; }; done < <(journalctl -b --no-pager -o short); echo SYSTEMD'-ROFS':[\$n]"
 DIAGNOSE="systemctl --failed --no-pager --plain; journalctl -p err -b --no-pager -o short"
 
 qemu_setup
@@ -108,6 +117,24 @@ case "$taint" in
         ;;
     *)
         fail "could not read systemd's Tainted property (got: ${taint:-<nothing>})"
+        ;;
+esac
+
+console_send "$ROFS_CHECK"
+await "$ROFS" 60 || fail "could not count read-only filesystem errors in the journal"
+
+rofs=$(tr -d '\r' < "$LOG" | sed -n "s/.*${ROFS}\\[\\([0-9]*\\)\\].*/\\1/p" | tail -1)
+
+case "$rofs" in
+    0)
+        echo ">> systemd OK: nothing tried to write to the read-only root"
+        ;;
+    [0-9]*)
+        tr -d '\r' < "$LOG" | grep '^ROFS> ' | sed 's/^ROFS> /   /' || true
+        fail "$rofs journal line(s) report a write to the read-only root (above) — see 'First boot happens in build-rootfs.sh' in CLAUDE.md"
+        ;;
+    *)
+        fail "could not read the read-only filesystem error count (got: ${rofs:-<nothing>})"
         ;;
 esac
 

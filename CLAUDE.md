@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 A **pragmatic, automated Linux From Scratch**: source tarballs in, a bootable
-`output/rootfs.ext4` and a container image out. `README.md` is the user-facing
+`output/rootfs.erofs` and a container image out. `README.md` is the user-facing
 documentation; this file covers what is easy to get wrong when changing things.
 
 ## What this is, and what it is not
@@ -132,14 +132,14 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/kernel-caps.sh rootfs            # kernel config vs what a container needs
 ./test/check-licenses.sh                # every package declares a DFSG-free license
 ./tools/check-updates.sh [pkg...] # what upstream has released since the pinned VERSION
-./test/boot.sh output/rootfs.ext4 rootfs/boot/bzImage   # headless boot smoke test
-./test/systemd.sh output/rootfs.ext4 rootfs/boot/bzImage  # no failed units
-./test/network.sh output/rootfs.ext4 rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
-./test/ssh.sh output/rootfs.ext4 rootfs/boot/bzImage        # sshd, in-guest and from the host (PREBUILT=dir: and those binaries)
-./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage  # crun starts a container
+./test/boot.sh output/rootfs.erofs rootfs/boot/bzImage   # headless boot smoke test
+./test/systemd.sh output/rootfs.erofs rootfs/boot/bzImage  # no failed units
+./test/network.sh output/rootfs.erofs rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
+./test/ssh.sh output/rootfs.erofs rootfs/boot/bzImage        # sshd, in-guest and from the host (PREBUILT=dir: and those binaries)
+./test/container.sh output/rootfs.erofs rootfs/boot/bzImage  # crun starts a container
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./test/prebuilt.sh [build|oci|ssh] # host-compiled C, C++, Rust and Go binaries, run in the image
-./test/rootfs-size.sh [ext4|oci]  # image size vs test/size-budget.txt, and where it went
+./test/rootfs-size.sh [erofs|oci]  # image size vs test/size-budget.txt, and where it went
 ./test/vs-debian-slim.sh          # the OCI image against debian-slim, with both breakdowns
 ./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
 ./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
@@ -408,18 +408,19 @@ the binary rather than the check.**
 
 ## Image assembly and boot
 
-`image/Containerfile` + `image/build-rootfs.sh` turn `rootfs/` into `output/rootfs.ext4`:
+`image/Containerfile` + `image/build-rootfs.sh` turn `rootfs/` into `output/rootfs.erofs`:
 directory skeleton, `image/files/etc` copied in as the shipped `/etc` (hostname `flfs`,
 credentials from `image/files/etc/shadow` — `root`/`root` and `user`/`user`, the latter
-uid 1000 with its home created by `build-rootfs.sh` because nothing in the image would
-make one on first login), `/sbin/init` → systemd, the trim (below),
-`ld.so.conf` + `ldconfig`, permission fixups, `mkfs.ext4 -d`. Changes to the shipped `/etc` go
+uid 1000 with its home made at every boot by `image/files/etc/tmpfiles.d/flfs-home.conf`
+because nothing in the image would make one on login), `/sbin/init` → systemd, the trim
+(below), `ld.so.conf` + `ldconfig`, first boot done at build time (below), permission
+fixups, `mkfs.erofs`. Changes to the shipped `/etc` go
 in `image/files/`, not into
 `rootfs/` — and `image/files` is `COPY`ed into the builder image rather than bind-mounted, so
 editing it means `podman build -f image/Containerfile` again before `podman run`, or the
 image is assembled from the old copy.
 
-`build-rootfs.sh` takes the output as its argument, `ext4` (the default) or `oci`, and the
+`build-rootfs.sh` takes the output as its argument, `erofs` (the default) or `oci`, and the
 same run of the same script produces `output/flfs-oci.tar` for the second. **The container
 flavour is written as subtractions from the disk image, in one block**, for the same reason
 `vm.config` is written as subtractions from defconfig: two scripts would drift, and the
@@ -509,31 +510,67 @@ because a library is normally a real file plus the SONAME symlink binaries actua
 for. They appear as `DEPENDS_ON` without a matching `CONTAINS`, which is SPDX for "needed,
 not present".
 
-Two things in the image are *generated* rather than installed, and both are silent when
-they are missing. `ldconfig` is the known one. The other is systemd's message catalogue:
-`usr/lib/systemd/catalog/*.catalog` is only the source form, and what `journalctl -x`
-opens is a compiled `/var/lib/systemd/catalog/database` that nothing was building — every
-`MESSAGE_ID` lookup answered *Failed to find catalog entry*. `build-rootfs.sh` runs
-`journalctl --root="$IMAGE" --update-catalog`, and it has to be **our** journalctl: the
-image container has no systemd, and a Debian one would write a database for a different
-version to read. Ours is compiled against our glibc and its RUNPATH is an absolute
-`/usr/lib/systemd` that resolves to the *container's* copy, so the invocation calls our
-loader by hand with `--library-path "$IMAGE/usr/lib:$IMAGE/usr/lib/systemd"` —
-`--library-path` is searched ahead of `DT_RUNPATH`, which is what makes the override
-take. The sixteen translated catalogs are trimmed for the same reason as `share/locale`:
-a C-locale image can never select one. It runs for the `ext4` flavour only — the
-subtractions have taken both the catalog sources and journalctl itself by then — which is
-the general rule for **anything added below the subtractions block: it runs against a
-tree systemd has been removed from, so it has to say which flavour it is for.** The
-failure does not look like one. Invoked explicitly, `ld.so` reports a program it cannot
-open with the same *cannot open shared object file* it uses for libraries, so a deleted
-`journalctl` reads as a missing library of journalctl's.
+**The disk image is immutable, and that is the design rather than a mount option.** The
+root is EROFS — a filesystem with no write path at all — attached to qemu with
+`readonly=on` as well, so one file can back any number of guests and an update is a new
+image, never a change to an old one. Everything a running machine writes is RAM:
+`image/files/etc/fstab` mounts tmpfs on `/var`, `/home` and `/root`, systemd's own
+`tmp.mount` covers `/tmp`, and `/run` is PID 1's. The image ships those mount points
+*empty* — `build-rootfs.sh` deletes whatever was staged under them, because it would be
+invisible under the tmpfs — so anything that has to exist there is made at boot by
+tmpfiles or a unit's `StateDirectory=`. sshd is the worked example: its privilege
+separation directory moved from `/var/empty` to `/usr/share/empty.sshd`, and its host
+keys from `/etc/ssh` to `/var/lib/sshd`, generated afresh at every boot.
 
-Persistent logging is one `mkdir`: journald's `Storage=auto` keeps the journal in `/run`
-unless `/var/log/journal` exists, and systemd's tmpfiles snippet for it is `z`, which
-adjusts a directory that is already there rather than creating one. Mode and group are
-left to tmpfiles at boot — the `systemd-journal` group does not exist yet while the image
-is being assembled, and `systemd-sysusers` is ordered before `systemd-tmpfiles-setup`.
+**First boot happens in `build-rootfs.sh`, because on a read-only `/etc` it cannot happen
+anywhere else.** systemd already accommodates this: the units that write `/etc`
+(`systemd-sysusers`, `ldconfig.service`, …) are `ConditionNeedsUpdate=/etc`, which is
+false on a read-only `/etc`, so they *skip* — and skipping is only right if the result is
+already there. So the image build runs **our** `systemd-sysusers --root` (every account a
+`sysusers.d` snippet asks for, appended to `image/files/etc/passwd`) and
+`systemd-tmpfiles --root --create --boot --prefix=/etc` (the `/etc` symlinks and
+directories tmpfiles would make) and `systemctl preset-all --root` — and that last one is
+the trap. Nothing ships a `.wants` symlink for networkd, resolved or timesyncd; PID 1
+enables them on first boot by applying the preset files, which means writing to `/etc`.
+On a read-only `/etc` that fails with one journal line, and the machine comes up
+`running`, with no failed unit, and with no network. `test/systemd.sh` now fails on any
+*Read-only file system* in the boot's journal for exactly this reason. The build also
+ships an empty `/etc/machine-id` for PID 1 to bind-mount a per-boot id over, and `/` at
+the 0555 that `tmpfiles.d/root.conf` would otherwise try to `fchmod` it to at every boot —
+the first thing that check caught.
+
+Each of those has to be our build: the image container has
+no systemd, and a Debian one would apply a different version's rules. Ours is compiled
+against our glibc and its RUNPATH is an absolute `/usr/lib/systemd` that resolves to the
+*container's* copy, so `ours()` calls our loader by hand with `--library-path
+"$IMAGE/usr/lib:$IMAGE/usr/lib/systemd"` — `--library-path` is searched ahead of
+`DT_RUNPATH`, which is what makes the override take. **A package that adds something
+written to `/etc` at boot breaks this image**, as a failed unit at best and silently at
+worst, and the journal says *Read-only file system* and nothing about which step was
+missed; `test/systemd.sh` is the check.
+
+That block runs for the `erofs` flavour only — the subtractions have taken the binaries
+and their configuration by then — which is the general rule for **anything added below
+the subtractions block: it runs against a tree systemd has been removed from, so it has
+to say which flavour it is for.** The failure does not look like one. Invoked explicitly,
+`ld.so` reports a program it cannot open with the same *cannot open shared object file*
+it uses for libraries, so a deleted binary reads as a missing library of its own.
+
+Two things in the image are *generated* rather than installed, and both are silent when
+they are missing. `ldconfig` is the known one, and runs at build time. The other is
+systemd's message catalogue: `usr/lib/systemd/catalog/*.catalog` is only the source form,
+and what `journalctl -x` opens is a compiled `/var/lib/systemd/catalog/database` —
+without it every `MESSAGE_ID` lookup answers *Failed to find catalog entry*. It used to
+be compiled here; it is not any more, because `/var` is a tmpfs that would hide it.
+`systemd-journal-catalog-update.service` compiles it at boot instead: it is
+`ConditionNeedsUpdate=/var`, and a `/var` that starts empty always needs one. The sixteen
+translated catalogs are trimmed for the same reason as `share/locale`: a C-locale image
+can never select one.
+
+The journal is in `/run`, and that is not a loss: journald's `Storage=auto` would only
+write to `/var/log/journal` if the directory existed, and on a tmpfs `/var` that is the
+same RAM by another name. Persistent logs, like persistent anything, want a writable disk
+for `/var` that this image deliberately does not have yet.
 
 The kernel is a normal package (`packages/kernel/`, `defconfig` + `kvm_guest.config` +
 `container.config` + `vm.config`) staged at `rootfs/boot/bzImage`, so a CI run is self-contained. `test/boot.sh` runs `/bin/bash` as
@@ -630,7 +667,7 @@ socket, which is a property of the machine running the test rather than of the i
 an outbound ping is a flaky check of something the TCP and TLS probes either side of it
 already cover. In the guest, `image/files/etc/sysctl.d/50-ping-group-range.conf` is what
 lets a non-root account ping at all: nothing here is setuid, and a `CAP_NET_RAW` file
-capability would have to survive both `mkfs.ext4 -d` and the OCI layer tar.
+capability would have to survive both `mkfs.erofs` and the OCI layer tar.
 
 `ip` and friends come from `iproute2`, which wants `libmnl` — without it its configure
 sets `HAVE_MNL:=n` and silently drops half the tool set. Its `make install` puts a python
@@ -654,8 +691,9 @@ with a service** — which sets the rule: a package installs its own scaffolding
 `sysusers.d` entry for the privilege-separation account, `sshd_config` and
 `/etc/pam.d/sshd`. `image/files` is copied whatever was built, and a unit naming a binary
 the image does not contain is a failed unit and a `degraded` boot. Host keys are made at
-first boot (`ssh-keygen -A`) and `make install-nokeys` is what keeps them out of the image
-— never switch that to `install`. The OCI flavour drops the server half by name in the
+every boot into `/var/lib/sshd` (the HostKey lines in `sshd_config` point there; `/etc` is
+read-only) and `make install-nokeys` is what keeps them out of the image — never switch
+that to `install`. The OCI flavour drops the server half by name in the
 subtractions block: `sshd-session` and `sshd-auth` are the only libpam consumers in the
 package and they live in `usr/libexec`, which the PAM sweep does not walk.
 
@@ -673,11 +711,13 @@ public key as `systemd.set_credential_binary=ssh.authorized_keys.root:<base64>` 
 kernel command line — not SMBIOS, which arm64's firmware-less `virt` boot does not have —
 and writes an `ssh_config` that `tools/ssh.sh` hands to `ssh -F`. The directory is deleted
 when qemu exits. systemd's `tmpfiles.d/provision.conf` also copies that credential to
-`/root/.ssh/authorized_keys`, but with `f^`, which only creates a missing file: on a disk
-booted before, it keeps the first key and silently ignores every later one. That is why
+`/root/.ssh/authorized_keys`, but with `f^`, which only creates a missing file. `/root` is
+a tmpfs now, so that copy is fresh at every boot — but it is still a copy, and anything
+that rewrites the file in the guest loses the key the host was handed. That is why
 `sshd_config` ends in `Match User root` / `AuthorizedKeysFile .ssh/authorized_keys
-/run/credentials/@system/ssh.authorized_keys.root`. Remove that block and the wrapper works
-exactly once per disk image. `test/ssh.sh`'s third round is ordered after the second
+/run/credentials/@system/ssh.authorized_keys.root`, and why it should stay if `/root` ever
+moves onto a persistent disk, where `f^` would keep the first key forever. `test/ssh.sh`'s
+third round is ordered after the second
 replaces `authorized_keys` precisely so it can only pass through that path.
 
 The OCI runtime is `crun` (constraint 3), plus `json-c` for `config.json`. crun is the
@@ -788,7 +828,7 @@ gone, not only the one you want gone.
 
 `tools/fetch-image.sh` / `tools/boot-qemu.sh` are for poking at CI artifacts locally. The `rootfs-dir`
 CI artifact is lossy (`upload-artifact` dereferences symlinks); never rebuild a bootable
-image from it — `output/rootfs.ext4` is the real output.
+image from it — `output/rootfs.erofs` is the real output.
 
 ## CI
 
@@ -809,7 +849,7 @@ It pushes `flfs:<commit>-<arch>` for each architecture and then a manifest list 
 `flfs:<commit>` and `flfs:latest`. One job rather than a push step per `rootfs` matrix leg,
 because the list can only be assembled once both architectures exist; a single amd64 runner
 is enough, since loading and pushing a foreign-arch image never runs it. It needs `boot`
-rather than `rootfs`: the OCI and ext4 images are the same userspace from the same staging
+rather than `rootfs`: the OCI and EROFS images are the same userspace from the same staging
 tree, so a disk that fails to boot is not a container to publish, whatever `test/oci.sh`
 made of it in isolation. The gate on `main` is about `latest` — the commit tags would be
 harmless from a branch, but `latest` has one holder.

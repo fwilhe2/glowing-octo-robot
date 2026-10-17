@@ -353,7 +353,7 @@ jobs:
       # so that an overage in the first still reports the other image's number rather than
       # hiding it until the next run.
       - name: Measure the disk image
-        run: ./test/rootfs-size.sh ext4
+        run: ./test/rootfs-size.sh erofs
 
       - name: Measure the OCI image
         if: always()
@@ -388,11 +388,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./test/size-history.sh ${{ matrix.arch }}
 
-      - name: Upload rootfs.ext4
+      - name: Upload rootfs.erofs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: rootfs.ext4-${{ matrix.arch }}
-          path: output/rootfs.ext4
+          name: rootfs.erofs-${{ matrix.arch }}
+          path: output/rootfs.erofs
 
       - name: Upload OCI image
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -414,11 +414,11 @@ jobs:
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: rootfs.ext4-${{ matrix.arch }}
+          name: rootfs.erofs-${{ matrix.arch }}
           path: artifacts
 
       # Just the kernel package, not the whole assembled rootfs artifact: the image is
-      # already in artifacts/rootfs.ext4 and qemu only needs the bzImage next to it.
+      # already in artifacts/rootfs.erofs and qemu only needs the bzImage next to it.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: package-kernel-${{ matrix.arch }}
@@ -446,7 +446,7 @@ jobs:
           fi
 
       - name: Boot the image
-        run: ./test/boot.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
+        run: ./test/boot.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
       # A second boot, this one all the way into systemd, asking whether systemd is happy
       # with itself: a package that ships a unit it cannot run leaves every boot
@@ -454,12 +454,12 @@ jobs:
       # already has, which is the only time CI executes a shipped binary that is not on
       # systemd's or login's critical path — and prints the result, which is the point.
       - name: Check for failed units, and say hello
-        run: ./test/systemd.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
+        run: ./test/systemd.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
       # A third boot: networkd has to configure the NIC, resolved has to answer, and the
       # guest has to reach the outside world.
       - name: Check networking
-        run: ./test/network.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
+        run: ./test/network.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
       # A fourth, which logs into the guest over ssh: once from inside the guest to itself,
       # then from the runner through tools/ssh.sh and the ephemeral key qemu_ssh_setup
@@ -470,13 +470,13 @@ jobs:
       # Logged in, it also runs the rootfs job's test/prebuilt.sh binaries in the guest:
       # the OCI run there tested the container flavour, this tests the disk.
       - name: Check ssh, and binaries built elsewhere
-        run: PREBUILT=artifacts/prebuilt ./test/ssh.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
+        run: PREBUILT=artifacts/prebuilt ./test/ssh.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
       # And a fifth, which starts an actual container: the kernel's container.config
       # fragment and crun are only useful together, and nothing above this exercises
       # either of them.
       - name: Check containers
-        run: ./test/container.sh artifacts/rootfs.ext4 rootfs/boot/bzImage
+        run: ./test/container.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
       - name: Upload console log
         if: always()
@@ -491,7 +491,7 @@ jobs:
   # and that can only be assembled once both exist. Loading and pushing a foreign-arch
   # image needs no emulation — nothing here runs it — so this can be one amd64 runner.
   #
-  # `needs: boot`, not `needs: rootfs`: the OCI and ext4 images are the same userspace
+  # `needs: boot`, not `needs: rootfs`: the OCI and EROFS images are the same userspace
   # out of the same staging tree, so the boot job failing means the thing about to be
   # published is broken, whatever test/oci.sh made of it in isolation.
   #

@@ -12,7 +12,7 @@ mechanics, and lists the pitfalls in one place.
                         │
  packages/<pkg>/build.sh ─► build ──► rootfs/   (one package at a time, --network=none)
                                         │
- image/files/ ─────────────────────────►├─► build-rootfs.sh ext4 ──► output/rootfs.ext4
+ image/files/ ─────────────────────────►├─► build-rootfs.sh erofs ─► output/rootfs.erofs
                                         └─► build-rootfs.sh oci  ──► output/flfs-oci.tar
                                                   │
                                     test/*.sh  ◄──┘   (static checks, then qemu boots)
@@ -137,11 +137,14 @@ Steps, in order:
    The rule: delete only what nothing in the image can reach.
    After the trim, `extra/` (local only, gitignored) is copied in unchanged. This
    happens before `ldconfig`, so libraries in it are added to the cache.
-4. **Generated files.** Run `ldconfig`. For ext4 only, build the systemd message
-   catalogue with *our* `journalctl`, run through our own loader.
+4. **Generated files.** Run `ldconfig`. For the disk only, do the first boot's work
+   in `/etc`, which is read-only from then on: *our* `systemd-sysusers`,
+   `systemd-tmpfiles` and `systemctl preset-all`, run through our own loader with
+   `--root`, plus an empty `/etc/machine-id`. Then empty `/var`, `/home` and `/root`,
+   which are tmpfs mounts at boot.
 5. **SBOM.** Write SPDX 2.3 from the component records, then delete the records.
 6. **Size report.** Write `output/rootfs-size-<flavour>.txt`.
-7. **Write the image.** ext4: `mkfs.ext4 -d`. OCI: a gzipped layer plus config,
+7. **Write the image.** Disk: `mkfs.erofs` (lz4hc). OCI: a gzipped layer plus config,
    manifest, `index.json` and `oci-layout`, assembled by hand.
 
 ## 4. Verification
@@ -262,7 +265,7 @@ Those files belong to the container's root, which is a sub-UID on the host. Use
 
 **Don't rebuild an image from the `rootfs-dir` CI artifact.**
 `upload-artifact` follows symlinks, so the merged-`/usr` links are lost. Use
-`rootfs.ext4` from CI, or build locally.
+`rootfs.erofs` from CI, or build locally.
 
 ### Image and kernel
 

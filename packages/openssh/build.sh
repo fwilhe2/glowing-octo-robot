@@ -68,7 +68,7 @@
     --sysconfdir=/etc/ssh \
     --libexecdir=/usr/libexec \
     --with-pid-dir=/run \
-    --with-privsep-path=/var/empty \
+    --with-privsep-path=/usr/share/empty.sshd \
     --with-privsep-user=sshd \
     --with-default-path=/usr/local/bin:/usr/bin \
     --with-superuser-path=/usr/local/bin:/usr/bin \
@@ -105,7 +105,7 @@ make
 # a public repository would be the same key on every machine that ever boots it, which is
 # a real compromise and one upstream refactor away from happening by accident; and a build
 # step whose failure is ignored is a build step not worth having. The keys are generated
-# on first boot instead, by the unit further down.
+# at boot instead, by the unit further down.
 make install-nokeys DESTDIR=$ROOTFS
 
 # Three helpers `make install` puts in libexec that this image has no use for. Removed
@@ -178,6 +178,12 @@ Include /etc/ssh/sshd_config.d/*.conf
 # (/etc/pam.d/sshd, and pam_systemd.so inside it). The compiled default is no.
 UsePAM yes
 
+# Host keys are machine state, not configuration: the root filesystem is read-only, so
+# they live under /var with the rest of it. See sshd-keygen.service below.
+HostKey /var/lib/sshd/ssh_host_rsa_key
+HostKey /var/lib/sshd/ssh_host_ecdsa_key
+HostKey /var/lib/sshd/ssh_host_ed25519_key
+
 # root over the network by key only, never by password: /etc/shadow in this image ships a
 # throwaway password for root and a network is not a serial console.
 PermitRootLogin prohibit-password
@@ -222,28 +228,32 @@ RestartSec=5s
 WantedBy=multi-user.target
 EOF
 
-# Host keys are generated on the machine, at its first boot, and never in the image: an
-# image built from a public repository that carried a private host key would put the same
-# key on every machine that ever booted it, and any of them could then impersonate the
-# rest. `ssh-keygen -A` is upstream's own answer to "make whatever is missing", so a new
-# key type in a later release needs no edit here.
+# Host keys are generated on the machine, at boot, and never in the image: an image built
+# from a public repository that carried a private host key would put the same key on
+# every machine that ever booted it, and any of them could then impersonate the rest.
 #
-# The conditions are OR'd (the `|` prefix), so the unit runs when *any* of the three is
-# absent — which is what makes it a no-op on every boot after the first, and what makes it
-# do the right thing if one key is deleted. It writes to /etc, which is on the root
-# filesystem and mounted rw; the disk carries it across reboots.
+# Not `ssh-keygen -A`, whose layout is always <prefix>/etc/ssh/ssh_host_* — and /etc is
+# on the read-only root. The keys go in /var/lib/sshd instead, which sshd_config's HostKey lines
+# name. /var is a tmpfs today, so this runs on every boot and the host key changes with
+# it; a /var that persists makes it a first-boot-only unit without an edit here.
+#
+# The conditions are OR'd (the `|` prefix), so the unit runs when *any* key is absent, and
+# the loop only generates the missing ones: ssh-keygen asks before overwriting, and with
+# stdin on /dev/null that question is an error.
 cat > $ROOTFS/usr/lib/systemd/system/sshd-keygen.service <<'EOF'
 [Unit]
 Description=Generate the OpenSSH host keys that are missing
 Documentation=man:ssh-keygen(1)
-ConditionPathExists=|!/etc/ssh/ssh_host_rsa_key
-ConditionPathExists=|!/etc/ssh/ssh_host_ecdsa_key
-ConditionPathExists=|!/etc/ssh/ssh_host_ed25519_key
+ConditionPathExists=|!/var/lib/sshd/ssh_host_rsa_key
+ConditionPathExists=|!/var/lib/sshd/ssh_host_ecdsa_key
+ConditionPathExists=|!/var/lib/sshd/ssh_host_ed25519_key
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/ssh-keygen -A
+StateDirectory=sshd
+StateDirectoryMode=0700
+ExecStart=/usr/bin/bash -c 'for t in rsa ecdsa ed25519; do k=/var/lib/sshd/ssh_host_$${t}_key; [ -e "$$k" ] || /usr/bin/ssh-keygen -q -t "$$t" -N "" -C "" -f "$$k" || exit; done'
 EOF
 
 # Enabled by shipping the .wants symlink itself, the way packages/dbus's meson install
@@ -255,18 +265,21 @@ ln -sfn ../sshd.service \
     $ROOTFS/usr/lib/systemd/system/multi-user.target.wants/sshd.service
 
 # ---------------------------------------------------------------------------------
-# The privilege separation account, created at first boot by systemd-sysusers because
-# there is no shadow-utils in this image and nothing else could create it. sshd refuses to
+# The privilege separation account, created by systemd-sysusers because there is no
+# shadow-utils in this image and nothing else could create it — when the image is
+# assembled, since /etc is read-only by the time anything boots (image/build-rootfs.sh). sshd refuses to
 # start without it: the unprivileged child that talks to the network runs as this user and
-# chroots into /var/empty, which `make install` created above as root-owned 0755 — the
-# ownership and mode sshd checks before it will use it.
+# chroots into /usr/share/empty.sshd, which `make install` created above as root-owned
+# 0755 — the ownership and mode sshd checks before it will use it. Under /usr rather than
+# the usual /var/empty because /var is a tmpfs that starts empty, and an empty directory
+# is exactly the thing the read-only image can carry.
 #
-# The `-` fields are the uid (any, allocated below SYSTEM_UID_MAX at first boot) and the
+# The `-` fields are the uid (any, allocated below SYSTEM_UID_MAX) and the
 # shell (systemd's default for a system user, /usr/sbin/nologin, which util-linux ships
 # and merged-/usr resolves into /usr/bin).
 install -d $ROOTFS/usr/lib/sysusers.d
 cat > $ROOTFS/usr/lib/sysusers.d/sshd.conf <<'EOF'
-u sshd - "OpenSSH privilege separation" /var/empty -
+u sshd - "OpenSSH privilege separation" /usr/share/empty.sshd -
 EOF
 
 # ---------------------------------------------------------------------------------

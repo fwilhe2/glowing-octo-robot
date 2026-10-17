@@ -3,7 +3,7 @@
 # a kernel config or a crun build that cannot run one fails CI instead of being
 # discovered by hand.
 #
-#     ./test/container.sh [rootfs.ext4] [bzImage]
+#     ./test/container.sh [rootfs.erofs] [bzImage]
 #
 # Overrides:
 #   TIMEOUT    seconds to wait   (default 300 — qemu falls back to TCG in CI, where
@@ -30,7 +30,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source test/qemu-lib.sh
 
-ROOTFS="${1:-${ROOTFS:-output/rootfs.ext4}}"
+ROOTFS="${1:-${ROOTFS:-output/rootfs.erofs}}"
 KERNEL="${2:-${KERNEL:-rootfs/boot/bzImage}}"
 INIT="${INIT:-/usr/lib/systemd/systemd}"
 LOG="${LOG:-output/container-test.log}"

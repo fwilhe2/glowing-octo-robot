@@ -99,8 +99,8 @@ qemu_preflight() {
 # qemu passes credentials — does not: arm64's virt board has no SMBIOS without UEFI
 # firmware, and this boots the kernel directly. The command line is world-readable inside
 # the guest, which is fine for a *public* key and is the reason nothing else goes this
-# way. packages/openssh/build.sh has sshd read the credential where PID 1 put it, so a
-# disk that was booted before with another key still accepts this one.
+# way. packages/openssh/build.sh has sshd read the credential where PID 1 put it, so the
+# key this boot was handed works whatever has since happened to /root/.ssh.
 #
 # Ephemeral in the sense that matters: generated per call, never written into the image,
 # and deleted with $SSH_DIR when the guest goes away — by qemu_boot's cleanup, or by the
@@ -125,8 +125,8 @@ qemu_ssh_setup() {
     ssh-keygen -q -t ed25519 -N '' -C "flfs-ephemeral@$(hostname)" -f "$SSH_DIR/id_ed25519"
 
     # StrictHostKeyChecking/UserKnownHostsFile because the guest generates its host keys at
-    # its own first boot (sshd-keygen.service), so a rebuilt image is a new host on the
-    # same port and recording it would only buy a MITM warning next time. This is a
+    # every boot (sshd-keygen.service, into a tmpfs /var), so every guest is a new host on
+    # the same port and recording it would only buy a MITM warning next time. This is a
     # loopback forward to a VM this shell just started, which is the one case where that
     # trade is right; Lima and Vagrant make it too. IdentitiesOnly keeps an agent full of
     # other keys from using up MaxAuthTries before this one is offered, and BatchMode
@@ -150,14 +150,18 @@ EOF
     QEMU_SSH_DIR="$SSH_DIR"
 }
 
+# The disk is attached read-only as well as being EROFS: the image is immutable at the
+# VMM, not only in the guest, so one file can back any number of guests at once and
+# nothing a guest does can reach it. Everything writable is a tmpfs (image/files/etc/fstab).
+# rootfstype saves the kernel trying every filesystem it has before the right one.
 qemu_argv() {
     QEMU_ARGV=(
         "${accel[@]}" "${machine[@]}"
         -m "$MEM" -smp "$CPUS"
         -kernel "$KERNEL"
-        -drive file="$ROOTFS",format=raw,if=virtio
+        -drive file="$ROOTFS",format=raw,if=virtio,readonly=on
         -nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}"
-        -append "root=/dev/vda rw console=$CONSOLE init=$INIT${QEMU_APPEND_EXTRA:-}"
+        -append "root=/dev/vda ro rootfstype=erofs console=$CONSOLE init=$INIT${QEMU_APPEND_EXTRA:-}"
         -nographic
         -no-reboot
     )

@@ -1,6 +1,6 @@
 # Image variants: one build, many images
 
-**Status: nothing here is implemented.** `image/build-rootfs.sh` takes `ext4` or `oci` and
+**Status: nothing here is implemented.** `image/build-rootfs.sh` takes `erofs` or `oci` and
 that is the whole vocabulary. This document is the design for turning that one hard-coded
 special case into a general one: several images, declared rather than coded, differing both
 in *what they run on* and *what is in them*.
@@ -27,10 +27,10 @@ it is the only such block that will ever be written by hand — a second one for
 and a third for `k8s` would each have their own version of the `readelf` sweep, the
 dangling-symlink pass and the "which /etc does this need" judgement.
 
-**Two different axes share one word.** `ext4` and `oci` differ in *format* (a filesystem
+**Two different axes share one word.** `erofs` and `oci` differ in *format* (a filesystem
 versus a tar of blobs) and, incidentally, in *content* (a container has no kernel). A
-firecracker image would be the same content as `ext4` in a different launch shape; a
-`minimal` image is the same shape as `ext4` with different content. One parameter cannot
+firecracker image would be the same content as `erofs` in a different launch shape; a
+`minimal` image is the same shape as `erofs` with different content. One parameter cannot
 carry both without becoming a list of every combination somebody wanted.
 
 **Nothing checks a subset.** `test/check-rootfs-deps.sh` runs over the staging tree, which
@@ -47,16 +47,16 @@ does not need. An image is one of each, per architecture.
 
 | variant | what it is for | packages | platforms |
 | --- | --- | --- | --- |
-| `minimal` | boots to a login shell on the serial console and nothing else | glibc, bash, coreutils, util-linux, systemd and what it needs | `ext4`, `oci` |
-| `net` | a machine somebody can debug: addressing, DNS, TLS, `ip`/`ping`/`curl` | minimal + iproute2, iputils, libmnl, openssl, ca-certificates, curl | `ext4`, `oci` |
-| `full` | everything this repository builds — today's image, unchanged | all of them | `ext4`, `oci` |
+| `minimal` | boots to a login shell on the serial console and nothing else | glibc, bash, coreutils, util-linux, systemd and what it needs | `erofs`, `oci` |
+| `net` | a machine somebody can debug: addressing, DNS, TLS, `ip`/`ping`/`curl` | minimal + iproute2, iputils, libmnl, openssl, ca-certificates, curl | `erofs`, `oci` |
+| `full` | everything this repository builds — today's image, unchanged | all of them | `erofs`, `oci` |
 | `lima` | a VM somebody actually works in, via `limactl start` — see below | net + openssh, sudo, sshfs, fuse3 | `lima` |
-| `container-host` *(later)* | runs OCI containers: crun and the tooling of `docs/container-runtime.md` | net + crun, json-c, … | `ext4` |
-| `k8s-node` *(later)* | issue #83, once that question has an answer | container-host + … | `ext4` |
+| `container-host` *(later)* | runs OCI containers: crun and the tooling of `docs/container-runtime.md` | net + crun, json-c, … | `erofs` |
+| `k8s-node` *(later)* | issue #83, once that question has an answer | container-host + … | `erofs` |
 
 | platform | artifact | what it subtracts |
 | --- | --- | --- |
-| `ext4` | `rootfs.ext4` via `mkfs.ext4 -d`, booted by qemu with `-kernel` | nothing |
+| `erofs` | `rootfs.erofs` via `mkfs.erofs`, booted by qemu with `-kernel` | nothing |
 | `oci` | a hand-written OCI archive | the kernel, systemd, the `/etc` only a booted machine reads |
 | `lima` | a **self-bootable** GPT disk: ESP + systemd-boot + the root filesystem, plus the `lima.yaml` that names it | nothing from the tree |
 | `firecracker` *(later)* | the same disk, an uncompressed kernel, a machine-config JSON | nothing from the tree |
@@ -125,7 +125,7 @@ that cannot be executed is a directive that cannot do anything surprising.
 # image/variants/net.conf
 description  Minimal, plus a network somebody can debug: addressing, DNS, TLS
 extends      minimal
-platforms    ext4 oci
+platforms    erofs oci
 tests        boot systemd network
 publish      oci
 
@@ -137,7 +137,7 @@ package      iproute2 iputils libmnl
 # image/variants/full.conf
 description  Everything this repository builds. The image published as flfs:latest.
 extends      net
-platforms    ext4 oci
+platforms    erofs oci
 tests        boot systemd network container
 publish      oci
 default      yes
@@ -185,7 +185,7 @@ drop         etc/fstab etc/shadow etc/hostname etc/resolv.conf etc/pam.d
 ```
 
 **The code that writes the artifact stays code.** There will be three or four platforms
-ever, `mkfs.ext4 -d` and a hand-assembled OCI layout have nothing in common, and a
+ever, `mkfs.erofs` and a hand-assembled OCI layout have nothing in common, and a
 plugin mechanism for two implementations is how a build system acquires an abstraction
 layer nobody can read. `format` selects a `case` branch in `build-rootfs.sh` — the same
 branch that is there now, given a name.
@@ -258,21 +258,21 @@ by accident on the first push.
 finding them later is the annoying part of this work: `test/size-budget.txt` (its rows
 become `variant platform arch MiB`, and its own comment already says an image with no line
 is an error rather than a pass — so a new variant must be given a ceiling before it ships),
-`test/rootfs-size.sh`, `test/size-history.sh` (`FLAVOURS="ext4 oci"` and a two-column
+`test/rootfs-size.sh`, `test/size-history.sh` (`FLAVOURS="erofs oci"` and a two-column
 table), `tools/publish-oci.sh`, `tools/fetch-image.sh`, and the output filenames
-`output/rootfs.ext4` / `output/flfs-oci.tar`, which the `default yes` variant keeps so that
+`output/rootfs.erofs` / `output/flfs-oci.tar`, which the `default yes` variant keeps so that
 `docs/release.md` and the boot tests do not all move at once.
 
 ## What the model makes expressible
 
 Three things that are awkward or impossible today, as evidence the shape is right:
 
-- **The kernel is in the disk image.** `rootfs/boot/bzImage` is copied into the ext4 — 11
+- **The kernel is in the disk image.** `rootfs/boot/bzImage` is copied into the erofs — 11
   MiB on amd64, and `test/size-budget.txt`'s accounting puts arm64's some 21 MiB above
   that — while every boot here passes `-kernel` from outside. `drop boot` in a
   variant is a legitimate, reviewable line — and, notably, one nobody would dare write as a
   global change today.
-- **`firecracker` is mostly not an image change at all.** The disk is the `ext4` disk; what
+- **`firecracker` is mostly not an image change at all.** The disk is the `erofs` disk; what
   differs is an uncompressed kernel (`vmlinux` on x86-64, `Image` on arm64),
   `CONFIG_VIRTIO_MMIO` in the shared `vm.config` fragment — cheap and harmless for qemu
   too, so no kernel fork — and a machine-config JSON. The kernel belongs *beside* the disk
@@ -307,11 +307,11 @@ lie that fails at the worst moment.
 The largest requirement, and it is not on Lima's list at all — because every cloud image
 already satisfies it and nobody thinks to write it down.
 
-What this project produces today is a bare filesystem. `mkfs.ext4 -d … 1G` writes no
+What this project produces today is a bare filesystem. `mkfs.erofs` writes no
 partition table and no bootloader, systemd is built `-Dbootloader=disabled -Defi=false
 -Dukify=disabled`, and every boot in this repository is `qemu -kernel bzImage -append
 "root=/dev/vda …"` with the kernel handed in from outside. `docs/release.md` already names
-this: "the disk cannot boot itself… a release of `rootfs.ext4` alone would be unbootable by
+this: "the disk cannot boot itself… a release of `rootfs.erofs` alone would be unbootable by
 anyone". Lima starts the VM itself and boots the disk through firmware. There is no
 `-kernel`.
 
@@ -360,7 +360,7 @@ directive is for.
 | SSH access | **openssh** | new. The first thing this image ever *listens* on, which is a change of security posture and not merely a package. Links against openssl and zlib, both already here |
 | Lima's scripts call it by name | **sudo** | new. systemd's `run0` is not a drop-in and Lima does not know about it. C, ISC-style licence Debian carries in main — the exact SPDX expression is for the packaging pull request to settle against `test/dfsg-licenses.txt` |
 | the default mount type | **sshfs**, **fuse3** | new. Lima's reverse-sshfs is the guest mounting the host, so this is guest-side and not optional unless the template switches to 9p or virtiofs |
-| rootless containerd | `newuidmap`/`newgidmap` (shadow) | **avoid.** They need setuid or file capabilities, and `CLAUDE.md` already records that a `CAP_NET_RAW` file capability survives neither `mkfs.ext4 -d` nor the OCI layer tar. The first move is to ship a `lima.yaml` that does not enable rootless containerd, not to package shadow |
+| rootless containerd | `newuidmap`/`newgidmap` (shadow) | **avoid.** They need setuid or file capabilities, and `CLAUDE.md` already records that a `CAP_NET_RAW` file capability survives neither `mkfs.erofs` nor the OCI layer tar. The first move is to ship a `lima.yaml` that does not enable rootless containerd, not to package shadow |
 | Lima sets the guest timezone | **tzdata** | new, and pure data. There is no `/usr/share/zoneinfo` in this image today, so that step currently has nothing to point at. Accepting UTC is a defensible alternative |
 
 ### 4. Kernel options `vm.config` currently takes back out
@@ -387,7 +387,7 @@ VM that will not start.
 
 1. **Per-package file manifests.** Useful on their own — "which package shipped this file"
    — and nothing consumes them yet, so this lands green and invisible.
-2. **`full`, `ext4` and `oci` as data, reproducing today's images.** The subtractions block
+2. **`full`, `erofs` and `oci` as data, reproducing today's images.** The subtractions block
    becomes `image/platforms/oci.conf`. Verified by assembling both ways and diffing the
    trees: this step should change nothing, and being able to prove that is the whole
    reason it is a step of its own.

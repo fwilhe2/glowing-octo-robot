@@ -3,7 +3,7 @@
 # runs, so a package update that produces an unbootable image fails CI instead of
 # being discovered the next time someone boots it by hand.
 #
-#     ./test/boot.sh [rootfs.ext4] [bzImage]
+#     ./test/boot.sh [rootfs.erofs] [bzImage]
 #
 # Overrides:
 #   INIT      PID 1 to run          (default /bin/bash)
@@ -28,7 +28,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source test/qemu-lib.sh
 
-ROOTFS="${1:-${ROOTFS:-output/rootfs.ext4}}"
+ROOTFS="${1:-${ROOTFS:-output/rootfs.erofs}}"
 KERNEL="${2:-${KERNEL:-rootfs/boot/bzImage}}"
 INIT="${INIT:-/bin/bash}"
 LOG="${LOG:-output/boot-test.log}"

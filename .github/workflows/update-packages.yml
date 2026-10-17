@@ -7,7 +7,7 @@ name: Package updates
 #
 # "Package" includes the toolchain. The Debian snapshot both Containerfiles are pinned to
 # is an input like any other — it decides what every binary is compiled by and what
-# mkfs.ext4 and strip do to the shipped bytes — and a pin nobody updates is how a
+# mkfs.erofs and strip do to the shipped bytes — and a pin nobody updates is how a
 # reproducible build becomes an unbuildable one. It arrives here under the name
 # `debian-snapshot`, from tools/check-snapshot.sh rather than from tools/check-updates.sh,
 # and is bumped by tools/bump-snapshot.sh rather than tools/bump-version.sh. Everything
@@ -196,7 +196,7 @@ jobs:
           recompiled because that reference is in their cache keys. A green run here means
           the whole image still builds and boots against the new Debian. Expect it to be
           slow, and expect \`test/rootfs-size.sh\` to be the interesting check — a different
-          \`strip\` or \`mkfs.ext4\` is exactly what moves those numbers.
+          \`strip\` or \`mkfs.erofs\` is exactly what moves those numbers.
 
           Opened automatically by \`.github/workflows/update-packages.yml\`. Closing this
           pull request stops $LATEST from being proposed again; the next dated image still

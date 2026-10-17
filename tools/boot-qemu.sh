@@ -6,7 +6,7 @@
 #   OUT      where the image is      (default output/boot-image, or output/boot-image-$ARCH
 #                                    if fetch-image.sh was run with a non-default ARCH)
 #   KERNEL   path to kernel image   (default $OUT/bzImage)
-#   ROOTFS   path to ext4 image     (default $OUT/rootfs.ext4)
+#   ROOTFS   path to EROFS image    (default $OUT/rootfs.erofs)
 #   INIT     PID 1 to run           (default /usr/lib/systemd/systemd)
 #   MEM      RAM in MB              (default 1024)
 #   CPUS     vCPUs                  (default 2)
@@ -58,7 +58,7 @@ else
     OUT="${OUT:-output/boot-image-$ARCH}"
 fi
 KERNEL="${KERNEL:-$OUT/bzImage}"
-ROOTFS="${ROOTFS:-$OUT/rootfs.ext4}"
+ROOTFS="${ROOTFS:-$OUT/rootfs.erofs}"
 INIT="${INIT:-/usr/lib/systemd/systemd}"
 QEMU_HINT="(run ./tools/fetch-image.sh)"
 

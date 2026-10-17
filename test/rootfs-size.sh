@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # What an assembled image weighs, and whether that is still allowed:
 #
-#     ./test/rootfs-size.sh                       # the ext4 disk
+#     ./test/rootfs-size.sh                       # the EROFS disk
 #     ./test/rootfs-size.sh oci                   # the container image
-#     ARCH=arm64 ./test/rootfs-size.sh ext4 some/report.txt   # a report from elsewhere
+#     ARCH=arm64 ./test/rootfs-size.sh erofs some/report.txt   # a report from elsewhere
 #
 # image/build-rootfs.sh writes the report — it is the only place the assembled tree
 # exists, since rootfs/ is the input and still carries everything the trim removed. This
@@ -20,10 +20,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tools/lib.sh
 
-FLAVOUR="${1:-ext4}"
+FLAVOUR="${1:-erofs}"
 case "$FLAVOUR" in
-    ext4|oci) ;;
-    *) echo "usage: ${0##*/} [ext4|oci] [report]" >&2; exit 2 ;;
+    erofs|oci) ;;
+    *) echo "usage: ${0##*/} [erofs|oci] [report]" >&2; exit 2 ;;
 esac
 
 REPORT="${2:-output/rootfs-size-$FLAVOUR.txt}"
@@ -39,16 +39,15 @@ ARCH=$(normalize_arch "${ARCH:-}")
 
 # Read the report. `total` is the apparent size of the tree; the rest is what that tree
 # costs in the container it ends up in, which is a different question per flavour —
-# `disk`/`capacity` for what the ext4 needs once its metadata and block rounding are
-# counted, `archive` for what a registry stores and a pull moves.
-total=0; disk=0; capacity=0; archive=0
+# `disk` for what the compressed EROFS image comes to, `archive` for what a registry
+# stores and a pull moves.
+total=0; disk=0; archive=0
 dirs=(); files=()
 while read -r kind bytes path; do
     case "$kind" in
         '#'*|'')  continue ;;
         total)    total=$bytes ;;
         disk)     disk=$bytes ;;
-        capacity) capacity=$bytes ;;
         archive)  archive=$bytes ;;
         dir)      dirs+=("$bytes $path") ;;
         file)     files+=("$bytes $path") ;;
@@ -87,7 +86,7 @@ summary() {
 percent=$(( total * 100 / budget ))
 
 echo "image size ($FLAVOUR, $ARCH): $(mib "$total") MiB of a $budget_mib MiB budget (${percent}%)"
-[ "$disk" -gt 0 ] && echo "  on disk: $(mib "$disk") MiB written into a $(mib "$capacity") MiB filesystem"
+[ "$disk" -gt 0 ] && echo "  on disk: $(mib "$disk") MiB of compressed EROFS image"
 [ "$archive" -gt 0 ] && echo "  archive: $(mib "$archive") MiB of gzipped layer, config and manifest"
 echo
 echo "  where it is:"
@@ -102,7 +101,7 @@ for entry in "${files[@]}"; do
 done
 
 cost=
-[ "$disk"    -gt 0 ] && cost="$(mib "$disk") MiB written into a $(mib "$capacity") MiB filesystem."
+[ "$disk"    -gt 0 ] && cost="$(mib "$disk") MiB as a compressed EROFS image."
 [ "$archive" -gt 0 ] && cost="$(mib "$archive") MiB as a gzipped OCI archive."
 
 summary "## Image size — $FLAVOUR, $ARCH"

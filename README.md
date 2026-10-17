@@ -81,8 +81,16 @@ Everything else a package links against still comes from the builder image, so t
 not the staged LFS toolchain — it is the one library where a version skew silently
 produces binaries that can't start.
 
-`image/Containerfile` / `image/build-rootfs.sh` then turn `rootfs/` into `output/rootfs.ext4`
+`image/Containerfile` / `image/build-rootfs.sh` then turn `rootfs/` into `output/rootfs.erofs`
 (see the `rootfs` job in `.github/workflows/ci.yml`), which `./tools/boot-qemu.sh` boots.
+
+The disk image is **immutable**. The root filesystem is EROFS, which is read-only by
+construction and compressed, and qemu attaches it with `readonly=on` too. Everything the
+running machine writes lives in RAM: `/var`, `/home` and `/root` are tmpfs mounts
+(`image/files/etc/fstab`), and so are `/tmp` and `/run`. Every boot starts from the same
+bytes, and to update a machine you boot it from a newer image. The work a first boot
+would normally do in `/etc` (system accounts, tmpfiles, unit presets) is done when the
+image is assembled, because nothing can do it afterwards.
 The same script also writes `output/flfs-oci.tar`, the same userspace as a container image
 — see [The OCI image](#the-oci-image).
 
@@ -238,7 +246,7 @@ staged at `rootfs/boot/bzImage`, so a CI run produces an image that can boot on 
 The `boot` job does exactly that:
 
 ```sh
-./test/boot.sh output/rootfs.ext4 rootfs/boot/bzImage
+./test/boot.sh output/rootfs.erofs rootfs/boot/bzImage
 ```
 
 boots the image in qemu with nobody at the console, types a command at PID 1 over the
@@ -250,7 +258,7 @@ for real. `./tools/boot-qemu.sh` is still the way to poke at an image interactiv
 `./tools/ssh.sh` logs into the guest it started without a password — see [SSH](#ssh).
 
 ```sh
-./test/systemd.sh output/rootfs.ext4 rootfs/boot/bzImage
+./test/systemd.sh output/rootfs.erofs rootfs/boot/bzImage
 ```
 
 is the next layer up, and it also runs in the `boot` job. It boots systemd, logs in at
@@ -286,7 +294,7 @@ podman load -i output/flfs-oci.tar
 podman run --rm -it localhost/flfs:latest
 ```
 
-The `rootfs` CI job also uploads it as `oci-image-<arch>` next to `rootfs.ext4-<arch>`,
+The `rootfs` CI job also uploads it as `oci-image-<arch>` next to `rootfs.erofs-<arch>`,
 which is what the `publish-oci` job pushes: it waits for `boot`, because the two images
 are the same userspace and a disk that will not boot is not a container worth publishing.
 `tools/publish-oci.sh` is the whole of it, and runs by hand against any registry —
@@ -296,7 +304,7 @@ It is the disk image minus the two things a container gets from somewhere else: 
 kernel, which is the host's, and systemd, which the runtime replaces. `/bin/bash` is the
 entrypoint, so `podman run -it` is a shell and anything after the image name is passed to
 it (`podman run flfs -c 'flfsfetch'`). Everything else is the same userspace, assembled by
-the same script from the same tree — `image/build-rootfs.sh` takes `ext4` or `oci` and
+the same script from the same tree — `image/build-rootfs.sh` takes `erofs` or `oci` and
 expresses the container as *subtractions*, so the two cannot drift apart the way two
 scripts would. Dropping systemd means its unit tree, udev, its drop-in directories and its
 PAM and NSS modules, plus every binary linking the private `libsystemd-shared` (found by
@@ -416,7 +424,7 @@ ICMP socket to unprivileged users so `ping` works for the `user` account without
 setuid.
 
 ```sh
-./test/network.sh output/rootfs.ext4 rootfs/boot/bzImage
+./test/network.sh output/rootfs.erofs rootfs/boot/bzImage
 ```
 
 is the check, and it runs in the `boot` CI job. It boots the image with systemd as PID
@@ -444,8 +452,9 @@ test — it still parses their output with `[[ ]]`.
 libcrypto, libz, libpam, libcrypt — and installs its own unit, `sysusers.d` entry for the
 privilege-separation account, `sshd_config` and `/etc/pam.d/sshd` from
 `packages/openssh/build.sh` rather than from `image/files`, so the apparatus goes wherever
-the binary goes. Host keys are generated on the machine at its first boot by
-`sshd-keygen.service` (`ssh-keygen -A`), never in the image: a key baked into an image
+the binary goes. Host keys are generated on the machine at every boot by
+`sshd-keygen.service`, into `/var/lib/sshd` (a tmpfs, like the rest of `/var`), never in
+the image: a key baked into an image
 built from a public repository is the same key on every machine that boots it. `root`
 gets in over the network by key only (`PermitRootLogin prohibit-password`), because the
 `root`/`root` password in `image/files/etc/shadow` is for a serial console; `user`/`user`
@@ -463,8 +472,8 @@ scp -F output/ssh/config file flfs:/tmp/
 
 The key is generated on the host, by `tools/boot-qemu.sh`, every time it starts a guest:
 a fresh ed25519 pair in `output/ssh/`, deleted when qemu exits. It is not the guest's
-host key — `sshd-keygen.service` generates those inside the guest on its first boot, and
-they stay on that disk. The public half of the boot key goes to the guest as the systemd
+host key — `sshd-keygen.service` generates those inside the guest at every boot, and
+they are gone when it stops. The public half of the boot key goes to the guest as the systemd
 credential `ssh.authorized_keys.root` on the kernel command line, and qemu forwards a
 free host port from 2222 up to the guest's 22, bound to `127.0.0.1`. `output/ssh/config`
 ties those together, so `tools/ssh.sh` is just `ssh -F output/ssh/config flfs`. sshd
@@ -477,7 +486,7 @@ Because nothing is baked in, a CI-built image works exactly the same way — as 
 was built from a commit that has openssh:
 
 ```sh
-./tools/fetch-image.sh          # rootfs.ext4 + bzImage into output/boot-image
+./tools/fetch-image.sh          # rootfs.erofs + bzImage into output/boot-image
 ./tools/boot-qemu.sh
 ./tools/ssh.sh                  # in another terminal
 ```
@@ -497,11 +506,11 @@ Without the credential, `user`/`user` still logs in with a password; root over s
 a key or nothing.
 
 The container image keeps the client and drops the server: `sshd`, its two PAM-linked
-helpers, `sftp-server`, `sshd_config`, `moduli` and `/var/empty` are all subtracted in
+helpers, `sftp-server`, `sshd_config`, `moduli` and `/usr/share/empty.sshd` are all subtracted in
 `image/build-rootfs.sh` along with PAM itself.
 
 ```sh
-./test/ssh.sh output/rootfs.ext4 rootfs/boot/bzImage
+./test/ssh.sh output/rootfs.erofs rootfs/boot/bzImage
 ```
 
 is the check, in the `boot` job, and it runs three rounds: the daemon is up and
@@ -632,7 +641,7 @@ valid `config.json` from nothing, so a directory plus that file is enough to sta
 container by hand.
 
 ```sh
-./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage
+./test/container.sh output/rootfs.erofs rootfs/boot/bzImage
 ```
 
 is the check, and it runs in the `boot` CI job alongside the network test. It boots
