@@ -28,6 +28,14 @@ cat > kernel/configs/container.config <<'EOF'
 CONFIG_USER_NS=y
 CONFIG_MEMCG=y
 
+# The two limits defconfig's CGROUP_SCHED and BLK_CGROUP do not give you on their own.
+# CFS_BANDWIDTH is what makes cpu.max exist — docker --cpus and every Kubernetes CPU
+# limit write it, and runc fails the whole container when the file is not there.
+# BLK_DEV_THROTTLING is the io.max bandwidth/iops half of the io controller, behind
+# docker --device-read-bps and friends; without it io.max accepts nothing.
+CONFIG_CFS_BANDWIDTH=y
+CONFIG_BLK_DEV_THROTTLING=y
+
 # The cgroup v2 device controller is a BPF program attached to the cgroup, not a
 # knob — no BPF_SYSCALL means no device whitelisting at all.
 CONFIG_BPF_SYSCALL=y
@@ -92,6 +100,15 @@ CONFIG_NF_TABLES_INET=y
 CONFIG_NFT_NAT=y
 CONFIG_NFT_MASQ=y
 CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
+
+# What an engine's own nftables rules use, rather than the iptables tables: dockerd's
+# nftables backend (the only one that works here — there is no iptables binary, and
+# none of the legacy IP_NF_* tables) writes `ct state` and `fib daddr type local`, and
+# loads an ip6 table beside the ip one. Missing the IPv6 fib makes that table fail to
+# load, which dockerd reports as a warning and IPv6 container networking quietly lacks.
+CONFIG_NFT_CT=y
+CONFIG_NFT_FIB_IPV4=y
+CONFIG_NFT_FIB_IPV6=y
 EOF
 make container.config
 

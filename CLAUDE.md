@@ -691,7 +691,13 @@ bind-mounted into the builder. `x86_64_defconfig` has `CGROUPS`, the pid/net/ipc
 namespaces and `SECCOMP_FILTER` and nothing else that matters here, so the fragment is
 load-bearing: `USER_NS`, `MEMCG` (without it `memory.max` does not exist and any bundle
 with a memory limit fails), `OVERLAY_FS`, `VETH`/`BRIDGE`/`TUN`, `BPF_SYSCALL` +
-`CGROUP_BPF`, and nftables — which is invisible until `NETFILTER_ADVANCED=y`.
+`CGROUP_BPF`, `CFS_BANDWIDTH` and `BLK_DEV_THROTTLING` (without them `cpu.max` and
+io.max's limits do not exist, and `docker --cpus` fails the container), and nftables —
+which is invisible until `NETFILTER_ADVANCED=y`. There are no legacy `IP_NF_*` tables and
+no `iptables` binary, so an engine has to use nftables directly: dockerd needs
+`"firewall-backend": "nftables"` in `daemon.json`, and that backend will not enable
+`net.ipv4.ip_forward` itself, which is why `image/files/etc/sysctl.d/50-ip-forward.conf`
+does.
 
 `vm.config` is the same mechanism pointed the other way, and is merged *after*
 `container.config` so the subtractions are what olddefconfig sees last — nothing in it may
