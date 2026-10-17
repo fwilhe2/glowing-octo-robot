@@ -9,7 +9,9 @@
 # list-sessions` stays empty. It is referenced from _files/etc/pam.d/login.
 # -Dc_args replaces the CFLAGS environment variable rather than adding to it, so the
 # sysroot flags builder/build-package.sh exports have to be carried over by hand or systemd
-# would be the one package still compiled against the builder's glibc.
+# would be the one package still compiled against the builder's glibc. SYSROOT_CFLAGS
+# rather than CFLAGS, which also carries the -O2 for autotools packages and would override
+# --buildtype=release's -O3.
 #
 # The groups after that are the trim. systemd builds close to ninety components by
 # default and a headless VM that runs containers needs a fraction of them: what is
@@ -22,7 +24,7 @@
 # that break silently" in CLAUDE.md — this is by far the worst-affected package.
 systemd_opts=(
     -Dmode=release
-    -Dc_args="${CFLAGS:-} -Wno-error=override-init"
+    -Dc_args="${SYSROOT_CFLAGS:-} -Wno-error=override-init"
 
     -Dselinux=disabled -Dseccomp=disabled -Daudit=disabled
     -Dpam=enabled -Dopenssl=disabled -Dlibcryptsetup=disabled

@@ -363,8 +363,16 @@ out (`--without-selinux`, `-Dx11_autolaunch=disabled`) over adding a package to 
 `test/check-rootfs-deps.sh` reports all of them at once; `test/known-missing-libs.txt` allowlists
 the accepted backlog so new regressions stand out. Run it before booting.
 
-**3. A meson package with no `--buildtype`.** Autotools packages get `-g -O2` from
-`configure`'s own default, so nothing has to say so; **meson's default buildtype is
+**3. A package compiled with no optimization at all.** Autotools would pick `-g -O2` by
+itself, but only when `CFLAGS` is unset — and `builder/build-package.sh` exports it, with
+the sysroot flags in it. So for as long as the sysroot existed every configure-based and
+plain-make package was built at `-O0`, until that script started exporting `-O2` itself.
+It also exports `SYSROOT_CFLAGS`, the same flags without the `-O2`, for meson, whose
+`c_args` come *after* the buildtype's `-O3` and would otherwise be overridden by it;
+`meson_install` uses it and so does systemd's `-Dc_args`. A new package that sets
+`CFLAGS` wholesale rather than appending drops both the sysroot and the `-O2`.
+
+The meson half of the same trap: **meson's default buildtype is
 `debug`, which is `-O0`**, and it says nothing about it. The result compiles, links,
 passes every check here and boots — it is simply two to thirteen times the code it should
 be. Every meson package therefore goes through `meson_install`, which passes
