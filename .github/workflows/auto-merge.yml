@@ -1,0 +1,45 @@
+name: Auto-merge updates
+
+# Merges the pull requests update-packages.yml opens, once each has passed CI on top of
+# the current main. tools/auto-merge.sh is the policy and explains it; this file is only
+# when it runs and with what permissions.
+#
+# Nothing here may happen during European business hours. The updater runs at 21:00 UTC
+# and this at 00:30 UTC, so a pull request opened one night is merged the night after
+# next, once it is MIN_AGE_HOURS (24) old — a full working day to look at it and label it
+# `hold`. tools/auto-merge.sh enforces the 22:00–03:00 UTC window itself, because cron
+# runs can start late.
+on:
+  schedule:
+    - cron: "30 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Shared with update-packages.yml. Both push update/ branches and dispatch CI on them,
+# and a pull request the updater is still waiting on must not be judged half-finished.
+concurrency:
+  group: package-updates
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write # rebase update/ branches, fast-forward main
+      pull-requests: write # comment the CI run on a rebased pull request
+      actions: write # dispatch ci.yml on the rebased branch, and on main afterwards
+      checks: write # report that run on the pull request
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the rebase and the ancestry checks need history
+
+      - name: Merge green updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ./tools/auto-merge.sh
