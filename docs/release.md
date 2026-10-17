@@ -35,13 +35,16 @@ before it exists, which raises the bar on everything else here:
 The disk cannot boot itself. systemd is built `-Dbootloader=disabled -Defi=false
 -Dukify=disabled` — "no ESP to install a loader into and nothing to build a UKI for" — so
 every boot here is `qemu -kernel bzImage -append "root=/dev/vda …"`. A release of
-`rootfs.erofs` alone would be unbootable by anyone. So a release is the pair, per
+`rootfs.erofs` alone would be unbootable by anyone. So is the image without its kernel
+arguments, which carry the dm-verity root hash. So a release is the three, per
 architecture:
 
 ```
 flfs-2026-08-09-amd64-rootfs.erofs
+flfs-2026-08-09-amd64-rootfs.cmdline
 flfs-2026-08-09-amd64-bzImage
 flfs-2026-08-09-arm64-rootfs.erofs
+flfs-2026-08-09-arm64-rootfs.cmdline
 flfs-2026-08-09-arm64-bzImage
 SHA256SUMS
 ```

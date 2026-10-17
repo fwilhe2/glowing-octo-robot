@@ -899,9 +899,57 @@ if [ "$flavour" = erofs ]; then
     mkfs.erofs -L root -zlz4hc,12 "${erofs_repro[@]}" \
         /usr/local/output/rootfs.erofs "$IMAGE"
 
-    # What that came to once the compression and the filesystem's own metadata are
-    # counted. The file is the filesystem, with no slack, so its size is the answer.
-    echo "disk $(stat -c %s /usr/local/output/rootfs.erofs)" >> "$report"
+    # dm-verity, so the image is not only read-only but tamper-evident: the kernel checks
+    # every block it reads against a hash tree, and the tree against a root hash on its own
+    # command line. A changed byte anywhere in the filesystem is an I/O error on the block
+    # that holds it, not a changed file.
+    #
+    # The tree is appended to the same file rather than shipped as a second disk, so an
+    # image is still one file to attach; --hash-offset is where the filesystem ends, and
+    # EROFS images are whole blocks, which is the alignment verity needs. No superblock:
+    # it exists for veritysetup to read the parameters back at open time, and nothing
+    # opens this with veritysetup — the kernel is handed every parameter instead.
+    erofs=/usr/local/output/rootfs.erofs
+    data_size=$(stat -c %s "$erofs")
+    if [ $(( data_size % 4096 )) -ne 0 ]; then
+        echo "error: $erofs is $data_size bytes, not a whole number of 4 KiB blocks" >&2
+        exit 1
+    fi
+    data_blocks=$(( data_size / 4096 ))
+    verity_salt=()
+    if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+        verity_salt=(--salt="$(printf '%s' "$SOURCE_DATE_EPOCH" | sha256sum | cut -c1-64)")
+    fi
+    verity=$(veritysetup format --no-superblock --hash=sha256 \
+        --data-block-size=4096 --hash-block-size=4096 \
+        --data-blocks="$data_blocks" --hash-offset="$data_size" \
+        "${verity_salt[@]}" "$erofs" "$erofs")
+    echo "$verity"
+    root_hash=$(sed -n 's/^Root hash:[[:space:]]*//p' <<< "$verity")
+    salt=$(sed -n 's/^Salt:[[:space:]]*//p' <<< "$verity")
+    [ -n "$root_hash" ] && [ -n "$salt" ] || {
+        echo "error: could not read the root hash and salt back from veritysetup" >&2
+        exit 1
+    }
+
+    # The kernel arguments that boot this image, and the only place its root hash is
+    # written down: the image is half of a release and this is the other half, with the
+    # kernel. dm-mod.create builds the verity device in the kernel itself (CONFIG_DM_INIT),
+    # so there is still no initrd; the table is `<start> <sectors> verity <version> <data
+    # dev> <hash dev> <data block> <hash block> <data blocks> <hash start block> <algo>
+    # <root hash> <salt>`. dm-mod.waitfor holds it until virtio-blk has probed the disk.
+    #
+    # /dev/vda is a property of the VMM rather than of the image — virtio-blk's first disk,
+    # under qemu and Firecracker both — and is the one assumption in here a consumer may
+    # have to rewrite.
+    sectors=$(( data_size / 512 ))
+    printf '%s\n' "root=/dev/dm-0 ro rootfstype=erofs dm-mod.waitfor=/dev/vda dm-mod.create=\"root,,,ro,0 $sectors verity 1 /dev/vda /dev/vda 4096 4096 $data_blocks $data_blocks sha256 $root_hash $salt\"" \
+        > /usr/local/output/rootfs.cmdline
+    cat /usr/local/output/rootfs.cmdline
+
+    # What that came to once the compression, the filesystem's own metadata and the hash
+    # tree are counted. The file is the disk, with no slack, so its size is the answer.
+    echo "disk $(stat -c %s "$erofs")" >> "$report"
 
     cat "$report"
     exit 0

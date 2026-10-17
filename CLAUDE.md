@@ -132,11 +132,12 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/kernel-caps.sh rootfs            # kernel config vs what a container needs
 ./test/check-licenses.sh                # every package declares a DFSG-free license
 ./tools/check-updates.sh [pkg...] # what upstream has released since the pinned VERSION
-./test/boot.sh output/rootfs.erofs rootfs/boot/bzImage   # headless boot smoke test
+./test/boot.sh output/rootfs.erofs rootfs/boot/bzImage   # headless boot smoke test (reads rootfs.cmdline beside the image)
 ./test/systemd.sh output/rootfs.erofs rootfs/boot/bzImage  # no failed units
 ./test/network.sh output/rootfs.erofs rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
 ./test/ssh.sh output/rootfs.erofs rootfs/boot/bzImage        # sshd, in-guest and from the host (PREBUILT=dir: and those binaries)
 ./test/container.sh output/rootfs.erofs rootfs/boot/bzImage  # crun starts a container
+./test/verity.sh output/rootfs.erofs rootfs/boot/bzImage   # a tampered copy of the image is refused
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./test/prebuilt.sh [build|oci|ssh] # host-compiled C, C++, Rust and Go binaries, run in the image
 ./test/rootfs-size.sh [erofs|oci]  # image size vs test/size-budget.txt, and where it went
@@ -513,7 +514,23 @@ not present".
 **The disk image is immutable, and that is the design rather than a mount option.** The
 root is EROFS — a filesystem with no write path at all — attached to qemu with
 `readonly=on` as well, so one file can back any number of guests and an update is a new
-image, never a change to an old one. Everything a running machine writes is RAM:
+image, never a change to an old one.
+
+**And it is verified: the root is a dm-verity device, so a changed byte is an I/O error,
+not a changed file.** `build-rootfs.sh` appends the hash tree to the EROFS image in the same
+file (`veritysetup format --no-superblock --hash-offset=<size of the filesystem>`) and
+writes `output/rootfs.cmdline` beside it: `root=/dev/dm-0` plus a `dm-mod.create=` table
+carrying the root hash and salt. **That file is half of the image** — it is the only place
+the root hash exists, the boot tests read it through `root_cmdline_file` in
+`test/qemu-lib.sh`, and the CI artifact carries both. There is still no initrd:
+`CONFIG_DM_INIT` lets the kernel build the device itself, before mounting root, which is
+otherwise veritysetup's job in an initramfs. The kernel side is `rootfs.config` in
+`packages/kernel/build.sh`, and it is why `vm.config` clears software RAID rather than
+the whole `CONFIG_MD` menu that device-mapper lives in. `fstab` names `/dev/dm-0` rather
+than `LABEL=root` because the label is visible twice — on the verity device and, unverified,
+on the raw disk under it. `test/verity.sh` flips one byte EROFS never reads in a copy of
+the image and expects the boot to fail with verity's corruption report: `test/boot.sh`
+shows verity accepts the right image, this one shows it refuses any other. Everything a running machine writes is RAM:
 `image/files/etc/fstab` mounts tmpfs on `/var`, `/home` and `/root`, systemd's own
 `tmp.mount` covers `/tmp`, and `/run` is PID 1's. The image ships those mount points
 *empty* — `build-rootfs.sh` deletes whatever was staged under them, because it would be

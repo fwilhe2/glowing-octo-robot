@@ -132,9 +132,20 @@ make container.config
 # always built in with it, and LZ4HC is what mkfs.erofs writes. Its own fragment rather
 # than a line in container.config: it is what boots the machine, not what runs containers
 # on it, and the check below holds both to the same standard.
+#
+# And the integrity check underneath it: dm-verity verifies every block read from the
+# image against a hash tree whose root hash is on the kernel command line, so the image
+# is not only unwritable but unforgeable — a changed byte is an I/O error, not a changed
+# file. DM_INIT is what makes that possible without an initrd: it builds the verity
+# device from `dm-mod.create=` before the root is mounted, which is otherwise the job of
+# veritysetup in an initramfs. MD is only the menu device-mapper lives in.
 cat > kernel/configs/rootfs.config <<'EOF'
 CONFIG_EROFS_FS=y
 CONFIG_EROFS_FS_ZIP=y
+CONFIG_MD=y
+CONFIG_BLK_DEV_DM=y
+CONFIG_DM_INIT=y
+CONFIG_DM_VERITY=y
 EOF
 make rootfs.config
 
@@ -250,13 +261,17 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_INPUT_MISC is not set
 
 # The root disk is virtio-blk (`-drive if=virtio`), which leaves defconfig's SATA and
-# PATA controllers, the CD-ROM and SCSI generic paths, RAID/device-mapper and PCMCIA
-# with nothing to bind to. VIRTIO_BLK, BLK_DEV_SD and SCSI_VIRTIO stay; so does the loop
-# device, which is how a container image gets mounted.
+# PATA controllers, the CD-ROM and SCSI generic paths, software RAID and PCMCIA with
+# nothing to bind to. VIRTIO_BLK, BLK_DEV_SD and SCSI_VIRTIO stay; so does the loop
+# device, which is how a container image gets mounted. Device-mapper stays too, for
+# dm-verity (rootfs.config), but only that target: the MD menu it lives in is kept,
+# and RAID inside it is not, nor the two other targets defconfig turns on.
+# CONFIG_DM_MIRROR is not set
+# CONFIG_DM_ZERO is not set
 # CONFIG_ATA is not set
 # CONFIG_BLK_DEV_SR is not set
 # CONFIG_CHR_DEV_SG is not set
-# CONFIG_MD is not set
+# CONFIG_BLK_DEV_MD is not set
 # CONFIG_PCCARD is not set
 # CONFIG_MACINTOSH_DRIVERS is not set
 # CONFIG_EEEPC_LAPTOP is not set

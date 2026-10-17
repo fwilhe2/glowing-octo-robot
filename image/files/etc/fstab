@@ -1,9 +1,11 @@
 # <file system> <mount point> <type> <options> <dump> <pass>
-# By label, not by device node: build-rootfs.sh runs mkfs.erofs -L root, the root disk
-# is virtio (/dev/vda) under qemu, and the next VMM may well name it something else.
+# The root is the dm-verity device the kernel builds from dm-mod.create= on its command
+# line (rootfs.cmdline, written next to the image) — the only device-mapper device there
+# is, so dm-0. Not LABEL=root: the filesystem is visible both through the verity device
+# and, unverified, on the raw disk underneath it, so the label names two devices.
 # EROFS cannot be written to at all, so `ro` is a statement rather than a choice, and
 # there is no fsck pass because there is nothing a boot could have left inconsistent.
-LABEL=root   /       erofs   ro                                0   0
+/dev/dm-0    /       erofs   ro                                0   0
 
 # Everything a running machine writes, in RAM and gone at the next boot. The image ships
 # these directories empty; what has to be in them is created at boot by systemd-tmpfiles

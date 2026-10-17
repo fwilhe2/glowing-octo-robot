@@ -85,6 +85,18 @@ qemu_preflight() {
     command -v "$QEMU" >/dev/null || { echo "error: $QEMU not found" >&2; exit 1; }
     [ -f "$KERNEL" ] || { echo "error: missing kernel: $KERNEL${QEMU_HINT:+ $QEMU_HINT}" >&2; exit 1; }
     [ -f "$ROOTFS" ] || { echo "error: missing rootfs: $ROOTFS${QEMU_HINT:+ $QEMU_HINT}" >&2; exit 1; }
+    [ -f "$(root_cmdline_file)" ] || {
+        echo "error: missing $(root_cmdline_file), the kernel arguments that go with $ROOTFS" >&2
+        echo "       image/build-rootfs.sh writes it next to the image; it carries the dm-verity root hash" >&2
+        exit 1
+    }
+}
+
+# The kernel arguments that mount the root, which are not ours to write: they carry the
+# image's dm-verity root hash, so image/build-rootfs.sh writes them next to the image, as
+# rootfs.cmdline beside rootfs.erofs. ROOT_CMDLINE names another file.
+root_cmdline_file() {
+    echo "${ROOT_CMDLINE:-$(dirname "$ROOTFS")/rootfs.cmdline}"
 }
 
 # Passwordless ssh into the guest, the way Vagrant and Lima do it: a key pair generated on
@@ -150,18 +162,21 @@ EOF
     QEMU_SSH_DIR="$SSH_DIR"
 }
 
-# The disk is attached read-only as well as being EROFS: the image is immutable at the
-# VMM, not only in the guest, so one file can back any number of guests at once and
-# nothing a guest does can reach it. Everything writable is a tmpfs (image/files/etc/fstab).
-# rootfstype saves the kernel trying every filesystem it has before the right one.
+# The disk is attached read-only as well as being EROFS under dm-verity: the image is
+# immutable at the VMM, not only in the guest, so one file can back any number of guests
+# at once and nothing a guest does can reach it. Everything writable is a tmpfs
+# (image/files/etc/fstab). The root= and dm-mod.* arguments come from the image's own
+# rootfs.cmdline.
 qemu_argv() {
+    local root_args
+    root_args=$(cat "$(root_cmdline_file)")
     QEMU_ARGV=(
         "${accel[@]}" "${machine[@]}"
         -m "$MEM" -smp "$CPUS"
         -kernel "$KERNEL"
         -drive file="$ROOTFS",format=raw,if=virtio,readonly=on
         -nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}"
-        -append "root=/dev/vda ro rootfstype=erofs console=$CONSOLE init=$INIT${QEMU_APPEND_EXTRA:-}"
+        -append "$root_args console=$CONSOLE init=$INIT${QEMU_APPEND_EXTRA:-}"
         -nographic
         -no-reboot
     )

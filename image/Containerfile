@@ -15,12 +15,13 @@ ARG SNAPSHOT
 
 # binutils is here for strip: build-rootfs.sh drops the debug symbols the packages are
 # compiled with, which is about half the size of the shipped tree. erofs-utils is
-# mkfs.erofs, which lays out the read-only root filesystem.
+# mkfs.erofs, which lays out the read-only root filesystem, and cryptsetup-bin is
+# veritysetup, which computes the dm-verity hash tree that seals it.
 RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
     && printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/%sT000000Z sid main\n' "$SNAPSHOT" \
        > /etc/apt/sources.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends erofs-utils binutils \
+    && apt-get install -y --no-install-recommends erofs-utils cryptsetup-bin binutils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY image/build-rootfs.sh /usr/local/bin/

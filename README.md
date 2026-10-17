@@ -85,7 +85,11 @@ produces binaries that can't start.
 (see the `rootfs` job in `.github/workflows/ci.yml`), which `./tools/boot-qemu.sh` boots.
 
 The disk image is **immutable**. The root filesystem is EROFS, which is read-only by
-construction and compressed, and qemu attaches it with `readonly=on` too. Everything the
+construction and compressed, and qemu attaches it with `readonly=on` too. It is also
+**verified**: a dm-verity hash tree is appended to the image, and the kernel checks
+every block it reads against the root hash in `output/rootfs.cmdline`, the kernel
+arguments written next to the image. A modified image does not boot. `rootfs.cmdline` is
+part of the image: without it the kernel cannot mount the root, so keep the two together. Everything the
 running machine writes lives in RAM: `/var`, `/home` and `/root` are tmpfs mounts
 (`image/files/etc/fstab`), and so are `/tmp` and `/run`. Every boot starts from the same
 bytes, and to update a machine you boot it from a newer image. The work a first boot
