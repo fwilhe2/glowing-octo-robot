@@ -42,7 +42,7 @@ QEMU_DIED='Kernel panic|Attempted to kill init|Requesting system (poweroff|reboo
 qemu_setup() {
     ARCH=$(normalize_arch "${ARCH:-}")
 
-    # amd64's "pc" machine and default cpu need no flags at all; arm64 has no implicit
+    # amd64's "pc" machine needs no flag (the cpu does, below); arm64 has no implicit
     # machine type, so qemu-system-aarch64 refuses to start without one. ttyS0 is the 8250
     # UART kvm_guest.config/vm.config build in on amd64; arm64's virt board exposes a
     # PL011 instead, at ttyAMA0 — see packages/kernel/build.sh.
@@ -64,10 +64,16 @@ qemu_setup() {
     else
         QEMU=qemu-system-x86_64
         CONSOLE=ttyS0
+        # -cpu max when emulating, as on arm64, not qemu's default qemu64. That model is
+        # x86-64 baseline, and a binary somebody else built may not be: Ubuntu 26.04's gcc
+        # marks its output as needing x86-64-v3, and glibc refuses such a binary with "CPU
+        # ISA level is lower than required" on a CPU without AVX2. A guest on a real
+        # VMM gets the host's CPU, which is what -cpu host and max both approximate.
         if [ -w /dev/kvm ]; then
             accel=(-enable-kvm -cpu host)
         else
             echo "note: /dev/kvm not available, emulating (slow)"
+            accel=(-cpu max)
         fi
     fi
 }
