@@ -701,11 +701,23 @@ load-bearing: `USER_NS`, `MEMCG` (without it `memory.max` does not exist and any
 with a memory limit fails), `OVERLAY_FS`, `VETH`/`BRIDGE`/`TUN`, `BPF_SYSCALL` +
 `CGROUP_BPF`, `CFS_BANDWIDTH` and `BLK_DEV_THROTTLING` (without them `cpu.max` and
 io.max's limits do not exist, and `docker --cpus` fails the container), and nftables —
-which is invisible until `NETFILTER_ADVANCED=y`. There are no legacy `IP_NF_*` tables and
-no `iptables` binary, so an engine has to use nftables directly: dockerd needs
-`"firewall-backend": "nftables"` in `daemon.json`, and that backend will not enable
-`net.ipv4.ip_forward` itself, which is why `image/files/etc/sysctl.d/50-ip-forward.conf`
-does.
+which is invisible until `NETFILTER_ADVANCED=y`. There are no legacy `IP_NF_*` tables
+(`NETFILTER_XTABLES_LEGACY` is off), so `iptables` is iptables-nft: `packages/iptables`
+deletes the legacy binary and points the plain names at `xtables-nft-multi`, and the
+kernel runs the `xt_*` extensions it embeds through `NFT_COMPAT`. **Each `-m` or `-j` an
+engine uses is a kernel symbol of its own** — `NETFILTER_XT_MATCH_CONNTRACK`,
+`NETFILTER_XT_NAT` for `DNAT`/`SNAT` and so on — and a missing one is a rule that fails
+to insert at runtime with *revision 0 not supported, missing kernel module?*, which no
+build-time check here can see. The fragment names Docker's set; `test/kernel-caps.sh`
+holds the kernel to it. dockerd's `"firewall-backend": "nftables"` works as well, and
+that backend will not enable `net.ipv4.ip_forward` itself, which is why
+`image/files/etc/sysctl.d/50-ip-forward.conf` does.
+
+`packages/libnftnl` follows the rule every shipped library does: `libnftnl-dev` is in
+`builder/deps.txt`, so iptables compiles against Debian's headers and runs against ours
+by SONAME, and `test/check-symbol-versions.sh` catches the day sid's is newer than ours
+in a way that matters. Only iptables and ip6tables ship — ebtables and arptables are the
+same binary under other names for nf_tables families the kernel does not build.
 
 `vm.config` is the same mechanism pointed the other way, and is merged *after*
 `container.config` so the subtractions are what olddefconfig sees last — nothing in it may

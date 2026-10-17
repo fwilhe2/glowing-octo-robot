@@ -101,14 +101,28 @@ CONFIG_NFT_NAT=y
 CONFIG_NFT_MASQ=y
 CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
 
-# What an engine's own nftables rules use, rather than the iptables tables: dockerd's
-# nftables backend (the only one that works here — there is no iptables binary, and
-# none of the legacy IP_NF_* tables) writes `ct state` and `fib daddr type local`, and
-# loads an ip6 table beside the ip one. Missing the IPv6 fib makes that table fail to
-# load, which dockerd reports as a warning and IPv6 container networking quietly lacks.
+# What an engine's own nftables rules use: dockerd's nftables backend writes `ct state`
+# and `fib daddr type local`, and loads an ip6 table beside the ip one. Missing the IPv6
+# fib makes that table fail to load, which dockerd reports as a warning and IPv6
+# container networking quietly lacks.
 CONFIG_NFT_CT=y
 CONFIG_NFT_FIB_IPV4=y
 CONFIG_NFT_FIB_IPV6=y
+
+# And what the iptables command line needs on top. There are none of the legacy IP_NF_*
+# tables (NETFILTER_XTABLES_LEGACY is off), so packages/iptables is iptables-nft: it
+# writes nf_tables rules, and any match or target it cannot express natively it embeds
+# as the x_tables extension itself, run by NFT_COMPAT. Without NFT_COMPAT every rule with
+# a -m or a -j other than a verdict fails with "Extension ... revision 0 not supported,
+# missing kernel module?". The extensions below are the ones Docker's default iptables
+# backend uses — conntrack --ctstate, addrtype --dst-type (above), mark, and the
+# MASQUERADE, SNAT and DNAT targets — named here even where defconfig already has them,
+# so the check after `make vm.config` holds both arches to it.
+CONFIG_NFT_COMPAT=y
+CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y
+CONFIG_NETFILTER_XT_MARK=y
+CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y
+CONFIG_NETFILTER_XT_NAT=y
 EOF
 make container.config
 
