@@ -77,9 +77,26 @@ if [ -n "${SYSROOT:-}" ]; then
     sysroot_ldflags+=" -Wl,-rpath-link,/usr/lib/$multiarch -Wl,-rpath-link,/usr/lib"
 
     export CPPFLAGS="$sysroot_cppflags${CPPFLAGS:+ $CPPFLAGS}"
-    export CFLAGS="$sysroot_cppflags${CFLAGS:+ $CFLAGS}"
-    export CXXFLAGS="$sysroot_cppflags${CXXFLAGS:+ $CXXFLAGS}"
     export LDFLAGS="$sysroot_ldflags${LDFLAGS:+ $LDFLAGS}"
+
+    # -O2 has to be said here, because the line above it is what takes it away. Autoconf
+    # only picks its default of `-g -O2` when CFLAGS is *unset*; exporting the sysroot
+    # flags in CFLAGS makes it set, so every configure-based package compiled at -O0 —
+    # and so did any plain-make package whose Makefile only sets -O2 when CFLAGS is empty.
+    # It is the autotools twin of the meson buildtype trap in CLAUDE.md, and just as
+    # silent: nothing fails, the code is merely bigger and slower than it should be
+    # (sed's .text was 17% smaller once it was fixed).
+    #
+    # -O2 and not autoconf's `-g -O2`: the image is stripped, so debug info would only
+    # make every package artifact and the staging tree larger for nothing that ships.
+    #
+    # The sysroot-only form is kept as SYSROOT_CFLAGS for meson, which takes its
+    # optimization from --buildtype and must not have this -O2 appended after it —
+    # meson_install below passes it instead, and systemd's -Dc_args names it. cmake's
+    # Release flags come after CMAKE_C_FLAGS, so json-c keeps its own -O3 either way.
+    export SYSROOT_CFLAGS="$sysroot_cppflags"
+    export CFLAGS="$sysroot_cppflags -O2${CFLAGS:+ $CFLAGS}"
+    export CXXFLAGS="$sysroot_cppflags -O2${CXXFLAGS:+ $CXXFLAGS}"
 fi
 
 # What every packages/<pkg>/build.sh can use. They are sourced, not executed, so anything
@@ -135,7 +152,11 @@ assert_not_linked() {
 # meson otherwise defaults to the builder's multiarch path (lib/x86_64-linux-gnu), which
 # nothing in the image searches.
 meson_install() {
-    meson setup --prefix /usr --buildtype=release -Dlibdir=lib "$@" build
+    # meson reads CFLAGS into c_args, which come after the buildtype's -O3 on the
+    # command line, so the -O2 exported above would quietly win. Hand it the sysroot
+    # flags alone; the buildtype decides the optimization.
+    CFLAGS="${SYSROOT_CFLAGS:-}" CXXFLAGS="${SYSROOT_CFLAGS:-}" \
+        meson setup --prefix /usr --buildtype=release -Dlibdir=lib "$@" build
     meson compile -C build
     meson install -C build --destdir "$ROOTFS"
 }
