@@ -47,8 +47,10 @@ CGROUP_PIDS         pids.max does not exist
 CGROUP_FREEZER      crun pause/resume
 CGROUP_DEVICE       the cgroup the device controller attaches to
 MEMCG               memory.max does not exist; a bundle with a memory limit fails
-CGROUP_SCHED        cpu.max does not exist
-BLK_CGROUP          io.max does not exist
+CGROUP_SCHED        no cpu controller at all
+CFS_BANDWIDTH       cpu.max does not exist; docker --cpus and Kubernetes CPU limits fail
+BLK_CGROUP          no io controller at all
+BLK_DEV_THROTTLING  io.max takes no bandwidth or iops limit
 CGROUP_BPF          the cgroup v2 device controller is a BPF program, not a knob
 BPF_SYSCALL         crun loads that program with bpf(2); without it, no device rules
 BPF_JIT             BPF_LSM depends on it
@@ -63,6 +65,11 @@ TUN                 slirp4netns and friends
 NF_TABLES           port publishing is NAT
 NF_NAT              the same
 NETFILTER_XT_MATCH_ADDRTYPE  the address-type match port publishing generates
+NFT_NAT             nftables NAT, which port publishing and masquerade are
+NFT_MASQ            outbound traffic from a container's bridge
+NFT_CT              connection-state matches, in every engine's forward rules
+NFT_FIB_IPV4        `fib daddr type local`, how dockerd matches traffic to the host
+NFT_FIB_IPV6        the same for IPv6; dockerd's ip6 table fails to load without it
 SECCOMP             crun accepts a seccomp profile in the bundle
 SECCOMP_FILTER      and this is what would enforce it
 EXT4_FS             the root filesystem
