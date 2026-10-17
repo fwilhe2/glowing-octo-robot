@@ -293,6 +293,14 @@ jobs:
       - name: Run the OCI image
         run: FLFS_BUILD="$GITHUB_SHA" ./test/oci.sh output/flfs-oci.tar
 
+      # Binaries built by the runner's own gcc, g++, rustc and go, run in the image: the
+      # one check here of something this repository did not compile. It is what says
+      # libgcc_s, libstdc++ and zoneinfo are present and usable, which nothing that
+      # links against our sysroot would ever ask for. The runner images carry all four
+      # compilers; the script fails under CI if one has gone missing.
+      - name: Run binaries built elsewhere
+        run: ./test/prebuilt.sh output/flfs-oci.tar
+
       - name: Upload rootfs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

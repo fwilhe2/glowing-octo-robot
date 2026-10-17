@@ -56,6 +56,7 @@ MPL-2.0                 # Mozilla Public License; certdata.txt, the root certifi
 
 # --- exceptions, used on the right of a WITH ----------------------------------------
 Linux-syscall-note      # what keeps userspace off the kernel's GPL
+GCC-exception-3.1       # libgcc and libstdc++: linking them imposes nothing on the program
 
 # --- references, for a license with no SPDX identifier ------------------------------
 # A LicenseRef- is an admission that something needs a human decision, not a way to get
@@ -70,4 +71,5 @@ LicenseRef-PublicDomain # A public-domain dedication, which SPDX deliberately ha
                         # accepts such files in main and has for decades, which is the
                         # bar here. Used by openssh, whose LICENCE item 4 is the
                         # Rijndael implementation its authors placed in the public
-                        # domain.
+                        # domain, and by tzdata, which Debian ships in main as
+                        # public domain too.
