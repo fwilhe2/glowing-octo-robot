@@ -131,9 +131,10 @@ type veth`, `ip link set ... netns` — along with the **libmnl** underneath it.
 insertion point is still an OCI `createRuntime` hook in `config.json`: the netns exists by
 then and the container process has not started.
 
-**NAT and `-p` need two more small ones.** `libnftnl` → `nftables`, both C, both small,
-and `libmnl` beneath them is already a package. That covers the masquerade rule for
-outbound and DNAT for published ports. Plus `net.ipv4.ip_forward=1` as a systemd-sysctl
+**NAT and `-p` need one more small one.** `libnftnl` arrived with `iptables` (iptables-nft,
+the front end Docker's default backend execs), so `nftables` itself is the one left, and
+the masquerade rule for outbound and DNAT for published ports can already be written with
+`iptables -t nat` today. Plus `net.ipv4.ip_forward=1` as a systemd-sysctl
 drop-in in `image/files/etc/sysctl.d/`, which is now a directory that exists.
 
 **DNS is a configuration decision, not a package.** resolved's stub listener at
@@ -216,10 +217,11 @@ Two left of the original nine, neither more than an afternoon. Issue #77 took th
 expensive tier and half the networking one, and the unpack tier is done:
 
 ```
-libnftnl  nftables                     networking   small, all C
+nftables                               networking   small, all C
 jq                                     config       or a json-c helper instead
 
 done: libmnl  iproute2                 networking   #77
+      libnftnl  iptables               networking
       openssl  curl  ca-certificates   pull         #77
       tar  gzip                        unpack
 ```
@@ -240,7 +242,7 @@ Each phase is independently useful, and CI stays green throughout.
    end of this phase `run <local-image> <cmd>` works, with no networking beyond the
    loopback-only netns `crun spec` already produces. This is the phase that delivers most
    of the ergonomics.
-3. **Networking.** `libnftnl`/`nftables` (`libmnl` and `iproute2` are done), the `br0`
+3. **Networking.** `nftables` (`libmnl`, `iproute2`, `libnftnl` and `iptables` are done), the `br0`
    netdev, the `createRuntime` hook, masquerade, `-p`, and the resolved stub listener.
    Verified by a `test/` script in the shape of `test/network.sh` — outbound TCP and DNS
    from inside a container, and a published port reachable from the host side.

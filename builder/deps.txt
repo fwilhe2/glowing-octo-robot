@@ -99,6 +99,7 @@ liblzma-dev
 libmnl-dev
 libmount-dev
 libncurses-dev
+libnftnl-dev
 libpam0g-dev
 # ...and the sharpest case of that SONAME argument: curl compiles against sid's OpenSSL
 # headers and links -lssl -lcrypto, so what it asks for at runtime is libssl.so.3 and

@@ -70,6 +70,11 @@ NFT_MASQ            outbound traffic from a container's bridge
 NFT_CT              connection-state matches, in every engine's forward rules
 NFT_FIB_IPV4        `fib daddr type local`, how dockerd matches traffic to the host
 NFT_FIB_IPV6        the same for IPv6; dockerd's ip6 table fails to load without it
+NFT_COMPAT          iptables-nft runs every -m and non-verdict -j through it
+NETFILTER_XT_MATCH_CONNTRACK  -m conntrack --ctstate, in every engine's forward rules
+NETFILTER_XT_MARK   -m mark and -j MARK
+NETFILTER_XT_TARGET_MASQUERADE  -j MASQUERADE, outbound traffic from a container bridge
+NETFILTER_XT_NAT    -j DNAT and -j SNAT, which is what -p publishes a port with
 SECCOMP             crun accepts a seccomp profile in the bundle
 SECCOMP_FILTER      and this is what would enforce it
 EXT4_FS             the root filesystem
