@@ -6,6 +6,14 @@
 # kvm_guest.config is a generic (arch/-independent) fragment, but a few of the symbols
 # in it — CONFIG_PARAVIRT and friends — only exist under arch/x86; merge_config.sh warns
 # that it couldn't apply them on arm64 and moves on, which is expected and harmless.
+# Reproducible: kbuild otherwise stamps the build's date, user and host into the version
+# string every `uname -v` prints, and a counter from .version that goes up by one with
+# every build in the same tree — the `#3` a local rebuild shows. SOURCE_DATE_EPOCH comes
+# from build.sh (tools/lib.sh); the identity is the project's rather than the builder
+# container's, which is a random hostname.
+export KBUILD_BUILD_TIMESTAMP="$(date -u -d "@$SOURCE_DATE_EPOCH")"
+export KBUILD_BUILD_USER=flfs KBUILD_BUILD_HOST=flfs KBUILD_BUILD_VERSION=1
+
 make defconfig
 make kvm_guest.config
 

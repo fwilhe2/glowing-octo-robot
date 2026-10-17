@@ -287,6 +287,19 @@ jobs:
       - name: Create disk and OCI images
         run: ./tools/build-image.sh --image-only
 
+      # And again, to the byte. Image assembly is reproducible — every timestamp is
+      # SOURCE_DATE_EPOCH (tools/lib.sh), every tar is sorted and stripped of pax
+      # atime/ctime, the verity salt and EROFS UUID are derived — and this is what keeps it
+      # so: anything that starts embedding "now", a pid or a random value fails here
+      # rather than in somebody's attempt to verify a published digest. Right after the
+      # first assembly, so nothing in between can have touched the staging tree.
+      - name: Check the images are reproducible
+        run: |
+          outputs="output/rootfs.erofs output/rootfs.cmdline output/flfs-oci.tar output/sbom-erofs.json output/sbom-oci.json"
+          sha256sum $outputs > first.sha256
+          ./tools/build-image.sh --image-only > second-build.log 2>&1 || { tail -50 second-build.log; exit 1; }
+          sha256sum --check first.sha256
+
       # Loading it proves the hand-written OCI layout is well formed, and running it is
       # the only check in this job that executes a binary we shipped. It is not a
       # substitute for the boot job below: the container runs on the runner's kernel.

@@ -6,8 +6,17 @@
 #
 #     source tools/lib.sh      # after cd-ing to the repository root
 #
-# Sourcing it defines functions and one array and does nothing else. Paths are relative
-# to the repository root, like everything else here.
+# Sourcing it defines functions, one array and one constant, and does nothing else. Paths
+# are relative to the repository root, like everything else here.
+
+# The one timestamp every build here uses in place of "now" (2026-01-01T00:00:00Z), handed
+# to every package build by build.sh and to image assembly by tools/build-image.sh as
+# SOURCE_DATE_EPOCH — the reproducible-builds.org convention that compilers, the kernel,
+# systemd's tools, mkfs.erofs and image/build-rootfs.sh all honour. A constant rather than
+# the commit's date on purpose: the date would make two builds of the same tree from
+# different commits differ in every timestamp, and nothing here means "when" by it. It
+# is not a version and does not need to move.
+FLFS_SOURCE_DATE_EPOCH=1767225600
 
 # normalize_arch [arch] — amd64 or arm64, from either spelling; the host's when empty.
 normalize_arch() {
