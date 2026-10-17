@@ -13,6 +13,7 @@
 #   LOG        console transcript              (default ssh-test.log)
 #   LOGIN_USER/LOGIN_PASSWORD  serial console credentials (default root / root)
 #   SSH_PORT   host port forwarded to the guest's 22 (default the first free from 2222)
+#   PREBUILT   directory from `test/prebuilt.sh build`; run its binaries in the guest
 #
 # Three rounds, layered so a failure says where it broke, the same way test/network.sh is.
 #
@@ -37,6 +38,11 @@
 # a login now can only have been authorized by the credential where PID 1 put it, in
 # /run/credentials/@system. Which is the path every later boot of the same disk depends
 # on. It needs an ssh client on the host, which every CI runner image has.
+#
+# A fourth, only when PREBUILT names a directory of binaries test/prebuilt.sh compiled:
+# copy them in over that same login and run them. It rides on this test because this is
+# the one that already has a working ssh into the guest, and a boot of its own would
+# cost minutes under TCG for what is seconds of work.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -148,3 +154,9 @@ until out=$(SSH_DIR="$SSH_DIR" tools/ssh.sh -o ConnectTimeout=10 \
 done
 
 echo ">> ssh from the host OK: the ephemeral key was accepted through the boot credential"
+
+if [ -n "${PREBUILT:-}" ]; then
+    echo ">> running binaries built elsewhere, from $PREBUILT"
+    SSH_DIR="$SSH_DIR" ./test/prebuilt.sh ssh "$PREBUILT" || \
+        fail "a binary built by the host's toolchain does not run in the guest"
+fi

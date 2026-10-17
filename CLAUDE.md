@@ -135,10 +135,10 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/boot.sh output/rootfs.ext4 rootfs/boot/bzImage   # headless boot smoke test
 ./test/systemd.sh output/rootfs.ext4 rootfs/boot/bzImage  # no failed units
 ./test/network.sh output/rootfs.ext4 rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
-./test/ssh.sh output/rootfs.ext4 rootfs/boot/bzImage        # sshd, in-guest and from the host
+./test/ssh.sh output/rootfs.ext4 rootfs/boot/bzImage        # sshd, in-guest and from the host (PREBUILT=dir: and those binaries)
 ./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage  # crun starts a container
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
-./test/prebuilt.sh                # host-compiled C, C++, Rust and Go binaries, run in the image
+./test/prebuilt.sh [build|oci|ssh] # host-compiled C, C++, Rust and Go binaries, run in the image
 ./test/rootfs-size.sh [ext4|oci]  # image size vs test/size-budget.txt, and where it went
 ./test/vs-debian-slim.sh          # the OCI image against debian-slim, with both breakdowns
 ./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
@@ -320,8 +320,13 @@ know before touching it:
 
 `test/prebuilt.sh` is the check, and it is the only one here of a binary this repository
 did not build: the host's gcc, g++, rustc and go compile five small programs that each
-need one of these — plus `/usr/share/zoneinfo` from `packages/tzdata` and the CA bundle —
-and they run in the OCI image.
+need one of these — plus `/usr/share/zoneinfo` from `packages/tzdata` and the CA bundle.
+CI compiles them once in the `rootfs` job and runs the same bytes twice: in the OCI image
+there (the stricter test of what is present, since the container is the disk minus the
+subtractions), and in the booted guest, where `test/ssh.sh` copies them in over its login
+when `PREBUILT` names their directory. Locally, `./test/prebuilt.sh` alone compiles and
+runs in the OCI image; `./test/prebuilt.sh ssh` runs in whatever `tools/boot-qemu.sh`
+started.
 
 ### Packages that compile nothing
 
