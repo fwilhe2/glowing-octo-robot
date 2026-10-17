@@ -20,9 +20,6 @@
 # ---------------------------------------------------------------------------------
 # Degraded but not fatal: only the named tools break, and none are on the boot path.
 
-# coreutils basenc, expr, factor — arbitrary-precision arithmetic.
-libgmp.so.10
-
 # util-linux fdisk, sfdisk — line editing.
 libreadline.so.8
 

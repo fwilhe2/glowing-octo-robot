@@ -155,6 +155,7 @@ There is no unit test suite. The checks, cheapest first:
 | `test/check-symbol-versions.sh` | a binary built against the builder's glibc rather than ours |
 | `test/kernel-caps.sh` | kernel config missing a container feature |
 | `test/oci.sh` | the OCI archive does not load or run |
+| `test/prebuilt.sh` | a binary from someone else's toolchain cannot run here: no libgcc_s, libstdc++ or zoneinfo |
 | `test/check-sbom.sh` | the SBOM does not parse, or is incomplete |
 | `test/rootfs-size.sh`, `vs-debian-slim.sh` | the image grew past its budget, or past debian-slim |
 | `test/boot.sh` | kernel and loader: boots with `/bin/bash` as PID 1 |

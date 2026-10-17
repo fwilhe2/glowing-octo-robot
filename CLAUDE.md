@@ -138,6 +138,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/ssh.sh output/rootfs.ext4 rootfs/boot/bzImage        # sshd, in-guest and from the host
 ./test/container.sh output/rootfs.ext4 rootfs/boot/bzImage  # crun starts a container
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
+./test/prebuilt.sh                # host-compiled C, C++, Rust and Go binaries, run in the image
 ./test/rootfs-size.sh [ext4|oci]  # image size vs test/size-budget.txt, and where it went
 ./test/vs-debian-slim.sh          # the OCI image against debian-slim, with both breakdowns
 ./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
@@ -296,6 +297,31 @@ serve the previous build's binary. The key hashes `$PKG/src` for exactly this re
 
 Nothing has to be done to get the binary into the image — `image/build-rootfs.sh` copies
 the whole staging tree and the trim removes nothing from `usr/bin`.
+
+### The compiler's runtime, without the compiler
+
+`packages/gcc` builds gcc 16 and ships two files from it, `libgcc_s.so.1` and
+`libstdc++.so.6`; the compiler itself is thrown away and the builder's gcc stays the
+toolchain. glibc dlopens libgcc_s for `pthread_cancel`, `pthread_exit` and `backtrace()`
+— no `NEEDED` names it, so `check-rootfs-deps.sh` cannot see its absence — and nearly
+every prebuilt Rust binary for a `*-linux-gnu` target has it in `NEEDED`. Two things to
+know before touching it:
+
+- **The version is coupled to the builder's gcc**, like OpenSSL's to sid's libssl. A
+  binary Debian's gcc compiled asks for the `GCC_*`/`GLIBCXX_*` version nodes Debian's
+  runtime defines, so ours may not be older. `build.sh` compares the two sets with
+  `readelf -V` and fails the build when ours lacks one; a snapshot bump that moves sid's
+  gcc means a bump here.
+- **It is the one consumer of `libgmp-dev`, `libmpfr-dev` and `libmpc-dev`** in
+  `builder/deps.txt` — cc1 needs them and cc1 does not ship. Which makes them libraries
+  any other configure can find: coreutils (`--without-libgmp`) and gawk
+  (`--disable-mpfr`) are pinned against them, and a new package that does bignum
+  arithmetic wants the same.
+
+`test/prebuilt.sh` is the check, and it is the only one here of a binary this repository
+did not build: the host's gcc, g++, rustc and go compile five small programs that each
+need one of these — plus `/usr/share/zoneinfo` from `packages/tzdata` and the CA bundle —
+and they run in the OCI image.
 
 ### Packages that compile nothing
 

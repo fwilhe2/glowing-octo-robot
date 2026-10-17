@@ -111,6 +111,15 @@ libzstd-dev
 uuid-dev
 zlib1g-dev
 
+# The one exception to "libraries are for linking the image against": GMP, MPFR and MPC
+# are what gcc's configure requires to build cc1, and packages/gcc builds a cc1 only to
+# compile libgcc_s and libstdc++ with it and then throws it away. Nothing in the image
+# links any of the three, and the two packages whose configure would otherwise find them
+# say so by name — coreutils --without-libgmp, gawk --disable-mpfr.
+libgmp-dev
+libmpfr-dev
+libmpc-dev
+
 # ---------------------------------------------------------------------------------
 # Deliberately absent, and the reason is always the same: our configure scripts would
 # find them, link against them, and we do not ship them. Do not add one of these to fix
@@ -122,7 +131,6 @@ zlib1g-dev
 #   libaudit-dev                    no auditd, and the kernel is built without AUDIT
 #   libapparmor-dev libcap-ng-dev   no userspace behind either
 #   libcryptsetup-dev               systemd -Dlibcryptsetup=disabled
-#   libgmp3-dev                     coreutils factor/expr bignum only
 #   libreadline-dev                 util-linux fdisk line editing only
 #   libfuse3-dev                    e2fsprogs fuse2fs only
 #   libsqlite3-dev                  util-linux --disable-liblastlog2

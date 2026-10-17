@@ -24,6 +24,8 @@
 #                     for upstreams whose releases aren't named after the version —
 #                     expat tags 2.8.2 as R_2_8_2.
 #   UPSTREAM_IGNORE   ERE of versions to skip.
+#   UPSTREAM_NUM      ERE of what a release version looks like, replacing $NUM below
+#                     for one package. tz numbers its releases 2026e.
 #
 # Only plain numeric versions are ever considered, so alphas, betas and release
 # candidates never show up as an update.
@@ -91,6 +93,7 @@ UPSTREAM_GITHUB="${UPSTREAM_GITHUB:-}"
 UPSTREAM_SUBDIR="${UPSTREAM_SUBDIR:-}"
 UPSTREAM_SED="${UPSTREAM_SED:-}"
 UPSTREAM_IGNORE="${UPSTREAM_IGNORE:-}"
+NUM="${UPSTREAM_NUM:-$NUM}"
 UPSTREAM_REGEX="${UPSTREAM_REGEX:-$(default_regex "$TARBALL" "$VERSION")}"
 
 if [ -n "$UPSTREAM_GITHUB" ]; then

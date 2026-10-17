@@ -33,6 +33,11 @@ export gl_cv_func_mknod_works=yes
 # implementations. Pinning this explicitly also stops the build from depending on
 # whichever -dev packages happen to be present: configure defaults to auto-detect, so
 # the same tree built here and in CI was producing different binaries.
-./configure --prefix=/usr --without-selinux --without-openssl
+# --without-libgmp: factor and expr do arbitrary-precision arithmetic through libgmp
+# when they find it, and libgmp-dev is in builder/deps.txt for packages/gcc's sake. The
+# image ships no libgmp, so finding it would leave both unable to start. Without it they
+# fall back to gnulib's mini-gmp, compiled in.
+./configure --prefix=/usr --without-selinux --without-openssl --without-libgmp
 make
 make install DESTDIR=$ROOTFS
+assert_not_linked libgmp usr/bin/factor usr/bin/expr

@@ -4,10 +4,9 @@
 # make `awk` resolve.
 #
 # --disable-mpfr: gawk -M does arbitrary-precision arithmetic through libmpfr and
-# libgmp. Neither libmpfr-dev nor libgmp3-dev is in builder/deps.txt — libgmp is
-# already on the known-missing-libs backlog from coreutils — so this is pinned rather
-# than left to autodetection, which would link gawk against them the day something else
-# needs those headers.
+# libgmp. Both -dev packages are in builder/deps.txt, for packages/gcc, and neither
+# library is in the image — so this is pinned rather than left to autodetection, which
+# would link gawk against both.
 #
 # --with-readline=no: same story for libreadline, which gawk uses only for line editing
 # in its debugger. libreadline.so.8 is already a known-missing-lib (util-linux fdisk).
