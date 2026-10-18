@@ -72,6 +72,17 @@ clang
 bpftool
 linux-bpf-dev
 
+# Go and Rust, for the container stack: podman is Go, netavark and aardvark-dns are Rust.
+# Builder-side only, like every other compiler here. Each package's build has to point
+# its toolchain at our glibc by hand — cgo through CGO_CFLAGS/CGO_LDFLAGS, cargo through
+# a linker argument — because neither reads CFLAGS; builder/build-package.sh exports both.
+# protobuf-compiler is netavark's: its DHCP proxy speaks gRPC, and the bindings are
+# generated at build time.
+golang-go
+rustc
+cargo
+protobuf-compiler
+
 # The kernel package: BTF needs pahole out of dwarves. libssl-dev used to be here too,
 # for the signing tooling kbuild builds whether or not anything is signed; it has moved
 # down to the section below, now that openssl is a package we ship.
@@ -93,6 +104,9 @@ libdbus-1-dev
 libelf-dev
 libexpat-dev
 libfdisk-dev
+libjansson-dev
+libffi-dev
+libglib2.0-dev
 libjson-c-dev
 libkmod-dev
 liblzma-dev
@@ -101,6 +115,8 @@ libmount-dev
 libncurses-dev
 libnftnl-dev
 libpam0g-dev
+libpcre2-dev
+libseccomp-dev
 # ...and the sharpest case of that SONAME argument: curl compiles against sid's OpenSSL
 # headers and links -lssl -lcrypto, so what it asks for at runtime is libssl.so.3 and
 # libcrypto.so.3 — which our packages/openssl answers, as long as it stays on a 3.x
@@ -128,7 +144,6 @@ libmpc-dev
 # every one of them by name.
 #
 #   libselinux-dev libselinux1-dev  no policy in the image, nothing to enforce
-#   libseccomp-dev                  crun --disable-seccomp, systemd -Dseccomp=disabled
 #   libaudit-dev                    no auditd, and the kernel is built without AUDIT
 #   libapparmor-dev libcap-ng-dev   no userspace behind either
 #   libcryptsetup-dev               systemd -Dlibcryptsetup=disabled
@@ -140,7 +155,7 @@ libmpc-dev
 #   liblz4-dev                      zstd's CLI --format=lz4; the library does not need it
 #   libbz2-dev libcurl4-*-dev       systemd journal remote transports, all disabled
 #   libmicrohttpd-dev libgcrypt20-dev libgnutls28-dev
-#   libidn2-dev libiptc-dev libpcre2-dev libglib2.0-dev libxen-dev
+#   libidn2-dev libiptc-dev libxen-dev
 #   libtss2-dev libfido2-dev libp11-kit-dev libqrencode-dev libpwquality-dev
 #   libarchive-dev libpolkit-gobject-1-dev libxkbcommon-dev
 #

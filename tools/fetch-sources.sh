@@ -38,41 +38,54 @@ fetch_one() {
         return 0
     fi
 
-    local target="downloads/$TARBALL"
+    fetch_file "$pkg" "$TARBALL" "$URL" "${SHA256:-}" "${MIRRORS:-}" || return 1
 
-    if [ -z "${SHA256:-}" ]; then
-        echo "error: packages/$pkg/env.sh has no SHA256" >&2
+    # A second tarball, for the Rust packages whose crates come as a separate download
+    # (netavark-<v>-vendor.tar.gz): pinned and verified exactly like the first, because
+    # it is source too — every line of it is compiled into the binary.
+    if [ -n "${VENDOR_TARBALL:-}" ]; then
+        fetch_file "$pkg" "$VENDOR_TARBALL" "$VENDOR_URL" "${VENDOR_SHA256:-}" "" || return 1
+    fi
+}
+
+# fetch_file <pkg> <tarball> <url> <sha256> <mirrors>
+fetch_file() {
+    local pkg=$1 tarball=$2 primary=$3 sha=$4 mirrors=$5
+    local target="downloads/$tarball"
+
+    if [ -z "$sha" ]; then
+        echo "error: packages/$pkg/env.sh has no checksum for $tarball" >&2
         echo "       add one with: sha256sum $target" >&2
         return 1
     fi
 
-    if [ -f "$target" ] && verify "$target" "$SHA256"; then
-        echo "  $pkg: $TARBALL already present and verified"
+    if [ -f "$target" ] && verify "$target" "$sha"; then
+        echo "  $pkg: $tarball already present and verified"
         return 0
     fi
 
     # A file that is present but wrong is either a half-finished download (which curl
     # will resume onto, producing garbage) or a different file under the same name.
     # Neither is recoverable in place.
-    [ -f "$target" ] && { echo "  $pkg: $TARBALL fails its checksum, refetching"; rm -f "$target"; }
+    [ -f "$target" ] && { echo "  $pkg: $tarball fails its checksum, refetching"; rm -f "$target"; }
 
     local url
-    for url in "$URL" ${MIRRORS:-}; do
+    for url in "$primary" $mirrors; do
         echo "  $pkg: fetching $url"
         if "${CURL[@]}" -o "$target" "$url"; then
-            if verify "$target" "$SHA256"; then
+            if verify "$target" "$sha"; then
                 return 0
             fi
             # Not a transport problem: this URL serves the wrong bytes, and retrying it
             # or resuming onto it cannot help. Say so loudly and move to the next source.
             echo "  $pkg: CHECKSUM MISMATCH from $url" >&2
-            echo "         expected $SHA256" >&2
+            echo "         expected $sha" >&2
             echo "         got      $(sha256sum <"$target" | cut -d' ' -f1)" >&2
             rm -f "$target"
         fi
     done
 
-    echo "error: could not fetch $TARBALL for $pkg from any source" >&2
+    echo "error: could not fetch $tarball for $pkg from any source" >&2
     return 1
 }
 

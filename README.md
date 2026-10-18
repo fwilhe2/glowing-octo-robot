@@ -589,19 +589,71 @@ backwards: a `gunzip` that did not get the macro compresses.
 
 ## Containers
 
-The OCI runtime is `crun`, chosen because it is the only one written in C — runc is Go
-and youki is Rust, and either would mean a second language toolchain in the builder
-image producing binaries that never pass through the `--sysroot` machinery that keeps
-everything else on our glibc. It brings one dependency with it, `json-c`, which is what
-it parses `config.json` with. crun used to bundle yajl and could be built
-`--enable-embedded-yajl`; that option is gone, so the JSON library is a package now.
+The image ships **podman**, so it runs containers the way you'd expect:
 
-crun is built without seccomp and CRIU (see the comments in `crun/build.sh`), so a
-bundle's seccomp profile is accepted and ignored rather than enforced. Adding a
-`libseccomp` package would fix that and would also let systemd stop being built
-`-Dseccomp=disabled`. eBPF stays enabled even though it reads like an optional feature:
-on cgroup v2 the device controller *is* a BPF program, and a crun built `--disable-bpf`
-fails outright on any bundle with device rules — which is every bundle `crun spec`
+```sh
+podman run --rm -it docker.io/library/alpine sh
+podman run -d -p 8080:80 docker.io/library/nginx
+```
+
+It's root-only (rootless podman needs `newuidmap` from shadow-utils, which the image
+doesn't have), and image storage is `/var/lib/containers`, which lives in RAM like the
+rest of `/var`. Pulled images are gone after a reboot.
+
+To have a container started at boot, describe it as a **Quadlet** file. systemd turns
+it into a unit every time it starts, which suits an image you update by booting a new
+one: a `.container` file under `/usr/share/containers/systemd` (put it there with
+`extra/` or a package) is part of the image, and that container comes up with it. At
+runtime `/run/containers/systemd` works too, for the current boot only:
+
+```ini
+# /usr/share/containers/systemd/web.container
+[Container]
+Image=docker.io/library/nginx
+PublishPort=8080:80
+
+[Install]
+WantedBy=multi-user.target
+```
+
+For Docker clients (the `docker` CLI, compose), `systemctl enable --runtime --now
+podman.socket` serves the Docker-compatible API at `/run/podman/podman.sock`. That
+works despite the read-only `/etc`, because `--runtime` writes to `/run`.
+
+Under podman:
+
+| | |
+| --- | --- |
+| `crun` | the OCI runtime, with seccomp enforced through `libseccomp` |
+| `conmon` | the small per-container monitor that lets podman exit while the container runs |
+| `netavark`, `aardvark-dns` | networking (bridge, veth, NAT, published ports) and container-name DNS |
+| `nftables` | what netavark's firewall rules are written with (`nft -j`); there is no iptables driver |
+
+The image's configuration is podman's compiled-in defaults plus two files in
+`/etc/containers`: `policy.json` (accept unsigned images, as every distribution does)
+and `registries.conf` (short names like `alpine` mean `docker.io`).
+
+The OCI *container* image (`flfs-oci.tar`) leaves podman out; a container engine
+inside a container is a niche, and it would cost 60 MB.
+
+```sh
+./test/podman.sh output/rootfs.erofs rootfs/boot/bzImage
+```
+
+is the check. It confirms podman reports crun, netavark, seccomp and overlay storage,
+that a container runs in its own PID namespace with a seccomp filter applied, that DNS
+and TCP work from inside one, and that a Quadlet file becomes a running unit. It
+imports its test image from files already in the guest instead of pulling one, so it
+never depends on a registry being up or under its rate limit.
+
+### crun
+
+The OCI runtime is `crun`. It's podman's default and comes from the same project, and
+it's the smallest and fastest to start of the three runtimes (runc and youki are the
+others). It brings `json-c` for `config.json`. It's built without CRIU (see
+`crun/build.sh`). eBPF stays enabled even though it reads like an optional feature: on
+cgroup v2 the device controller *is* a BPF program, and a crun built `--disable-bpf`
+fails outright on any bundle with device rules, which is every bundle `crun spec`
 writes.
 
 `x86_64_defconfig` enables almost none of what a container needs — it has `CGROUPS`, the
@@ -612,6 +664,29 @@ container networking, `BPF_SYSCALL`/`CGROUP_BPF` for the cgroup v2 device contro
 and nftables, which is hidden behind `NETFILTER_ADVANCED` that defconfig leaves off. The
 fragment is a heredoc rather than a file next to `build.sh` because only `build.sh` is
 bind-mounted into the builder.
+
+crun can also be driven directly, without podman: `crun spec` writes a valid
+`config.json` from nothing, so a directory plus that file is enough to start a
+container by hand.
+
+```sh
+./test/container.sh output/rootfs.erofs rootfs/boot/bzImage
+```
+
+is the check, and it runs in the `boot` CI job alongside the network test. It boots
+systemd for real — crun asks systemd over sd-bus for the cgroup v2 scope, so PID 1 is
+part of what is under test — logs in at the serial getty and then asserts three layers:
+`cgroup.controllers` lists `memory`, `pids` and `cpu` (the fragment's `MEMCG` and
+friends actually took), `crun spec` plus a bind mount produces a bundle, and `crun run`
+starts a container whose `$$` is 1 and whose `$HOSTNAME` is the one the spec set — pid
+and uts namespaces that are demonstrably not the host's.
+
+The bundle is assembled with bash parameter expansion. The image ships no `jq`, and a
+JSON edit is not a job for `sed` either. Two traps are worth knowing if you edit those
+checks: the
+command spliced into `config.json` can contain no quotes of any kind, and `&` in the
+replacement half of `${var/pat/repl}` is a backreference to the whole match, so an `&&`
+chain silently corrupts the JSON.
 
 ## systemd's BPF sandboxing
 
@@ -638,30 +713,6 @@ fragment carries all four symbols:
 `DEBUG_INFO_BTF` is the one with a real price: it compiles the kernel with debug info
 and runs pahole over `vmlinux`, so the kernel job gets noticeably slower. `dwarves` is
 already in `builder/deps.txt`.
-
-Nothing pulls images yet: `crun` runs an OCI *bundle*, and the tooling that turns a
-registry reference into one (skopeo, umoci, podman) is all Go. `crun spec` writes a
-valid `config.json` from nothing, so a directory plus that file is enough to start a
-container by hand.
-
-```sh
-./test/container.sh output/rootfs.erofs rootfs/boot/bzImage
-```
-
-is the check, and it runs in the `boot` CI job alongside the network test. It boots
-systemd for real — crun asks systemd over sd-bus for the cgroup v2 scope, so PID 1 is
-part of what is under test — logs in at the serial getty and then asserts three layers:
-`cgroup.controllers` lists `memory`, `pids` and `cpu` (the fragment's `MEMCG` and
-friends actually took), `crun spec` plus a bind mount produces a bundle, and `crun run`
-starts a container whose `$$` is 1 and whose `$HOSTNAME` is the one the spec set — pid
-and uts namespaces that are demonstrably not the host's.
-
-The bundle is assembled with bash parameter expansion. The image ships no `jq`, and a
-JSON edit is not a job for `sed` either. Two traps are worth knowing if you edit those
-checks: the
-command spliced into `config.json` can contain no quotes of any kind, and `&` in the
-replacement half of `${var/pat/repl}` is a backreference to the whole match, so an `&&`
-chain silently corrupts the JSON.
 
 ## Keeping packages up to date
 

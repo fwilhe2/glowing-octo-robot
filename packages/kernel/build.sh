@@ -116,6 +116,15 @@ CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
 CONFIG_NFT_CT=y
 CONFIG_NFT_FIB_IPV4=y
 CONFIG_NFT_FIB_IPV6=y
+# netavark, podman's backend, writes one `inet` table for both families rather than an ip
+# and an ip6 table, and `fib` inside an inet table is its own expression type: with only
+# the two above, nft answers "Could not process rule: No such file or directory" and no
+# container gets a network.
+CONFIG_NFT_FIB_INET=y
+# And `ct mark set`, which netavark uses to mark a published port's connections so its
+# postrouting chain knows to masquerade them. The mark lives in the conntrack entry and
+# is its own option; without it nft rejects the rule with "Operation not supported".
+CONFIG_NF_CONNTRACK_MARK=y
 
 # And what the iptables command line needs on top. There are none of the legacy IP_NF_*
 # tables (NETFILTER_XTABLES_LEGACY is off), so packages/iptables is iptables-nft: it

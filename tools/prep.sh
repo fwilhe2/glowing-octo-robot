@@ -94,6 +94,9 @@ else
         ( load_env "$pkg"
           if [ -z "${LOCAL_SOURCE:-}" ]; then
               cp "downloads/$TARBALL" "$stage/sources/$TARBALL"
+              if [ -n "${VENDOR_TARBALL:-}" ]; then
+                  cp "downloads/$VENDOR_TARBALL" "$stage/sources/$VENDOR_TARBALL"
+              fi
           fi )
     done
     printf 'FROM scratch\nCOPY sources /sources\n' > "$stage/Containerfile"

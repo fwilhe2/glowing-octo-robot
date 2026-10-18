@@ -70,6 +70,8 @@ NFT_MASQ            outbound traffic from a container's bridge
 NFT_CT              connection-state matches, in every engine's forward rules
 NFT_FIB_IPV4        `fib daddr type local`, how dockerd matches traffic to the host
 NFT_FIB_IPV6        the same for IPv6; dockerd's ip6 table fails to load without it
+NFT_FIB_INET        the same in an inet table, which is the only kind netavark writes
+NF_CONNTRACK_MARK   `ct mark set`, netavark's marker for published-port traffic
 NFT_COMPAT          iptables-nft runs every -m and non-verdict -j through it
 NETFILTER_XT_MATCH_CONNTRACK  -m conntrack --ctstate, in every engine's forward rules
 NETFILTER_XT_MARK   -m mark and -j MARK

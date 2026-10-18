@@ -1,8 +1,11 @@
 # -Dc_args=-Wno-error=override-init: systemd promotes -Werror=override-init specifically,
 # which a blanket -Wno-error does NOT cancel; the errno aliases in the generated
 # errno-to-name.inc trip it on this bleeding-edge sid toolchain.
-# The disabled features drop optional runtime libs we don't ship (libselinux, libseccomp,
-# libaudit, libcrypto); libcap, libpam and libcrypt(libxcrypt) are built as packages.
+# The disabled features drop optional runtime libs we don't ship (libselinux, libaudit,
+# libcrypto); libcap, libpam, libcrypt (libxcrypt) and libseccomp are built as packages.
+# -Dseccomp=enabled is what makes SystemCallFilter=, SystemCallArchitectures= and
+# RestrictAddressFamilies= mean something: with it disabled, every unit that sets them —
+# most of systemd's own — ran unfiltered, with one line in the journal saying so.
 #
 # -Dpam=enabled builds pam_systemd, which is what registers a login as a session with
 # systemd-logind — without it logind runs but never sees a seat used, so `loginctl
@@ -26,7 +29,7 @@ systemd_opts=(
     -Dmode=release
     -Dc_args="${SYSROOT_CFLAGS:-} -Wno-error=override-init"
 
-    -Dselinux=disabled -Dseccomp=disabled -Daudit=disabled
+    -Dselinux=disabled -Dseccomp=enabled -Daudit=disabled
     -Dpam=enabled -Dopenssl=disabled -Dlibcryptsetup=disabled
 
     # No firmware boot path: qemu is handed the kernel with -kernel, so there is no ESP

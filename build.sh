@@ -132,6 +132,13 @@ else
         rm -rf "$staging"
         mkdir -p "$staging"
         tar -xf "downloads/$TARBALL" -C "$staging" --strip-components=1
+        # The vendored dependencies, for a package that has them, go in on top: cargo's
+        # vendor tarballs hold ./vendor/<crate>/..., which is where the package's build
+        # points cargo with --offline. Same staging directory, so an interrupted run
+        # cannot leave a source tree that has the code and not its dependencies.
+        if [ -n "${VENDOR_TARBALL:-}" ]; then
+            tar -xf "downloads/$VENDOR_TARBALL" -C "$staging"
+        fi
         mv "$staging" "$PKG_DIR/$PACKAGE"
     else
         echo "Directory $PKG_DIR/$PACKAGE already exists, skipping extraction."
@@ -167,6 +174,9 @@ if [ -n "${LOCAL_SOURCE:-}" ]; then
     component_env+=(--env "FLFS_ORIGIN=local")
 else
     component_env+=(--env "FLFS_ORIGIN=tarball" --env "FLFS_URL=$URL" --env "FLFS_SHA256=$SHA256")
+    if [ -n "${VENDOR_TARBALL:-}" ]; then
+        component_env+=(--env "FLFS_VENDOR_URL=$VENDOR_URL" --env "FLFS_VENDOR_SHA256=$VENDOR_SHA256")
+    fi
 fi
 
 # --network=none is the point of splitting prep out: the sources are on disk and the

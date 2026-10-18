@@ -58,6 +58,7 @@ MPL-2.0                 # Mozilla Public License; certdata.txt, the root certifi
 # --- exceptions, used on the right of a WITH ----------------------------------------
 Linux-syscall-note      # what keeps userspace off the kernel's GPL
 GCC-exception-3.1       # libgcc and libstdc++: linking them imposes nothing on the program
+PCRE2-exception         # pcre2's JIT: compiled code it emits may be used under any terms
 
 # --- references, for a license with no SPDX identifier ------------------------------
 # A LicenseRef- is an admission that something needs a human decision, not a way to get

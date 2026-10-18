@@ -99,6 +99,50 @@ if [ -n "${SYSROOT:-}" ]; then
     export CXXFLAGS="$sysroot_cppflags -O2${CXXFLAGS:+ $CXXFLAGS}"
 fi
 
+# Go and Rust, which read none of the variables above. Without these a Go or Rust
+# package would link the builder image's glibc — the first silent breakage in CLAUDE.md
+# — and reach for the network, which --network=none turns into a failed build.
+#
+# Go: cgo compiles and links through gcc with CGO_CFLAGS/CGO_LDFLAGS, so those carry the
+# sysroot. GOFLAGS=-mod=vendor builds from the vendor/ directory every Go release tarball
+# here ships, GOPROXY=off and GOTOOLCHAIN=local make "download a module" or "download a
+# newer go" an error rather than an attempt, and -trimpath with -buildvcs=false keep the
+# build directory and the (absent) git state out of the binary — test/reproducible.sh
+# compares to the byte.
+export GOTOOLCHAIN=local GOPROXY=off GOFLAGS="-mod=vendor -trimpath -buildvcs=false"
+export GOPATH=/tmp/go GOCACHE=/tmp/go-cache CGO_ENABLED=1
+export CGO_CFLAGS="${CFLAGS:-}" CGO_LDFLAGS="${LDFLAGS:-}"
+#
+# Rust: rustc links through gcc as well, and -C link-arg is how the sysroot reaches it;
+# C compiled by build scripts (the cc crate) reads CFLAGS on its own. One -C link-arg per
+# flag, not one -C link-args for all of them: cargo splits RUSTFLAGS on whitespace, so the
+# plural form hands every flag after the first to rustc itself, which rejects -B. The
+# remap keeps the source path out of panic messages and debug info for the same
+# reproducibility reason. Crates come from the package's vendor/ directory — see
+# cargo_vendored below.
+export CARGO_HOME=/tmp/cargo CARGO_NET_OFFLINE=true
+RUSTFLAGS="--remap-path-prefix=/usr/local/src=."
+for flag in ${LDFLAGS:-}; do RUSTFLAGS+=" -C link-arg=$flag"; done
+export RUSTFLAGS
+
+# cargo_vendored <cargo args>...
+#
+# cargo build --release, offline, against the crates in ./vendor (unpacked there by root
+# build.sh from VENDOR_TARBALL) rather than crates.io. --locked so that a Cargo.lock that
+# disagrees with the vendored crates is an error instead of a re-resolution. The source
+# replacement goes in $CARGO_HOME rather than the source tree, which stays as unpacked.
+cargo_vendored() {
+    install -d "$CARGO_HOME"
+    cat > "$CARGO_HOME/config.toml" <<CARGO
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "$PWD/vendor"
+CARGO
+    cargo build --release --offline --locked "$@"
+}
+
 # What every packages/<pkg>/build.sh can use. They are sourced, not executed, so anything
 # defined here is in scope — which is what lets a rule live in one place instead of being
 # a convention each package has to remember.
@@ -193,4 +237,20 @@ if [ -n "${FLFS_PKG:-}" ]; then
         if [ -n "${FLFS_URL:-}" ];    then printf 'url=%s\n'    "$FLFS_URL";    fi
         if [ -n "${FLFS_SHA256:-}" ]; then printf 'sha256=%s\n' "$FLFS_SHA256"; fi
     } > "$components/$FLFS_PKG"
+    # A package's vendored dependencies are a component of their own, with their own
+    # download and checksum: the SBOM should say that netavark's crates came from a
+    # tarball pinned separately from netavark's source, rather than fold one hash into
+    # the other. The license is the package's, which is what its vendor tarball is
+    # published under as a whole; the crates' own are in vendor/*/Cargo.toml.
+    if [ -n "${FLFS_VENDOR_URL:-}" ]; then
+        {
+            printf 'name=%s\n'    "$FLFS_PKG-vendor"
+            printf 'version=%s\n' "${FLFS_VERSION:-}"
+            printf 'license=%s\n' "${FLFS_LICENSE:-NOASSERTION}"
+            printf 'origin=tarball\n'
+            printf 'builder=%s\n' "${FLFS_BUILDER:-}"
+            printf 'url=%s\n'     "$FLFS_VENDOR_URL"
+            printf 'sha256=%s\n'  "${FLFS_VENDOR_SHA256:-}"
+        } > "$components/$FLFS_PKG-vendor"
+    fi
 fi

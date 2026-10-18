@@ -261,6 +261,29 @@ if [ "$flavour" = oci ]; then
            usr/libexec/sftp-server etc/ssh/sshd_config etc/ssh/moduli
     rm -rf usr/share/empty.sshd
 
+    # The container engine, which in a container is a niche (podman-in-podman) rather
+    # than the point, and 40-odd MB of Go: podman, quadlet and the helpers in
+    # usr/libexec/podman — conmon, netavark, aardvark-dns — plus its configuration. Its
+    # units and generators went with usr/lib/systemd above. crun stays: it is a few
+    # hundred KB, it is what test/container.sh-style bundles run on, and it was in this
+    # image before podman was.
+    rm -rf usr/bin/podman usr/libexec/podman etc/containers
+
+    # ...and the two libraries only conmon linked. Checked the same way libudev is below,
+    # and for the same reason: a package that started linking glib would look complete in
+    # the staging tree and fail at exec in somebody's container once this deleted it.
+    # The libraries' own files are excluded by prefix rather than by .so, because libtool
+    # installs a .la beside each that names it — executable, and deleted only by the trim
+    # further down, which runs after this.
+    consumers=$(find usr -type f -perm -u+x ! -name 'libglib-2.0.*' ! -name 'libpcre2-8.*' \
+                    -exec grep -laE 'libglib-2\.0\.so|libpcre2-8\.so' {} + 2>/dev/null || true)
+    if [ -n "$consumers" ]; then
+        echo "error: the container image still needs glib or pcre2, which this deletes:" >&2
+        echo "$consumers" >&2
+        exit 1
+    fi
+    rm -f usr/lib/libglib-2.0.* usr/lib/libpcre2-8.*
+
     # kmod, dead here for a reason that has nothing to do with containers: packages/kernel
     # builds with CONFIG_MODULES off, so there is no module to insert into anything. The
     # disk image keeps it anyway — systemd-modules-load and udev reach libkmod, and a
@@ -981,7 +1004,8 @@ fi
 # sha256, an index.json naming the manifest, and an `oci-layout` version marker. That
 # is the entire format, which is why nothing here needs buildah, skopeo or a podman
 # inside the container — `podman load -i` and `skopeo copy oci-archive:...` read what
-# this writes. (The image itself still ships no such tooling: see docs/container-runtime.md.)
+# this writes. (The disk image ships podman, which could; the image container that runs
+# this script does not, and does not need it.)
 layout=/tmp/oci
 rm -rf "$layout" /tmp/layer.tar
 mkdir -p "$layout/blobs/sha256"

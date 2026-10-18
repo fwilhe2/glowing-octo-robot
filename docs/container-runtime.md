@@ -1,10 +1,18 @@
 # From `crun run` to `docker run`
 
-**Status: nothing here is implemented.** `crun` works and `test/container.sh` proves it,
-but starting a container today means building an OCI bundle by hand — `crun spec`, a
-bind mount of the guest's own `/`, and a `config.json` patched with bash parameter
-expansion — there is no jq in the image, and a JSON edit is not a job for `sed`. This
-document is what stands between that and `run docker.io/library/alpine sh`.
+**Status: superseded — the image ships podman.** This was the plan for getting from
+`crun run` to `docker run` *without* a Go or Rust toolchain: a bash driver, a registry
+client and a whiteout-aware unpacker, all written here. Once Go and Rust were admitted as
+build dependencies, the right answer became the established engine instead: podman, with
+conmon, netavark, aardvark-dns and nftables, running containers on the same crun. See
+"The container engine" in `CLAUDE.md` for what was built and why, and `test/podman.sh`
+for what proves it.
+
+Kept because its reasoning is still cited — the TLS choice below is why
+`packages/openssl` exists — and because it records what each layer of a container engine
+needs from the image, which is still true of podman. The phased plan, the package list
+and the jq-versus-json-c question are history; the seccomp item at the bottom is done
+(`packages/libseccomp`).
 
 The headline is that **the kernel is already finished**. Every gap is userspace, and
 every missing piece has a C implementation, so nothing here forces a second toolchain

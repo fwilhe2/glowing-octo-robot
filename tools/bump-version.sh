@@ -90,6 +90,23 @@ echo "$PKG: $old_version -> $NEW"
 echo "  $tarball"
 echo "  sha256 ${old_sha:-(none)} -> $new_sha"
 
+# And the second tarball, for a package that has one: the vendored crates of a Rust
+# package are versioned with it, so a bump that rewrote only SHA256 would leave the
+# previous release's VENDOR_SHA256 behind and fail in fetch-sources.sh exactly the way
+# the note at the top of this file describes for the first.
+mapfile -t vendor_values < <(env_get "$PKG" VENDOR_TARBALL VENDOR_URL)
+vendor_tarball="${vendor_values[0]:-}"
+vendor_url="${vendor_values[1]:-}"
+if [ -n "$vendor_tarball" ]; then
+    echo "$PKG: fetching $vendor_url"
+    rm -f "downloads/$vendor_tarball"
+    "${CURL_DOWNLOAD[@]}" -o "downloads/$vendor_tarball" "$vendor_url"
+    vendor_sha=$(sha256sum <"downloads/$vendor_tarball" | cut -d' ' -f1)
+    sed -i -E "s|^VENDOR_SHA256=.*|VENDOR_SHA256=\"$vendor_sha\"|" "$env_file"
+    echo "  $vendor_tarball"
+    echo "  sha256 -> $vendor_sha"
+fi
+
 # Free, now that the tarball is already in downloads/, and worth doing: it proves the
 # file that was just written describes the bytes it names, read back through the same
 # code that will reject it in CI if it does not.

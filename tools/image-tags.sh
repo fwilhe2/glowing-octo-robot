@@ -37,6 +37,9 @@ case "${1:-}" in
                    ( load_env "$pkg"
                      if [ -z "${LOCAL_SOURCE:-}" ]; then
                          printf '%s %s %s\n' "$PKG" "$TARBALL" "$SHA256"
+                         if [ -n "${VENDOR_TARBALL:-}" ]; then
+                             printf '%s %s %s\n' "$PKG" "$VENDOR_TARBALL" "$VENDOR_SHA256"
+                         fi
                      fi )
                done | sort | sha256sum)
         ;;

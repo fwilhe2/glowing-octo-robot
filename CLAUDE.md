@@ -137,6 +137,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/network.sh output/rootfs.erofs rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
 ./test/ssh.sh output/rootfs.erofs rootfs/boot/bzImage        # sshd, in-guest and from the host (PREBUILT=dir: and those binaries)
 ./test/container.sh output/rootfs.erofs rootfs/boot/bzImage  # crun starts a container
+./test/podman.sh output/rootfs.erofs rootfs/boot/bzImage     # podman: seccomp, networking, Quadlet
 ./test/verity.sh output/rootfs.erofs rootfs/boot/bzImage   # a tampered copy of the image is refused
 ./test/reproducible.sh <pkg>...   # build twice from clean worktrees, compare to the byte (AGAINST_RUN=<id>: against CI's)
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
@@ -239,6 +240,7 @@ vocabulary, and a rule that is a function there is one no package has to remembe
 | `meson_install [opts]` | setup/compile/install with `--prefix /usr --buildtype=release -Dlibdir=lib` |
 | `drop_installed prog…` | delete from `usr/bin`, and **fail** if one was not installed |
 | `assert_not_linked lib bin…` | fail if an installed binary has `lib` in `NEEDED` |
+| `cargo_vendored [args]` | `cargo build --release --offline --locked` against `./vendor` |
 
 `drop_installed` rather than `rm -f` whenever the file is one a reviewer would want to be
 sure is gone — an interpreter script above all. A bare `rm -f` of a name upstream has
@@ -738,17 +740,84 @@ moves onto a persistent disk, where `f^` would keep the first key forever. `test
 third round is ordered after the second
 replaces `authorized_keys` precisely so it can only pass through that path.
 
-The OCI runtime is `crun` (constraint 3), plus `json-c` for `config.json`. crun is the
-only runtime written in C; runc (Go) and youki (Rust) would each mean a second toolchain
-in the builder image and binaries that bypass the sysroot machinery, so don't propose
-swapping to them. It is built `--disable-seccomp --disable-criu`, so a bundle's seccomp
-profile is accepted and ignored rather than enforced — packaging `libseccomp` is what
-fixes that (and would let systemd stop being built `-Dseccomp=disabled`). Do **not** add
-`--disable-bpf` to that list: on cgroup v2 the device controller is a BPF program, so
-crun fails with *eBPF not supported* on any bundle carrying device rules — which the
-default `crun spec` output does. eBPF costs nothing here, being a raw syscall plus
-`linux/bpf.h` with no library to ship. There is no image tooling: skopeo/umoci/podman
-are all Go, so bundles are made by hand with `crun spec`.
+The OCI runtime is `crun` (constraint 3), plus `json-c` for `config.json`, and it is what
+podman runs containers with. crun rather than runc or youki: it is podman's default and
+from the same project, and the smallest and fastest-starting of the three. Do not swap
+it out now that Go and Rust are in the builder; that is no longer the reason. It is built
+with seccomp — `packages/libseccomp`, checked on the binary after the build, because a
+crun built without it accepts a bundle's syscall filter and silently ignores it, which is
+what every container did before that package existed — and `--disable-criu`. Do **not**
+add `--disable-bpf`: on cgroup v2 the device controller is a BPF program, so crun fails
+with *eBPF not supported* on any bundle carrying device rules — which the default `crun
+spec` output does. eBPF costs nothing here, being a raw syscall plus `linux/bpf.h` with
+no library to ship. systemd is built `-Dseccomp=enabled` against the same library, which
+is what makes `SystemCallFilter=` in its own units more than a comment.
+
+### The container engine
+
+**podman is the engine**, chosen over Docker and containerd+nerdctl for three reasons
+that come from this image rather than from podman: it is crun's own ecosystem, it has no
+daemon to keep resident in a RAM-backed machine, and Quadlet turns a `.container` file
+into a systemd unit at boot — which is "update by booting a new image" applied to
+workloads. Kubernetes, when it comes, pairs naturally with CRI-O, which shares podman's
+image and storage libraries, configuration and crun.
+
+What it takes, each a package with its reasons in its own files:
+
+| package | what it is for |
+| --- | --- |
+| `podman` | Go. `bin/podman` and `quadlet` (with its system and user generator links), the units from `install.systemd`, none enabled, and `/etc/containers/policy.json` + `registries.conf`, the two files podman cannot start without. Everything else is compiled-in default. |
+| `conmon` | the per-container monitor that makes podman daemonless. C, on glib. |
+| `netavark`, `aardvark-dns` | the network backend and its DNS server. Rust, two tarballs each (below). |
+| `nftables`, `jansson` | netavark 2.x has **no iptables driver**: it hands JSON to `nft -j`, which only exists in an nft built `--with-json`. |
+| `glib`, `pcre2` | for conmon, and only `libglib-2.0` ships of glib's five libraries — which is also why there is no libffi package: only GObject needs it, and `libffi-dev` is in `builder/deps.txt` for glib's build alone, like GMP for gcc. |
+| `libseccomp` | the default seccomp profile podman hands crun, and systemd's filters. |
+
+Helpers live in `/usr/libexec/podman`, the first place podman looks. The build tags are
+named in `packages/podman/build.sh` rather than probed: `seccomp systemd
+exclude_graphdriver_btrfs containers_image_openpgp` (pure-Go signatures instead of gpgme)
+`grpcnotrace`, with SQLite compiled in. **Root only**: rootless needs `newuidmap` from
+shadow-utils, so `rootlessport` is not built. Storage is `/var/lib/containers`, which is
+the tmpfs `/var` — pulled images live in RAM until a persistent `/var` disk exists.
+
+**glib is coupled to the builder like OpenSSL is, and worse**, because its symbols are
+unversioned: conmon compiles against sid's `libglib2.0-dev` headers, and a header newer
+than the shipped library is a missing symbol at runtime that
+`test/check-symbol-versions.sh` cannot see. Keep `packages/glib` at or above sid's
+version. Note too that glib's stable series is the *even* minor — 2.90 is stable.
+
+**Go and Rust read none of the C flags**, so `builder/build-package.sh` hands them the
+sysroot itself: `CGO_CFLAGS`/`CGO_LDFLAGS` for cgo, and one `-C link-arg=` per linker
+flag in `RUSTFLAGS` — not `-C link-args=` with all of them, because cargo splits
+RUSTFLAGS on whitespace and rustc then rejects `-B`. It also pins both offline
+(`GOFLAGS=-mod=vendor`, `GOPROXY=off`, `GOTOOLCHAIN=local`; `CARGO_NET_OFFLINE`) and
+path-independent (`-trimpath`, `--remap-path-prefix`), since the compile has no network
+and `test/reproducible.sh` compares to the byte. A Rust package builds with
+`cargo_vendored --bin <name>`.
+
+**A package can have a second, pinned tarball** — `VENDOR_TARBALL`, `VENDOR_URL`,
+`VENDOR_SHA256` in `env.sh` — because netavark and aardvark-dns publish their crates
+separately from their source. Root `build.sh` unpacks it into the source tree, fetch,
+prep and the sources-image tag treat it like the first, `tools/bump-version.sh` rewrites
+both checksums, and the SBOM records it as a component of its own (`<pkg>-vendor`). Go
+packages need none of this: podman vendors its modules in the repository.
+
+**netavark's rules need two kernel symbols Docker's set does not**, and both failed the
+same invisible way — `nft` rejecting a rule at container start, reported by podman as
+*nftables error: "nft" did not return successfully* with nothing after the colon.
+netavark writes a single `inet` table, and `fib` inside one is `NFT_FIB_INET`, separate
+from the per-family `NFT_FIB_IPV4`/`IPV6` (*No such file or directory*); and it marks
+published-port connections with `ct mark set`, which is `NF_CONNTRACK_MARK` (*Operation
+not supported*). Both are in `container.config` and `test/kernel-caps.sh` now. The way to
+find the next one is to boot with `tools/boot-qemu.sh` and feed `nft` netavark's rule
+shapes one at a time over `tools/ssh.sh` — the error names nothing, the rule that fails
+does.
+
+The OCI flavour subtracts podman, its helpers and configuration, and glib and pcre2 with
+them, under the same consumer guard as libudev. `test/podman.sh` is the check: podman's
+own report (crun, netavark, seccomp, overlay), a container with seccomp in filter mode,
+DNS and TCP from inside one, and a Quadlet unit running — on an image imported in the
+guest, so it never depends on a registry's rate limits.
 
 The container kernel options are a `container.config` fragment written out by
 `packages/kernel/build.sh` as a heredoc and merged with `make container.config` — a *file* next
