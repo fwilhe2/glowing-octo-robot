@@ -13,9 +13,11 @@
 #                              the image for `podman image trust` alone.
 #   grpcnotrace                upstream's default; drops gRPC's tracing support.
 #
-# No libsubid tag, and no rootlessport: rootless podman needs newuidmap/newgidmap from
-# shadow-utils, which is not in the image, so a rootless helper would be dead code.
-# SQLite is the database podman 6 uses; without the libsqlite3 tag it is the copy
+# Rootless podman: newuidmap/newgidmap come from packages/shadow (with file
+# capabilities set by image/build-rootfs.sh), the network from packages/passt, and
+# rootlessport — built here — forwards published ports into a rootless network
+# namespace. No libsubid tag: that is for subordinate IDs from a database rather than
+# /etc/subuid, which is all this image has. SQLite is the database podman 6 uses; without the libsqlite3 tag it is the copy
 # compiled into the binary, which is one fewer library to ship and keep in step.
 #
 # GOFLAGS (-mod=vendor -trimpath -buildvcs=false) comes from builder/build-package.sh;
@@ -24,9 +26,10 @@
 # Makefile omits it rather than embedding a placeholder.
 buildtags="seccomp systemd exclude_graphdriver_btrfs containers_image_openpgp grpcnotrace"
 make_vars=(PREFIX=/usr ETCDIR=/etc HELPER_BINARIES_DIR=/usr/libexec/podman BUILDTAGS="$buildtags")
-make "${make_vars[@]}" bin/podman bin/quadlet
+make "${make_vars[@]}" bin/podman bin/quadlet bin/rootlessport
 
 install -D -m 755 bin/podman $ROOTFS/usr/bin/podman
+install -D -m 755 bin/rootlessport $ROOTFS/usr/libexec/podman/rootlessport
 # Quadlet: .container/.network/.volume files under /usr/share/containers/systemd (or
 # /etc/containers/systemd) become systemd units at every boot and daemon-reload, which
 # is how a container is part of an image rather than something done to a running one.

@@ -531,6 +531,11 @@ jobs:
       # Two boots of one VM with a disk for /var: the first has systemd format it and
       # writes a file, a podman image and a journal; the second has to find all three, and
       # the same machine ID. Every other boot here runs on the RAM-backed default.
+      # And as the unprivileged user: newuidmap/newgidmap with their file capabilities on
+      # the disk image, a container with the subordinate ID range, and pasta's network.
+      - name: Check rootless containers
+        run: ./test/rootless.sh artifacts/rootfs.erofs rootfs/boot/bzImage
+
       - name: Check a persistent /var
         run: ./test/persistent-var.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
