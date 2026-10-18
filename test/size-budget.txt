@@ -68,14 +68,14 @@
 # one it exists to make deliberate. Measured locally on amd64, stripped: 62.6 MiB, of
 # which podman is 44.0 and netavark 10.3; quadlet, aardvark-dns, glib, pcre2, nftables,
 # jansson, libseccomp and conmon are the other 8. On top of CI's 93.8 MiB tree that is
-# ~156.5 MiB, plus the usual 8%. The arm64 row adds the same proportion to its 134.7
-# MiB. The disk image itself — compressed EROFS — goes from 59.1 to about 107 MiB on
-# amd64. The oci rows do not move: build-rootfs.sh subtracts the engine from the
-# container image. Both disk rows are estimates until a CI run measures them; tighten
-# them to the measurement then, rather than leaving the headroom to absorb growth.
+# ~156.5 MiB, plus the usual 8% — and CI then measured exactly 156.5 MiB on amd64 and
+# 192.6 MiB on arm64, which is where both rows come from. The disk image itself, compressed
+# EROFS, went from 59.1 to 94.3 MiB on amd64 and to 96.3 MiB on arm64. The oci rows do not
+# move: build-rootfs.sh subtracts the engine from the container image, which measured 59.0
+# and 73.1 MiB.
 #
 # flavour  arch   MiB
 erofs      amd64  170
-erofs      arm64  218
+erofs      arm64  209
 oci        amd64  96
 oci        arm64  121
