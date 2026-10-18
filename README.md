@@ -604,9 +604,15 @@ podman run --rm -it docker.io/library/alpine sh
 podman run -d -p 8080:80 docker.io/library/nginx
 ```
 
-It's root-only (rootless podman needs `newuidmap` from shadow-utils, which the image
-doesn't have), and image storage is `/var/lib/containers`, which lives in RAM like the
-rest of `/var`. Pulled images are gone after a reboot.
+Root's image storage is `/var/lib/containers`, which lives in RAM like the rest of `/var`
+unless the VM has a `/var` disk. Without one, pulled images are gone after a reboot.
+
+Rootless works too: log in as `user` and the same commands run in that user's own
+namespace, with the 65536 subordinate IDs from `/etc/subuid` and networking through
+`pasta`. The two programs that write those ID maps, `newuidmap` and `newgidmap`, are the
+only privileged binaries in the image. They hold `cap_setuid` and `cap_setgid` as file
+capabilities rather than being setuid root, as on Fedora. `/home` is RAM, so a rootless
+user's images go at reboot either way.
 
 To have a container started at boot, describe it as a **Quadlet** file. systemd turns
 it into a unit every time it starts, which suits an image you update by booting a new

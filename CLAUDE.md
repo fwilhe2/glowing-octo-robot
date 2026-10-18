@@ -138,6 +138,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/ssh.sh output/rootfs.erofs rootfs/boot/bzImage        # sshd, in-guest and from the host (PREBUILT=dir: and those binaries)
 ./test/container.sh output/rootfs.erofs rootfs/boot/bzImage  # crun starts a container
 ./test/podman.sh output/rootfs.erofs rootfs/boot/bzImage     # podman: seccomp, networking, Quadlet
+./test/rootless.sh output/rootfs.erofs rootfs/boot/bzImage   # podman as `user`: ID maps, pasta
 ./test/persistent-var.sh output/rootfs.erofs rootfs/boot/bzImage  # two boots, one /var disk: state survives
 ./test/verity.sh output/rootfs.erofs rootfs/boot/bzImage   # a tampered copy of the image is refused
 ./test/reproducible.sh <pkg>...   # build twice from clean worktrees, compare to the byte (AGAINST_RUN=<id>: against CI's)
@@ -709,8 +710,9 @@ forwards ICMP when the *host* kernel lets an unprivileged process open a datagra
 socket, which is a property of the machine running the test rather than of the image — so
 an outbound ping is a flaky check of something the TCP and TLS probes either side of it
 already cover. In the guest, `image/files/etc/sysctl.d/50-ping-group-range.conf` is what
-lets a non-root account ping at all: nothing here is setuid, and a `CAP_NET_RAW` file
-capability would have to survive both `mkfs.erofs` and the OCI layer tar.
+lets a non-root account ping at all: nothing here is setuid, and a sysctl is narrower than
+a `CAP_NET_RAW` file capability (which could survive into the disk image now, the way
+newuidmap's do — see rootless containers — but not into the OCI layer).
 
 `ip` and friends come from `iproute2`, which wants `libmnl` — without it its configure
 sets `HAVE_MNL:=n` and silently drops half the tool set. Its `make install` puts a python
@@ -799,9 +801,24 @@ What it takes, each a package with its reasons in its own files:
 Helpers live in `/usr/libexec/podman`, the first place podman looks. The build tags are
 named in `packages/podman/build.sh` rather than probed: `seccomp systemd
 exclude_graphdriver_btrfs containers_image_openpgp` (pure-Go signatures instead of gpgme)
-`grpcnotrace`, with SQLite compiled in. **Root only**: rootless needs `newuidmap` from
-shadow-utils, so `rootlessport` is not built. Storage is `/var/lib/containers`, which is
-the tmpfs `/var` — pulled images live in RAM until a persistent `/var` disk exists.
+`grpcnotrace`, with SQLite compiled in. Storage is `/var/lib/containers`, which is the
+tmpfs `/var` unless the VM was given a disk for it.
+
+**Rootless containers work for `user`**, and they need three things root does not:
+`packages/shadow` for `newuidmap`/`newgidmap` (only those two, configured with every
+library off), `packages/passt` for `pasta`, podman's rootless network, and `rootlessport`
+from podman for published ports; plus `/etc/subuid` and `/etc/subgid` giving `user`
+100000–165535. **The two helpers are the image's only privileged binaries, and they are
+file capabilities, not setuid** — `cap_setuid=ep` and `cap_setgid=ep`, set by `setcap` in
+`build-rootfs.sh`, as Fedora ships them. That is only possible because the disk image is
+made from a tar stream (`mkfs.erofs --tar=f`) carrying `--xattrs-include=security.capability`
+and nothing else: from a directory, mkfs.erofs would record every xattr it can read,
+including the host's SELinux labels, which cannot be stripped because the kernel reports
+one on every file. The package build cannot set the capability itself — CI's package tars
+carry no xattrs — so a new privileged binary goes in that same `setcap` block, never
+setuid. `test/rootless.sh` logs in as `user` and checks the capabilities on the mounted
+image, a container's two-line `uid_map`, and DNS, TCP and a published port through pasta.
+The OCI flavour drops all of it.
 
 **glib is coupled to the builder like OpenSSL is, and worse**, because its symbols are
 unversioned: conmon compiles against sid's `libglib2.0-dev` headers, and a header newer
@@ -961,9 +978,9 @@ keep in mind when touching image assembly:
   through `repro_tar`; a new one should too.
 - **The host leaks in through xattrs.** On an SELinux machine every unpacked file carries
   `security.selinux`, and mkfs.erofs records xattrs by default, so a Fedora build differed
-  from CI's in nothing else. `mkfs.erofs -x -1` records none; nothing in the image needs
-  one. If something ever does (a file capability), it has to be set explicitly in the
-  image tree and the flag revisited, not inherited from the host.
+  from CI's in nothing else. The disk image is made from a tar stream instead, and the tar
+  takes only `security.capability` (`--xattrs-include`) — the file capabilities the image
+  sets on purpose, and nothing the host put there.
 - **Two packages installing the same file make the image depend on unpack order.**
   e2fsprogs and util-linux both shipped `/usr/bin/fsck`, and CI's `find`-ordered unpack
   picked e2fsprogs' on the runner and util-linux's locally. The `rootfs` job now unpacks
