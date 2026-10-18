@@ -625,8 +625,36 @@ if [ "$flavour" = erofs ]; then
     # boot — it is ConditionNeedsUpdate=/var, and a /var that starts empty always needs
     # one. That is the hermetic-/usr arrangement working as designed rather than a gap.
 
-    # And the mount points themselves, emptied. /var, /home and /root are tmpfs mounts
-    # (image/files/etc/fstab), so anything staged under them would ship and be invisible
+    # /var's mount, as a unit rather than an fstab line, so that it is a default a VM can
+    # override without editing anything in the image. systemd's unit search path puts
+    # /run/systemd/generator ahead of /usr/lib/systemd/system, and that is where
+    # systemd-fstab-generator writes the var.mount for a kernel command line's
+    # `systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs` — so a VM
+    # given a disk for /var gets it, formatted on first boot and grown to fit, and a VM
+    # given nothing gets this tmpfs. The .wants link names the unit, not the file, so it
+    # pulls in whichever var.mount won.
+    #
+    # Not systemd.volatile=state, which is the same fallback built in: its tmpfs is capped
+    # at a quarter of RAM, and /var/lib/containers is where podman keeps its images.
+    cat > usr/lib/systemd/system/var.mount <<'UNIT'
+[Unit]
+Description=Variable state, in RAM (no persistent /var was given)
+Documentation=man:systemd.mount(5)
+DefaultDependencies=no
+Conflicts=umount.target
+Before=local-fs.target umount.target
+
+[Mount]
+What=tmpfs
+Where=/var
+Type=tmpfs
+Options=mode=0755,nosuid,nodev
+UNIT
+    mkdir -p usr/lib/systemd/system/local-fs.target.wants
+    ln -sfn ../var.mount usr/lib/systemd/system/local-fs.target.wants/var.mount
+
+    # And the mount points themselves, emptied. /var, /home and /root are mounts (var.mount
+    # above, image/files/etc/fstab), so anything staged under them would ship and be invisible
     # — including the /var/run symlink, which systemd's own var.conf recreates on the
     # tmpfs. An empty directory says that plainly; a populated one would be a lie that
     # costs bytes. The container keeps all of it: it has no fstab.
@@ -641,10 +669,12 @@ chmod 644 etc/passwd etc/group etc/hosts etc/profile etc/nsswitch.conf etc/ld.so
 
 if [ "$flavour" = erofs ]; then
     chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
-              etc/systemd/system/dbus.service.d etc/systemd/system-preset
+              etc/systemd/system/dbus.service.d etc/systemd/journald.conf.d \
+              etc/systemd/system-preset
     chmod 644 etc/fstab etc/hostname etc/pam.d/* etc/tmpfiles.d/flfs-home.conf \
               etc/systemd/network/*.network \
-              etc/systemd/system/dbus.service.d/*.conf etc/systemd/system-preset/*.preset
+              etc/systemd/system/dbus.service.d/*.conf etc/systemd/journald.conf.d/*.conf \
+              etc/systemd/system-preset/*.preset
     # Password hashes must not be world-readable. Only reachable for this flavour: the
     # subtractions above delete etc/shadow outright, a container having no login to
     # authenticate.
