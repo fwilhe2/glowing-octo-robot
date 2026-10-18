@@ -1,0 +1,12 @@
+# The image's preset policy: a unit is enabled only if a preset says so by name.
+#
+# systemd's own rule for a unit no preset file mentions is to enable it, and the image's
+# presets are applied once, when it is assembled (`systemctl preset-all --root` in
+# image/build-rootfs.sh), because /etc is read-only after that. Without this line every
+# unit a package installs with an [Install] section came up at boot whether anyone
+# wanted it or not — podman's API service, its restart and auto-update units — while
+# packages/podman/build.sh said none was enabled. systemd's 90-systemd.preset names
+# what it means to have on (networkd, resolved, timesyncd, getty), and a package that
+# wants a unit running ships the .wants link itself, as openssh and dbus do; neither is
+# touched by this.
+disable *

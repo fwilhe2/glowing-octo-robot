@@ -554,7 +554,13 @@ the trap. Nothing ships a `.wants` symlink for networkd, resolved or timesyncd; 
 enables them on first boot by applying the preset files, which means writing to `/etc`.
 On a read-only `/etc` that fails with one journal line, and the machine comes up
 `running`, with no failed unit, and with no network. `test/systemd.sh` now fails on any
-*Read-only file system* in the boot's journal for exactly this reason. The build also
+*Read-only file system* in the boot's journal for exactly this reason. **Presets are
+also the policy for every other unit, and systemd's default is to enable a unit no preset
+names** — so `image/files/etc/systemd/system-preset/99-default.preset` is `disable *`,
+the way distributions end theirs. Before it, podman's six units, the always-running API
+service among them, were enabled by nothing more than having an `[Install]` section. A
+package that wants its unit running ships the `.wants` link in `/usr/lib` itself, as
+openssh and dbus do, and presets never touch those. The build also
 ships an empty `/etc/machine-id` for PID 1 to bind-mount a per-boot id over, and `/` at
 the 0555 that `tmpfiles.d/root.conf` would otherwise try to `fchmod` it to at every boot —
 the first thing that check caught.
