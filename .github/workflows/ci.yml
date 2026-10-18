@@ -528,6 +528,12 @@ jobs:
       - name: Check podman
         run: ./test/podman.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
+      # Two boots of one VM with a disk for /var: the first has systemd format it and
+      # writes a file, a podman image and a journal; the second has to find all three, and
+      # the same machine ID. Every other boot here runs on the RAM-backed default.
+      - name: Check a persistent /var
+        run: ./test/persistent-var.sh artifacts/rootfs.erofs rootfs/boot/bzImage
+
       - name: Upload console log
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

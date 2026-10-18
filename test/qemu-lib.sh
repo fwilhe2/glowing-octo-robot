@@ -165,21 +165,52 @@ EOF
 # The disk is attached read-only as well as being EROFS under dm-verity: the image is
 # immutable at the VMM, not only in the guest, so one file can back any number of guests
 # at once and nothing a guest does can reach it. Everything writable is a tmpfs
-# (image/files/etc/fstab). The root= and dm-mod.* arguments come from the image's own
-# rootfs.cmdline.
+# (image/files/etc/fstab) unless VAR_DISK gives /var a disk (qemu_var_disk below). The
+# root= and dm-mod.* arguments come from the image's own rootfs.cmdline.
 qemu_argv() {
     local root_args
     root_args=$(cat "$(root_cmdline_file)")
+    qemu_var_disk
     QEMU_ARGV=(
         "${accel[@]}" "${machine[@]}"
         -m "$MEM" -smp "$CPUS"
         -kernel "$KERNEL"
         -drive file="$ROOTFS",format=raw,if=virtio,readonly=on
+        "${QEMU_VAR_DRIVE[@]}"
         -nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}"
-        -append "$root_args console=$CONSOLE init=$INIT${QEMU_APPEND_EXTRA:-}"
+        -append "$root_args console=$CONSOLE init=$INIT${QEMU_APPEND_EXTRA:-}${QEMU_VAR_APPEND:-}"
         -nographic
         -no-reboot
     )
+}
+
+# A persistent /var, when VAR_DISK names a file: the guest's state on a disk of its own,
+# while the image stays read-only and shared. Everything about it is decided here, at the
+# VMM, and nothing in the image changes — the image's own var.mount is a tmpfs fallback,
+# and the systemd.mount-extra= below generates a var.mount that outranks it.
+#
+#   - The file is created sparse at VAR_SIZE (default 4G) if it does not exist, and left
+#     blank: x-systemd.makefs has systemd-makefs put ext4 on it at the first boot, and
+#     x-systemd.growfs grows that filesystem when the file is made bigger later.
+#   - It is the second virtio disk, so /dev/vdb under qemu (and under Firecracker).
+#   - The machine ID goes with the disk, in <file>.machine-id, made once. Without it every
+#     boot is a new machine — the image's /etc/machine-id is empty and read-only — which
+#     with a persistent /var means a new journal directory and a new DHCP client
+#     identity per boot. The state and the identity of a VM are one thing; this keeps
+#     them in one place.
+qemu_var_disk() {
+    QEMU_VAR_DRIVE=() QEMU_VAR_APPEND=
+    [ -n "${VAR_DISK:-}" ] || return 0
+    if [ ! -e "$VAR_DISK" ]; then
+        mkdir -p "$(dirname "$VAR_DISK")"
+        truncate -s "${VAR_SIZE:-4G}" "$VAR_DISK"
+    fi
+    if [ ! -s "$VAR_DISK.machine-id" ]; then
+        od -An -tx1 -N16 /dev/urandom | tr -d ' \n' > "$VAR_DISK.machine-id"
+    fi
+    QEMU_VAR_DRIVE=(-drive "file=$VAR_DISK,format=raw,if=virtio")
+    QEMU_VAR_APPEND=" systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs"
+    QEMU_VAR_APPEND+=" systemd.machine_id=$(cat "$VAR_DISK.machine-id")"
 }
 
 # Launch it in the background with its console on a fifo we hold open, and its output in

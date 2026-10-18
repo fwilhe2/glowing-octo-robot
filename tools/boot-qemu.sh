@@ -13,6 +13,9 @@
 #   SSH      0 to boot without the ssh forward and key below   (default 1)
 #   SSH_PORT host port forwarded to the guest's 22   (default the first free one from 2222)
 #   SSH_DIR  where the ephemeral key and ssh_config go   (default output/ssh)
+#   VAR_DISK a file to keep this VM's /var on, created if missing; without it /var is RAM
+#            and every boot starts empty. VAR_SIZE sizes a new one (default 4G). See
+#            qemu_var_disk in test/qemu-lib.sh. e.g. VAR_DISK=output/var.img
 #
 # The guest gets one virtio-net NIC on qemu's user-mode network (10.0.2.15/24, gateway
 # and DNS forwarder at 10.0.2.2/10.0.2.3), which systemd-networkd picks up over DHCP.

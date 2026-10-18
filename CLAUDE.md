@@ -138,6 +138,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/ssh.sh output/rootfs.erofs rootfs/boot/bzImage        # sshd, in-guest and from the host (PREBUILT=dir: and those binaries)
 ./test/container.sh output/rootfs.erofs rootfs/boot/bzImage  # crun starts a container
 ./test/podman.sh output/rootfs.erofs rootfs/boot/bzImage     # podman: seccomp, networking, Quadlet
+./test/persistent-var.sh output/rootfs.erofs rootfs/boot/bzImage  # two boots, one /var disk: state survives
 ./test/verity.sh output/rootfs.erofs rootfs/boot/bzImage   # a tampered copy of the image is refused
 ./test/reproducible.sh <pkg>...   # build twice from clean worktrees, compare to the byte (AGAINST_RUN=<id>: against CI's)
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
@@ -541,6 +542,22 @@ invisible under the tmpfs — so anything that has to exist there is made at boo
 tmpfiles or a unit's `StateDirectory=`. sshd is the worked example: its privilege
 separation directory moved from `/var/empty` to `/usr/share/empty.sshd`, and its host
 keys from `/etc/ssh` to `/var/lib/sshd`, generated afresh at every boot.
+
+**`/var` can be a disk instead, and the VM decides, not the image.** The tmpfs is not an
+fstab line but `/usr/lib/systemd/system/var.mount` (written by `build-rootfs.sh`), and
+that is the whole trick: a `systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs`
+on the kernel command line makes systemd-fstab-generator write a `var.mount` into
+`/run/systemd/generator`, which outranks `/usr/lib`, so a VM given a disk gets it —
+formatted by systemd-makefs on first boot, grown by systemd-growfs when the file grows —
+and a VM given nothing gets RAM. An fstab line would outrank both and could not be taken
+back. Not `systemd.volatile=state` either, which is the same fallback built in but caps
+the tmpfs at a quarter of RAM, where podman keeps its images. `VAR_DISK=<file>` in
+`test/qemu-lib.sh` does the VMM's half, and passes `systemd.machine_id=` from
+`<file>.machine-id` with it: the image's `/etc/machine-id` is empty, so without that every
+boot of a persistent VM is a new machine with a new journal directory and a new DHCP
+identity — the state and the identity belong together. journald is `Storage=persistent`,
+which costs nothing on the tmpfs and is what makes the previous boot's logs readable on a
+disk. `/home` and `/root` stay RAM either way.
 
 **First boot happens in `build-rootfs.sh`, because on a read-only `/etc` it cannot happen
 anywhere else.** systemd already accommodates this: the units that write `/etc`
