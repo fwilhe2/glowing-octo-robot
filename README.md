@@ -92,7 +92,15 @@ arguments written next to the image. A modified image does not boot. `rootfs.cmd
 part of the image: without it the kernel cannot mount the root, so keep the two together. Everything the
 running machine writes lives in RAM: `/var`, `/home` and `/root` are tmpfs mounts
 (`image/files/etc/fstab`), and so are `/tmp` and `/run`. Every boot starts from the same
-bytes, and to update a machine you boot it from a newer image. The work a first boot
+bytes, and to update a machine you boot it from a newer image.
+
+A VM can keep its state across reboots by being given a second disk for `/var`, with
+`systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs` on its kernel
+command line. systemd formats a blank disk on the first boot and grows the filesystem if
+the disk grows. The image itself doesn't change; without the argument `/var` is RAM. For
+qemu, `VAR_DISK=output/var.img ./tools/boot-qemu.sh` does all of it, and gives the disk
+a machine ID of its own so the VM keeps one identity. Container images, the journal and
+sshd's host keys then survive a reboot. `/home` and `/root` stay in RAM. The work a first boot
 would normally do in `/etc` (system accounts, tmpfiles, unit presets) is done when the
 image is assembled, because nothing can do it afterwards.
 The same script also writes `output/flfs-oci.tar`, the same userspace as a container image
@@ -598,9 +606,15 @@ podman run --rm -it docker.io/library/alpine sh
 podman run -d -p 8080:80 docker.io/library/nginx
 ```
 
-It's root-only (rootless podman needs `newuidmap` from shadow-utils, which the image
-doesn't have), and image storage is `/var/lib/containers`, which lives in RAM like the
-rest of `/var`. Pulled images are gone after a reboot.
+Root's image storage is `/var/lib/containers`, which lives in RAM like the rest of `/var`
+unless the VM has a `/var` disk. Without one, pulled images are gone after a reboot.
+
+Rootless works too: log in as `user` and the same commands run in that user's own
+namespace, with the 65536 subordinate IDs from `/etc/subuid` and networking through
+`pasta`. The two programs that write those ID maps, `newuidmap` and `newgidmap`, are the
+only privileged binaries in the image. They hold `cap_setuid` and `cap_setgid` as file
+capabilities rather than being setuid root, as on Fedora. `/home` is RAM, so a rootless
+user's images go at reboot either way.
 
 To have a container started at boot, describe it as a **Quadlet** file. systemd turns
 it into a unit every time it starts, which suits an image you update by booting a new

@@ -169,6 +169,20 @@ if [ ! -e "lib64/$ld_so" ]; then
 fi
 
 # ---------------------------------------------------------------------------------
+# Every tar here is written the same way, so that the same tree makes the same bytes:
+# --sort so directory order does not leak in, numeric owners, and every mtime clamped to
+# SOURCE_DATE_EPOCH — the tree was just copied, stripped and generated, so its own
+# timestamps are this run's. The pax options are the subtle half: GNU tar's pax format
+# records atime and ctime per file, and names each extended header `PaxHeaders.<pid>`, so
+# without them no two archives would ever match whatever went into them. Two of them:
+# the OCI layer below, and the stream the disk image is made from (see mkfs.erofs).
+repro_tar() {
+    tar --create --format=pax --sort=name --numeric-owner \
+        --mtime="@${SOURCE_DATE_EPOCH:-$(date +%s)}" --clamp-mtime \
+        --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime "$@"
+}
+
+# ---------------------------------------------------------------------------------
 # The container flavour, as subtractions. A container gets its kernel from the host and
 # its PID 1 from the runtime, so both of ours are dead weight — and worse than dead,
 # because a systemd that cannot run is still a systemd someone will try to run. This
@@ -268,6 +282,12 @@ if [ "$flavour" = oci ]; then
     # hundred KB, it is what test/container.sh-style bundles run on, and it was in this
     # image before podman was.
     rm -rf usr/bin/podman usr/libexec/podman etc/containers
+
+    # And rootless containers, which are a guest's feature: the ID-map helpers with their
+    # file capabilities (which an OCI layer tar would not carry anyway), pasta, and the
+    # subordinate ID ranges that only those read.
+    rm -f usr/bin/newuidmap usr/bin/newgidmap usr/bin/passt usr/bin/pasta \
+          etc/subuid etc/subgid
 
     # ...and the two libraries only conmon linked. Checked the same way libudev is below,
     # and for the same reason: a package that started linking glib would look complete in
@@ -621,6 +641,19 @@ if [ "$flavour" = erofs ]; then
     # handed, so this is the one place it can be set.
     chmod 555 "$IMAGE"
 
+    # newuidmap and newgidmap (packages/shadow) need CAP_SETUID and CAP_SETGID to write a
+    # rootless container's ID maps from /etc/subuid and /etc/subgid, and get exactly that,
+    # as file capabilities, rather than setuid root: the image's rule is that nothing is
+    # setuid, and Fedora ships them this way. They reach the disk image through the tar
+    # mkfs.erofs is fed below, which carries security.capability and no other xattr. The
+    # container flavour removes both programs, rootless containers inside a container
+    # being nobody's use case.
+    if [ -e usr/bin/newuidmap ]; then
+        setcap cap_setuid=ep usr/bin/newuidmap
+        setcap cap_setgid=ep usr/bin/newgidmap
+        getcap usr/bin/newuidmap usr/bin/newgidmap
+    fi
+
     # An empty /etc/machine-id, rather than none. On a read-only root PID 1 generates an
     # id at every boot and bind-mounts it over this file from /run; with no file to mount
     # over it can do neither, and dbus, journald and networkd's DHCP client id all read
@@ -636,8 +669,36 @@ if [ "$flavour" = erofs ]; then
     # boot — it is ConditionNeedsUpdate=/var, and a /var that starts empty always needs
     # one. That is the hermetic-/usr arrangement working as designed rather than a gap.
 
-    # And the mount points themselves, emptied. /var, /home and /root are tmpfs mounts
-    # (image/files/etc/fstab), so anything staged under them would ship and be invisible
+    # /var's mount, as a unit rather than an fstab line, so that it is a default a VM can
+    # override without editing anything in the image. systemd's unit search path puts
+    # /run/systemd/generator ahead of /usr/lib/systemd/system, and that is where
+    # systemd-fstab-generator writes the var.mount for a kernel command line's
+    # `systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs` — so a VM
+    # given a disk for /var gets it, formatted on first boot and grown to fit, and a VM
+    # given nothing gets this tmpfs. The .wants link names the unit, not the file, so it
+    # pulls in whichever var.mount won.
+    #
+    # Not systemd.volatile=state, which is the same fallback built in: its tmpfs is capped
+    # at a quarter of RAM, and /var/lib/containers is where podman keeps its images.
+    cat > usr/lib/systemd/system/var.mount <<'UNIT'
+[Unit]
+Description=Variable state, in RAM (no persistent /var was given)
+Documentation=man:systemd.mount(5)
+DefaultDependencies=no
+Conflicts=umount.target
+Before=local-fs.target umount.target
+
+[Mount]
+What=tmpfs
+Where=/var
+Type=tmpfs
+Options=mode=0755,nosuid,nodev
+UNIT
+    mkdir -p usr/lib/systemd/system/local-fs.target.wants
+    ln -sfn ../var.mount usr/lib/systemd/system/local-fs.target.wants/var.mount
+
+    # And the mount points themselves, emptied. /var, /home and /root are mounts (var.mount
+    # above, image/files/etc/fstab), so anything staged under them would ship and be invisible
     # — including the /var/run symlink, which systemd's own var.conf recreates on the
     # tmpfs. An empty directory says that plainly; a populated one would be a lie that
     # costs bytes. The container keeps all of it: it has no fstab.
@@ -652,10 +713,12 @@ chmod 644 etc/passwd etc/group etc/hosts etc/profile etc/nsswitch.conf etc/ld.so
 
 if [ "$flavour" = erofs ]; then
     chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
-              etc/systemd/system/dbus.service.d
-    chmod 644 etc/fstab etc/hostname etc/pam.d/* etc/tmpfiles.d/flfs-home.conf \
+              etc/systemd/system/dbus.service.d etc/systemd/journald.conf.d \
+              etc/systemd/system-preset
+    chmod 644 etc/fstab etc/hostname etc/subuid etc/subgid etc/pam.d/* etc/tmpfiles.d/flfs-home.conf \
               etc/systemd/network/*.network \
-              etc/systemd/system/dbus.service.d/*.conf
+              etc/systemd/system/dbus.service.d/*.conf etc/systemd/journald.conf.d/*.conf \
+              etc/systemd/system-preset/*.preset
     # Password hashes must not be world-readable. Only reachable for this flavour: the
     # subtractions above delete etc/shadow outright, a container having no login to
     # authenticate.
@@ -934,7 +997,8 @@ if [ "$flavour" = erofs ]; then
     #
     # lz4hc: decompression is cheap enough that it is the right default for a root
     # filesystem, and it is the one compressor packages/kernel's rootfs.config does not
-    # have to ask for separately. The label is what /etc/fstab mounts by. With
+    # have to ask for separately. The label is for people and blkid; nothing mounts by it
+    # (the root is the verity device on top, /etc/fstab says why). With
     # SOURCE_DATE_EPOCH set — the same switch the SBOM honours below — every timestamp and
     # the UUID are pinned, so the same tree makes the same bytes.
     erofs_repro=()
@@ -943,15 +1007,18 @@ if [ "$flavour" = erofs ]; then
     fi
     rm -f /usr/local/output/rootfs.erofs
     #
-    # -x -1 records no extended attributes at all. Nothing in the image needs one — nothing
-    # is setuid or carries a file capability (see the ping note in CLAUDE.md), there are no
-    # ACLs, and there is no SELinux policy to read a label — and the tree arrives with
-    # whatever the *host* put there: on a Fedora machine every file carries the
-    # security.selinux label of the directory it was unpacked into, which made a local
-    # build differ from CI's in nothing but that. The OCI layer has the same property for
-    # free, since tar stores no xattrs without --xattrs.
-    mkfs.erofs -L root -zlz4hc,12 -x -1 "${erofs_repro[@]}" \
-        /usr/local/output/rootfs.erofs "$IMAGE"
+    # From a tar stream rather than the directory, for the one extended attribute the image
+    # has: newuidmap's and newgidmap's file capabilities, set further up. mkfs.erofs given a
+    # directory records every xattr it can read, and on an SELinux host that includes the
+    # security.selinux label the *host* gives every file — which made a Fedora build differ
+    # from CI's in nothing else, and which cannot be removed, the kernel reporting a label
+    # on every file whether or not one is stored. Through tar, what goes in is exactly what
+    # --xattrs-include names: security.capability, nothing else, on any host.
+    repro_tar --xattrs --xattrs-include='security.capability' --directory "$IMAGE" . \
+        > /tmp/rootfs.tar
+    mkfs.erofs -L root -zlz4hc,12 --tar=f "${erofs_repro[@]}" \
+        /usr/local/output/rootfs.erofs /tmp/rootfs.tar
+    rm -f /tmp/rootfs.tar
 
     # dm-verity, so the image is not only read-only but tamper-evident: the kernel checks
     # every block it reads against a hash tree, and the tree against a root hash on its own
@@ -1029,23 +1096,10 @@ blob() {  # <file> <extension-less name it should have> → prints "<digest> <si
     echo "$digest $size"
 }
 
-# Every tar here is written the same way, so that the same tree makes the same bytes:
-# --sort so directory order does not leak in, a forced uid/gid so whether podman ran
-# rootless does not, and every mtime clamped to SOURCE_DATE_EPOCH — the tree was just
-# copied, stripped and generated, so its own timestamps are this run's. The pax options
-# are the subtle half: GNU tar's pax format records atime and ctime per file, and names
-# each extended header `PaxHeaders.<pid>`, so without them no two archives would ever
-# match whatever went into them.
-repro_tar() {
-    tar --create --format=pax --sort=name --numeric-owner --owner=0 --group=0 \
-        --mtime="@${SOURCE_DATE_EPOCH:-$(date +%s)}" --clamp-mtime \
-        --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime "$@"
-}
-
 # One layer, holding the whole tree; every file in the image is root-owned. The
 # descriptor names the *compressed* blob while rootfs.diff_ids in the config names the
 # uncompressed one, so both get hashed. gzip -n leaves the name and time out of its header.
-repro_tar --directory "$IMAGE" . > /tmp/layer.tar
+repro_tar --owner=0 --group=0 --directory "$IMAGE" . > /tmp/layer.tar
 diff_id=$(sha256sum /tmp/layer.tar | cut -d' ' -f1)
 gzip -9n < /tmp/layer.tar > /tmp/layer.tar.gz
 rm -f /tmp/layer.tar
@@ -1121,7 +1175,7 @@ cat > "$layout/index.json" <<EOF
 EOF
 echo '{"imageLayoutVersion": "1.0.0"}' > "$layout/oci-layout"
 
-repro_tar --directory "$layout" oci-layout index.json blobs \
+repro_tar --owner=0 --group=0 --directory "$layout" oci-layout index.json blobs \
     > /usr/local/output/flfs-oci.tar
 ls -l /usr/local/output/flfs-oci.tar
 

@@ -138,6 +138,8 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/ssh.sh output/rootfs.erofs rootfs/boot/bzImage        # sshd, in-guest and from the host (PREBUILT=dir: and those binaries)
 ./test/container.sh output/rootfs.erofs rootfs/boot/bzImage  # crun starts a container
 ./test/podman.sh output/rootfs.erofs rootfs/boot/bzImage     # podman: seccomp, networking, Quadlet
+./test/rootless.sh output/rootfs.erofs rootfs/boot/bzImage   # podman as `user`: ID maps, pasta
+./test/persistent-var.sh output/rootfs.erofs rootfs/boot/bzImage  # two boots, one /var disk: state survives
 ./test/verity.sh output/rootfs.erofs rootfs/boot/bzImage   # a tampered copy of the image is refused
 ./test/reproducible.sh <pkg>...   # build twice from clean worktrees, compare to the byte (AGAINST_RUN=<id>: against CI's)
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
@@ -544,6 +546,22 @@ tmpfiles or a unit's `StateDirectory=`. sshd is the worked example: its privileg
 separation directory moved from `/var/empty` to `/usr/share/empty.sshd`, and its host
 keys from `/etc/ssh` to `/var/lib/sshd`, generated afresh at every boot.
 
+**`/var` can be a disk instead, and the VM decides, not the image.** The tmpfs is not an
+fstab line but `/usr/lib/systemd/system/var.mount` (written by `build-rootfs.sh`), and
+that is the whole trick: a `systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs`
+on the kernel command line makes systemd-fstab-generator write a `var.mount` into
+`/run/systemd/generator`, which outranks `/usr/lib`, so a VM given a disk gets it —
+formatted by systemd-makefs on first boot, grown by systemd-growfs when the file grows —
+and a VM given nothing gets RAM. An fstab line would outrank both and could not be taken
+back. Not `systemd.volatile=state` either, which is the same fallback built in but caps
+the tmpfs at a quarter of RAM, where podman keeps its images. `VAR_DISK=<file>` in
+`test/qemu-lib.sh` does the VMM's half, and passes `systemd.machine_id=` from
+`<file>.machine-id` with it: the image's `/etc/machine-id` is empty, so without that every
+boot of a persistent VM is a new machine with a new journal directory and a new DHCP
+identity — the state and the identity belong together. journald is `Storage=persistent`,
+which costs nothing on the tmpfs and is what makes the previous boot's logs readable on a
+disk. `/home` and `/root` stay RAM either way.
+
 **First boot happens in `build-rootfs.sh`, because on a read-only `/etc` it cannot happen
 anywhere else.** systemd already accommodates this: the units that write `/etc`
 (`systemd-sysusers`, `ldconfig.service`, …) are `ConditionNeedsUpdate=/etc`, which is
@@ -556,7 +574,13 @@ the trap. Nothing ships a `.wants` symlink for networkd, resolved or timesyncd; 
 enables them on first boot by applying the preset files, which means writing to `/etc`.
 On a read-only `/etc` that fails with one journal line, and the machine comes up
 `running`, with no failed unit, and with no network. `test/systemd.sh` now fails on any
-*Read-only file system* in the boot's journal for exactly this reason. The build also
+*Read-only file system* in the boot's journal for exactly this reason. **Presets are
+also the policy for every other unit, and systemd's default is to enable a unit no preset
+names** — so `image/files/etc/systemd/system-preset/99-default.preset` is `disable *`,
+the way distributions end theirs. Before it, podman's six units, the always-running API
+service among them, were enabled by nothing more than having an `[Install]` section. A
+package that wants its unit running ships the `.wants` link in `/usr/lib` itself, as
+openssh and dbus do, and presets never touch those. The build also
 ships an empty `/etc/machine-id` for PID 1 to bind-mount a per-boot id over, and `/` at
 the 0555 that `tmpfiles.d/root.conf` would otherwise try to `fchmod` it to at every boot —
 the first thing that check caught.
@@ -688,8 +712,9 @@ forwards ICMP when the *host* kernel lets an unprivileged process open a datagra
 socket, which is a property of the machine running the test rather than of the image — so
 an outbound ping is a flaky check of something the TCP and TLS probes either side of it
 already cover. In the guest, `image/files/etc/sysctl.d/50-ping-group-range.conf` is what
-lets a non-root account ping at all: nothing here is setuid, and a `CAP_NET_RAW` file
-capability would have to survive both `mkfs.erofs` and the OCI layer tar.
+lets a non-root account ping at all: nothing here is setuid, and a sysctl is narrower than
+a `CAP_NET_RAW` file capability (which could survive into the disk image now, the way
+newuidmap's do — see rootless containers — but not into the OCI layer).
 
 `ip` and friends come from `iproute2`, which wants `libmnl` — without it its configure
 sets `HAVE_MNL:=n` and silently drops half the tool set. Its `make install` puts a python
@@ -778,9 +803,24 @@ What it takes, each a package with its reasons in its own files:
 Helpers live in `/usr/libexec/podman`, the first place podman looks. The build tags are
 named in `packages/podman/build.sh` rather than probed: `seccomp systemd
 exclude_graphdriver_btrfs containers_image_openpgp` (pure-Go signatures instead of gpgme)
-`grpcnotrace`, with SQLite compiled in. **Root only**: rootless needs `newuidmap` from
-shadow-utils, so `rootlessport` is not built. Storage is `/var/lib/containers`, which is
-the tmpfs `/var` — pulled images live in RAM until a persistent `/var` disk exists.
+`grpcnotrace`, with SQLite compiled in. Storage is `/var/lib/containers`, which is the
+tmpfs `/var` unless the VM was given a disk for it.
+
+**Rootless containers work for `user`**, and they need three things root does not:
+`packages/shadow` for `newuidmap`/`newgidmap` (only those two, configured with every
+library off), `packages/passt` for `pasta`, podman's rootless network, and `rootlessport`
+from podman for published ports; plus `/etc/subuid` and `/etc/subgid` giving `user`
+100000–165535. **The two helpers are the image's only privileged binaries, and they are
+file capabilities, not setuid** — `cap_setuid=ep` and `cap_setgid=ep`, set by `setcap` in
+`build-rootfs.sh`, as Fedora ships them. That is only possible because the disk image is
+made from a tar stream (`mkfs.erofs --tar=f`) carrying `--xattrs-include=security.capability`
+and nothing else: from a directory, mkfs.erofs would record every xattr it can read,
+including the host's SELinux labels, which cannot be stripped because the kernel reports
+one on every file. The package build cannot set the capability itself — CI's package tars
+carry no xattrs — so a new privileged binary goes in that same `setcap` block, never
+setuid. `test/rootless.sh` logs in as `user` and checks the capabilities on the mounted
+image, a container's two-line `uid_map`, and DNS, TCP and a published port through pasta.
+The OCI flavour drops all of it.
 
 **glib is coupled to the builder like OpenSSL is, and worse**, because its symbols are
 unversioned: conmon compiles against sid's `libglib2.0-dev` headers, and a header newer
@@ -940,9 +980,9 @@ keep in mind when touching image assembly:
   through `repro_tar`; a new one should too.
 - **The host leaks in through xattrs.** On an SELinux machine every unpacked file carries
   `security.selinux`, and mkfs.erofs records xattrs by default, so a Fedora build differed
-  from CI's in nothing else. `mkfs.erofs -x -1` records none; nothing in the image needs
-  one. If something ever does (a file capability), it has to be set explicitly in the
-  image tree and the flag revisited, not inherited from the host.
+  from CI's in nothing else. The disk image is made from a tar stream instead, and the tar
+  takes only `security.capability` (`--xattrs-include`) — the file capabilities the image
+  sets on purpose, and nothing the host put there.
 - **Two packages installing the same file make the image depend on unpack order.**
   e2fsprogs and util-linux both shipped `/usr/bin/fsck`, and CI's `find`-ordered unpack
   picked e2fsprogs' on the runner and util-linux's locally. The `rootfs` job now unpacks
