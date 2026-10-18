@@ -260,7 +260,27 @@ jobs:
           pattern: package-*-${{ matrix.arch }}
           path: artifacts
 
-      - run: find artifacts -name '*.tar' -exec tar xf {} \;
+      # In sorted order, and only after checking that no two packages install the same
+      # file: when two do, the image gets whichever was unpacked last, and `find` lists in
+      # the order of the runner's filesystem. That is a different image from the same
+      # packages for no reason anybody chose — e2fsprogs and util-linux both shipped
+      # /usr/bin/fsck until this check existed.
+      - name: Unpack the packages
+        run: |
+          find artifacts -name '*.tar' | sort > tars
+          dups=$(while read -r t; do tar tf "$t" | grep -v '/$' | sed "s|\$| $(basename "$t" .tar)|"; done < tars |
+                 sort | awk '{ n[$1]++; p[$1] = p[$1] " " $2 } END { for (f in n) if (n[f] > 1) print f ":" p[f] }')
+          # Directory symlinks (bin -> usr/bin and friends) are the merged-/usr skeleton
+          # every package stages identically; anything else is a real collision.
+          dups=$(grep -vE '^rootfs/(bin|lib|lib64|sbin|usr/sbin):' <<< "$dups" || true)
+          if [ -n "$dups" ]; then
+              echo "error: more than one package installs these files:"
+              echo "$dups"
+              exit 1
+          fi
+          # -p, so modes arrive as packaged: an unprivileged tar otherwise drops setuid
+          # and setgid bits, which once made this image differ from a local build.
+          while read -r t; do tar xpf "$t"; done < tars
 
       - name: Display structure of downloaded files
         run: find rootfs
@@ -286,6 +306,19 @@ jobs:
       # checked-out commit, which is $GITHUB_SHA.
       - name: Create disk and OCI images
         run: ./tools/build-image.sh --image-only
+
+      # And again, to the byte. Image assembly is reproducible — every timestamp is
+      # SOURCE_DATE_EPOCH (tools/lib.sh), every tar is sorted and stripped of pax
+      # atime/ctime, the verity salt and EROFS UUID are derived — and this is what keeps it
+      # so: anything that starts embedding "now", a pid or a random value fails here
+      # rather than in somebody's attempt to verify a published digest. Right after the
+      # first assembly, so nothing in between can have touched the staging tree.
+      - name: Check the images are reproducible
+        run: |
+          outputs="output/rootfs.erofs output/rootfs.cmdline output/flfs-oci.tar output/sbom-erofs.json output/sbom-oci.json"
+          sha256sum $outputs > first.sha256
+          ./tools/build-image.sh --image-only > second-build.log 2>&1 || { tail -50 second-build.log; exit 1; }
+          sha256sum --check first.sha256
 
       # Loading it proves the hand-written OCI layout is well formed, and running it is
       # the only check in this job that executes a binary we shipped. It is not a

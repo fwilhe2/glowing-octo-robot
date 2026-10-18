@@ -138,6 +138,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/ssh.sh output/rootfs.erofs rootfs/boot/bzImage        # sshd, in-guest and from the host (PREBUILT=dir: and those binaries)
 ./test/container.sh output/rootfs.erofs rootfs/boot/bzImage  # crun starts a container
 ./test/verity.sh output/rootfs.erofs rootfs/boot/bzImage   # a tampered copy of the image is refused
+./test/reproducible.sh <pkg>...   # build twice from clean worktrees, compare to the byte (AGAINST_RUN=<id>: against CI's)
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./test/prebuilt.sh [build|oci|ssh] # host-compiled C, C++, Rust and Go binaries, run in the image
 ./test/rootfs-size.sh [erofs|oci]  # image size vs test/size-budget.txt, and where it went
@@ -846,6 +847,44 @@ gone, not only the one you want gone.
 `tools/fetch-image.sh` / `tools/boot-qemu.sh` are for poking at CI artifacts locally. The `rootfs-dir`
 CI artifact is lossy (`upload-artifact` dereferences symlinks); never rebuild a bootable
 image from it — `output/rootfs.erofs` is the real output.
+
+## Reproducible builds
+
+**The same commit builds the same bytes, on any machine, and the checks for it are part
+of the build.** One constant, `FLFS_SOURCE_DATE_EPOCH` in `tools/lib.sh`, is every "now":
+root `build.sh` passes it to each package container as `SOURCE_DATE_EPOCH`,
+`tools/build-image.sh` to image assembly. It is a constant rather than the commit date so
+that two commits building the same package agree. The kernel needs more than that and
+gets it in `packages/kernel/build.sh` (`KBUILD_BUILD_TIMESTAMP`/`USER`/`HOST`/`VERSION` —
+the version counter otherwise goes up by one per build in the same tree).
+
+`test/reproducible.sh <pkg>...` builds a package twice from clean worktrees and compares
+the staged trees; `AGAINST_RUN=<run-id>` builds once and compares with that CI run's
+artifact instead, which is the cross-machine check. CI's `rootfs` job assembles both
+images twice and fails on any byte of difference. What that comparison found, and what to
+keep in mind when touching image assembly:
+
+- **GNU tar's pax format is not reproducible by default.** It records atime and ctime and
+  names each extended header `PaxHeaders.<pid>`. Every tar in `build-rootfs.sh` goes
+  through `repro_tar`; a new one should too.
+- **The host leaks in through xattrs.** On an SELinux machine every unpacked file carries
+  `security.selinux`, and mkfs.erofs records xattrs by default, so a Fedora build differed
+  from CI's in nothing else. `mkfs.erofs -x -1` records none; nothing in the image needs
+  one. If something ever does (a file capability), it has to be set explicitly in the
+  image tree and the flag revisited, not inherited from the host.
+- **Two packages installing the same file make the image depend on unpack order.**
+  e2fsprogs and util-linux both shipped `/usr/bin/fsck`, and CI's `find`-ordered unpack
+  picked e2fsprogs' on the runner and util-linux's locally. The `rootfs` job now unpacks
+  in sorted order and fails on any file two packages both install; fix a collision in the
+  package (`--disable-fsck`), never by ordering.
+- **An unprivileged `tar x` drops setuid and setgid bits, and `cp -a` does not.** util-linux
+  installed `su`, `mount` and `umount` setuid root, so CI's image (unpacked from tars by
+  the runner user) had no setuid binaries and a local one (copied from the staging tree)
+  had three. "Nothing here is setuid" is now a rule: util-linux is built
+  `--disable-makeinstall-setuid`, `build-rootfs.sh` fails on any file with either bit, and
+  the `rootfs` job unpacks with `tar xpf` so modes arrive as packaged.
+- **mtimes in `rootfs/` do not matter**, because assembly clamps every one, so the
+  package check compares contents, modes, owners and link targets, not times.
 
 ## CI
 

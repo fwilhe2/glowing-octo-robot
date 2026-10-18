@@ -15,21 +15,32 @@ way to feed a package anything other than what upstream shipped, which means the
 
 Worth settling before anything else, because the two readings ask for very different work.
 
-**Bit-identical output is not the claim.** `mkfs.erofs` stamps a fresh UUID and the build
-time into every disk it writes unless `SOURCE_DATE_EPOCH` is set, which CI does not do, the OCI config carries a `created` field taken from
-`date`, and nothing here passes `SOURCE_DATE_EPOCH` down to the compilers. Getting to
-byte-for-byte would be a project of its own and it is not this one.
+**Bit-identical output is now the claim, as far as it has been checked.** Every build
+here uses one constant `SOURCE_DATE_EPOCH` (`tools/lib.sh`), handed to every package build
+and to image assembly, and the image is assembled so that the same packages make the
+same bytes: sorted tars with clamped mtimes and no pax atime/ctime, EROFS timestamps and
+UUID pinned, no xattrs, the verity salt derived. What has been verified, on amd64:
+
+- **Image assembly, across machines.** The `rootfs.erofs`, `rootfs.cmdline` (so the
+  dm-verity root hash), `flfs-oci.tar` and both SBOMs that a CI run published were
+  reproduced byte for byte on a developer machine from that run's package artifacts. CI
+  assembles both images twice in every run and fails on any difference.
+- **Packages, across machines.** `test/reproducible.sh` with `AGAINST_RUN=<id>` builds
+  a package from a clean checkout and compares it, file by file, with the artifact the
+  CI run built on a GitHub runner — see that script for what is compared, and the commit
+  that introduced it for which packages were checked.
+
+Two more claims are deliberately *not* made. The builder image is a dated Debian snapshot
+rather than a digest of what apt installed, so a builder rebuilt from scratch is only as
+reproducible as Debian's own packages. And nothing here runs the package check in CI —
+a full build twice per run is the price — so a package that stops being reproducible is
+found by running the script, not by a red build.
 
 **Reconstructible is the claim**: given a published artifact and nothing else — no
 checkout, no working tree, no memory of what was on `main` that day — a person can recover
 every input and run the build again, and what comes out is the same software. That is a
 much cheaper property and it is the one that matters when the question is "what is
 actually in the image I am running", or "does this old build have the CVE" (issue #91).
-
-One thing the design should still fix in passing, because it is a bug rather than a
-trade-off: `image/build-rootfs.sh` honours `SOURCE_DATE_EPOCH` for the SBOM's `created`
-field and then ignores it three hundred lines later for the OCI config's, so two builds of
-the same tree produce two different image digests for no reason anybody chose.
 
 ## Part 1: the recipe image
 
@@ -176,13 +187,9 @@ Stated plainly, so nobody reads more into the word than is there:
   apt resolved that morning, so an old `builder:<hash>` that is still in the registry can
   be pulled and reused, but rebuilding it from scratch produces a different toolchain.
   This is phase 4 of `docs/build-container.md` and it is the largest remaining hole.
-- **Timestamps and ordering.** The EROFS UUID and timestamps, the OCI `created` field, `ldconfig`'s cache,
-  and anything a parallel `make` orders differently.
-- **The runner.** `nproc` changes what `make -j` does, and a compiler is allowed to care.
-
-None of these stop a rebuild from producing working, equivalent software. All of them stop
-the digests from matching, which is why the claim at the top of this document is worded the
-way it is.
+- **Anything not yet checked.** Part 0 says what has been compared to the byte; a
+  package outside that list, or an architecture other than amd64, is expected to
+  reproduce but has not been shown to.
 
 ## Part 2: patching a package
 

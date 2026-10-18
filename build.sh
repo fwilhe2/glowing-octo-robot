@@ -157,6 +157,9 @@ component_env=(
     --env "FLFS_VERSION=$VERSION"
     --env "FLFS_LICENSE=${LICENSE:-NOASSERTION}"
     --env "FLFS_BUILDER=$BUILDER"
+    # Not a pin, but the same kind of input: every "now" a build could embed. See
+    # tools/lib.sh.
+    --env "SOURCE_DATE_EPOCH=$FLFS_SOURCE_DATE_EPOCH"
 )
 if [ -n "${LOCAL_SOURCE:-}" ]; then
     # No tarball and so no checksum: the source is this repository at whatever commit is

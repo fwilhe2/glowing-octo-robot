@@ -365,6 +365,18 @@ fi
 #
 # The scan runs with tracing off: `set -x` over twenty thousand iterations would be longer
 # than the rest of the build log put together.
+# Nothing in the image is setuid or setgid, as a rule rather than an accident: ping works
+# through a sysctl, sudo is not here, and util-linux and openssh are built not to install
+# the bit. A file that arrives with one fails the build, because the bit's survival used
+# to depend on how the packages were unpacked — CI's unprivileged untar dropped it and a
+# local copy kept it — and a privilege the image grants should not be a coin toss.
+setid=$(find . -xdev -type f -perm /6000 -printf '%m %p\n')
+if [ -n "$setid" ]; then
+    echo "error: setuid/setgid files in the image (build the package without them):" >&2
+    echo "$setid" >&2
+    exit 1
+fi
+
 elf_list=$(mktemp)
 set +x
 while IFS= read -r -d '' f; do
@@ -896,7 +908,15 @@ if [ "$flavour" = erofs ]; then
         erofs_repro=(-T "$SOURCE_DATE_EPOCH" --all-time -U 00000000-0000-0000-0000-000000000000)
     fi
     rm -f /usr/local/output/rootfs.erofs
-    mkfs.erofs -L root -zlz4hc,12 "${erofs_repro[@]}" \
+    #
+    # -x -1 records no extended attributes at all. Nothing in the image needs one — nothing
+    # is setuid or carries a file capability (see the ping note in CLAUDE.md), there are no
+    # ACLs, and there is no SELinux policy to read a label — and the tree arrives with
+    # whatever the *host* put there: on a Fedora machine every file carries the
+    # security.selinux label of the directory it was unpacked into, which made a local
+    # build differ from CI's in nothing but that. The OCI layer has the same property for
+    # free, since tar stores no xattrs without --xattrs.
+    mkfs.erofs -L root -zlz4hc,12 -x -1 "${erofs_repro[@]}" \
         /usr/local/output/rootfs.erofs "$IMAGE"
 
     # dm-verity, so the image is not only read-only but tamper-evident: the kernel checks
@@ -974,12 +994,23 @@ blob() {  # <file> <extension-less name it should have> → prints "<digest> <si
     echo "$digest $size"
 }
 
-# One layer, holding the whole tree. --sort and a forced uid/gid keep the bytes from
-# depending on directory order or on whether podman ran rootless; every file in the
-# image is root-owned either way. The descriptor names the *compressed* blob while
-# rootfs.diff_ids in the config names the uncompressed one, so both get hashed.
-tar --create --format=pax --sort=name --numeric-owner --owner=0 --group=0 \
-    --directory "$IMAGE" . > /tmp/layer.tar
+# Every tar here is written the same way, so that the same tree makes the same bytes:
+# --sort so directory order does not leak in, a forced uid/gid so whether podman ran
+# rootless does not, and every mtime clamped to SOURCE_DATE_EPOCH — the tree was just
+# copied, stripped and generated, so its own timestamps are this run's. The pax options
+# are the subtle half: GNU tar's pax format records atime and ctime per file, and names
+# each extended header `PaxHeaders.<pid>`, so without them no two archives would ever
+# match whatever went into them.
+repro_tar() {
+    tar --create --format=pax --sort=name --numeric-owner --owner=0 --group=0 \
+        --mtime="@${SOURCE_DATE_EPOCH:-$(date +%s)}" --clamp-mtime \
+        --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime "$@"
+}
+
+# One layer, holding the whole tree; every file in the image is root-owned. The
+# descriptor names the *compressed* blob while rootfs.diff_ids in the config names the
+# uncompressed one, so both get hashed. gzip -n leaves the name and time out of its header.
+repro_tar --directory "$IMAGE" . > /tmp/layer.tar
 diff_id=$(sha256sum /tmp/layer.tar | cut -d' ' -f1)
 gzip -9n < /tmp/layer.tar > /tmp/layer.tar.gz
 rm -f /tmp/layer.tar
@@ -991,7 +1022,7 @@ read -r layer_digest layer_size < <(blob /tmp/layer.tar.gz)
 # runtime's default, which lists directories a merged-/usr image does not have.
 cat > /tmp/config.json <<EOF
 {
-  "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "created": "$created",
   "architecture": "$oci_arch",
   "os": "linux",
   "config": {
@@ -1009,7 +1040,7 @@ cat > /tmp/config.json <<EOF
   },
   "history": [
     {
-      "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+      "created": "$created",
       "created_by": "image/build-rootfs.sh oci"
     }
   ]
@@ -1055,7 +1086,7 @@ cat > "$layout/index.json" <<EOF
 EOF
 echo '{"imageLayoutVersion": "1.0.0"}' > "$layout/oci-layout"
 
-tar --create --directory "$layout" oci-layout index.json blobs \
+repro_tar --directory "$layout" oci-layout index.json blobs \
     > /usr/local/output/flfs-oci.tar
 ls -l /usr/local/output/flfs-oci.tar
 

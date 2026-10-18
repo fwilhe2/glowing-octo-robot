@@ -1,7 +1,7 @@
 # e2fsprogs installs a filesystem-forensics kit alongside the four tools this image
-# actually needs. `mke2fs`, `e2fsck`, `tune2fs` and `resize2fs` stay — the first two
-# because image/build-rootfs.sh and systemd-fsck call them, the last because growing
-# the root filesystem on first boot is a real thing to want from a VM image.
+# actually needs. `mke2fs`, `e2fsck`, `tune2fs` and `resize2fs` stay: the root is EROFS
+# now, but an ext4 data disk — a persistent /var, say — is the obvious thing to attach
+# to it, and these are what make, check and grow one. systemd-fsck calls e2fsck.
 #
 # What configure can be told not to build:
 #
@@ -16,6 +16,10 @@
 #               naming it is the same discipline as the --without- list in
 #               packages/curl/build.sh.
 #   nls         the image is C-locale only and the trim deletes share/locale.
+#   fsck        the generic front end that dispatches to fsck.<type>. util-linux installs
+#               one too, at the same path, and that one is what every distribution
+#               ships; two packages owning /usr/bin/fsck made which one the image got
+#               depend on the order CI happened to unpack the packages in.
 #   e2initrd-helper  tells an initramfs which module to load for the root filesystem.
 #               There is no initramfs — qemu is handed the kernel directly — and no
 #               modules either, CONFIG_MODULES being off. 361 KB in usr/lib that
@@ -33,6 +37,7 @@
     --disable-uuidd \
     --disable-fuse2fs \
     --disable-nls \
+    --disable-fsck \
     --disable-e2initrd-helper
 
 make

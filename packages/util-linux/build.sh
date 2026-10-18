@@ -86,6 +86,16 @@
 #   uuidd             a daemon for handing out UUIDs to concurrent callers. uuidgen
 #                     stays and needs nothing.
 #   lslogins          reads the utmp database and shadow; nothing here asks it to.
+#
+# --disable-makeinstall-setuid, because nothing in this image is setuid (see the ping
+# note in CLAUDE.md, and ssh-keysign in packages/openssh/build.sh) and `make install`
+# otherwise makes su, mount and umount setuid root. What that bought was a security
+# property that depended on how the package was *unpacked*: CI's rootfs job untars as an
+# unprivileged user, which drops the bit, while a local build copies the staging tree
+# with it — so the published image had no setuid su and a local one did. Root keeps all
+# three; what goes is an unprivileged user mounting by fstab's `user` option, or running
+# su, which the published image never allowed. image/build-rootfs.sh now refuses any
+# setuid or setgid file.
 ./configure \
     --prefix=/usr \
     --disable-asciidoc \
@@ -132,7 +142,8 @@
     --disable-hardlink \
     --disable-switch_root \
     --disable-uuidd \
-    --disable-lslogins
+    --disable-lslogins \
+    --disable-makeinstall-setuid
 
 make
 make install DESTDIR=$ROOTFS

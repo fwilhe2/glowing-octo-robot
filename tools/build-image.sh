@@ -91,6 +91,7 @@ for f in $flavours; do
     echo "==> image: $f"
     podman run --rm --security-opt label=disable \
         -e FLFS_BUILD="$build" \
+        -e SOURCE_DATE_EPOCH="$FLFS_SOURCE_DATE_EPOCH" \
         --volume "$PWD/rootfs":/usr/local/src \
         --volume "$PWD/extra":/extra:ro \
         --volume "$PWD/output":/usr/local/output \
