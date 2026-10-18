@@ -459,10 +459,9 @@ privilege-separation account, `sshd_config` and `/etc/pam.d/sshd` from
 the binary goes. Host keys are generated on the machine at every boot by
 `sshd-keygen.service`, into `/var/lib/sshd` (a tmpfs, like the rest of `/var`), never in
 the image: a key baked into an image
-built from a public repository is the same key on every machine that boots it. `root`
-gets in over the network by key only (`PermitRootLogin prohibit-password`), because the
-`root`/`root` password in `image/files/etc/shadow` is for a serial console; `user`/`user`
-works with a password.
+built from a public repository is the same key on every machine that boots it. No
+account has a password (`image/files/etc/shadow` is all `*`, and the build fails on a
+hash), so ssh is by key only, for everyone.
 
 Passwordless login from the host works the way Vagrant and Lima do it, with nothing
 written into the image:
@@ -506,8 +505,11 @@ qemu-system-x86_64 ... \
 ssh -i key -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1
 ```
 
-Without the credential, `user`/`user` still logs in with a password; root over ssh takes
-a key or nothing.
+Without the credential there is no way in over ssh. The serial console takes a username
+and no password when the kernel command line carries `systemd.set_credential=login.noauth:yes`,
+which `test/qemu-lib.sh` passes and util-linux's `login` reads; without it, nothing logs
+in there either. Whoever writes the command line owns the VM anyway, so a credential
+there costs nothing a password would have protected.
 
 The container image keeps the client and drops the server: `sshd`, its two PAM-linked
 helpers, `sftp-server`, `sshd_config`, `moduli` and `/usr/share/empty.sshd` are all subtracted in

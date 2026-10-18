@@ -11,7 +11,7 @@
 #                                              CI, where there is no KVM, and that is slow)
 #   MEM/CPUS   guest size                      (default 1024 / 2)
 #   LOG        console transcript              (default ssh-test.log)
-#   LOGIN_USER/LOGIN_PASSWORD  serial console credentials (default root / root)
+#   LOGIN_USER                 serial console account (default root; no password, see console_login)
 #   SSH_PORT   host port forwarded to the guest's 22 (default the first free from 2222)
 #   PREBUILT   directory from `test/prebuilt.sh build`; run its binaries in the guest
 #
@@ -71,9 +71,9 @@ DAEMON_CHECK="[[ \$(systemctl is-active sshd.service) == active ]] \
 # Round two. Idempotent, because the loop below retries it: ssh-keygen refuses to
 # overwrite an existing key, so generate one only if there is none.
 #
-# root by key is exactly what the shipped sshd_config allows and image/files/etc/shadow's
-# throwaway password is not — `PermitRootLogin prohibit-password` — so this doubles as the
-# check that that line means what it says.
+# A key is the only way in that the shipped sshd_config allows — no account has a
+# password, and PasswordAuthentication is off — so this doubles as the check that a key
+# for root works under `PermitRootLogin prohibit-password`.
 #
 # BatchMode=yes so a failed key is an error rather than a password prompt this console
 # would sit at until the deadline. StrictHostKeyChecking=no and a /dev/null known-hosts

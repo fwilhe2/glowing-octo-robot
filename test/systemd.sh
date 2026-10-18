@@ -10,7 +10,7 @@
 #                                there is no KVM, and that is slow)
 #   MEM/CPUS   guest size        (default 1024 / 2)
 #   LOG        console transcript (default systemd-test.log)
-#   LOGIN_USER/LOGIN_PASSWORD  serial console credentials (default root / root)
+#   LOGIN_USER                 serial console account (default root; no password, see console_login)
 #
 # `systemctl is-system-running` is the main assertion: it reports `degraded` if and
 # only if at least one unit failed, so it covers units nothing else here thinks to look

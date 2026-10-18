@@ -29,8 +29,8 @@
 # $SSH_DIR and deleted when qemu exits, whose public half the guest is handed at boot as
 # the systemd credential ssh.authorized_keys.root — the same idea as Vagrant's per-machine
 # key and Lima's injected one, with nothing written into the image. test/qemu-lib.sh
-# (qemu_ssh_setup) has the details. The key is root's: root's password is refused over
-# the network, by key it is not.
+# (qemu_ssh_setup) has the details. The key is root's, and nothing has a password: at the
+# console, type a username and the login.noauth credential lets it straight in.
 #
 # The machine it boots is assembled by test/qemu-lib.sh, which is the same code the four
 # boot tests use, and that is the point of sharing it: this is what somebody reaches for

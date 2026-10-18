@@ -145,16 +145,14 @@ done
 #
 # UsePAM yes: see --with-pam above. The compiled default is no.
 #
-# PermitRootLogin prohibit-password is the compiled default, written down because it is
-# load-bearing here: image/files/etc/shadow ships root with the password `root`, which is
-# fine for a serial console on a development VM and is not fine over a network. Keys
-# still work; passwords do not.
+# No passwords over the network, for anyone: image/files/etc/shadow ships none, so
+# PasswordAuthentication could only ever fail, and leaving it on would invite the first
+# package or extra/ overlay that sets one to expose it. Keys only. PermitRootLogin
+# prohibit-password is the compiled default, written down as a second line of defence.
 #
 # KbdInteractiveAuthentication no closes the hole upstream's own comment warns about —
 # with PAM enabled, keyboard-interactive is a second path to password authentication, and
-# it is not the path PermitRootLogin inspects. Password authentication for ordinary
-# accounts stays on, through PasswordAuthentication, which is what makes `user`/`user`
-# work from outside the way it already does on the console.
+# it is not the path PasswordAuthentication or PermitRootLogin inspect.
 #
 # The Match block is how tools/boot-qemu.sh and tools/ssh.sh log in without a password,
 # and it reads a key from a place that does not survive a reboot on purpose. The host
@@ -184,10 +182,9 @@ HostKey /var/lib/sshd/ssh_host_rsa_key
 HostKey /var/lib/sshd/ssh_host_ecdsa_key
 HostKey /var/lib/sshd/ssh_host_ed25519_key
 
-# root over the network by key only, never by password: /etc/shadow in this image ships a
-# throwaway password for root and a network is not a serial console.
+# Keys only, for every account. See packages/openssh/build.sh.
 PermitRootLogin prohibit-password
-PasswordAuthentication yes
+PasswordAuthentication no
 KbdInteractiveAuthentication no
 
 Subsystem sftp /usr/libexec/sftp-server

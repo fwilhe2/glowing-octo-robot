@@ -30,7 +30,6 @@ TIMEOUT="${TIMEOUT:-300}"   # qemu falls back to TCG in CI, where there is no KV
 MEM="${MEM:-1024}"          # that is slow
 CPUS="${CPUS:-2}"
 LOGIN_USER="${LOGIN_USER:-root}"
-LOGIN_PASSWORD="${LOGIN_PASSWORD:-root}"
 
 # What a guest looks like on its way out. Matched by await and by test/boot.sh's own loop.
 QEMU_DIED='Kernel panic|Attempted to kill init|Requesting system (poweroff|reboot)'
@@ -176,7 +175,7 @@ qemu_argv() {
         -kernel "$KERNEL"
         -drive file="$ROOTFS",format=raw,if=virtio,readonly=on
         -nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}"
-        -append "$root_args console=$CONSOLE init=$INIT${QEMU_APPEND_EXTRA:-}"
+        -append "$root_args console=$CONSOLE init=$INIT systemd.set_credential=login.noauth:yes${QEMU_APPEND_EXTRA:-}"
         -nographic
         -no-reboot
     )
@@ -259,15 +258,15 @@ QUIET="stty -echo; PS1=; export SYSTEMD_COLORS=0"
 
 # Log in at the serial getty and leave a quiet shell behind on fd 3.
 #
-# agetty reprints the prompt after a failed or mistimed attempt, so the login is worth
-# retrying: typing into it while it is still setting the line up loses characters.
+# There is no password to type: the image ships none (image/files/etc/shadow), and
+# qemu_argv passes the credential login.noauth, which serial-getty@.service imports and
+# util-linux's login reads as `login -f`. So the username is the whole login, for root
+# and `user` alike, and it still goes through PAM's account and session stacks — which
+# is what gives `user` a logind session and an XDG_RUNTIME_DIR.
 #
-# The password waits on output typed *after* the username, not on "Password" appearing
-# anywhere in the log. systemd's own status lines contain "Query the User Interactively for
-# a Password" a few seconds into the boot, so matching the whole log satisfies the wait
-# before login has asked anything: the password goes into the username prompt, the next
-# command typed becomes the password, and every attempt is rejected with the credentials
-# perfectly correct. The same applies to a previous failed attempt's prompt.
+# agetty reprints the prompt after a mistimed attempt, so the login is worth retrying:
+# typing into it while it is still setting the line up loses characters. The probe is
+# only typed after the username, and only output after that point can satisfy the wait.
 console_login() {
     await 'login:' "$TIMEOUT" || fail "no login prompt"
     echo ">> got a login prompt, logging in as $LOGIN_USER"
@@ -277,11 +276,9 @@ console_login() {
         local prompt
         prompt=$(console_mark)
         console_send "$LOGIN_USER"
-        await 'Password' 15 "$prompt" || continue
-        console_send "$LOGIN_PASSWORD"
         sleep 3
         console_send "$QUIET"
         console_send "$PROBE"
-        await "$READY" 10 || true
+        await "$READY" 10 "$prompt" || true
     done
 }

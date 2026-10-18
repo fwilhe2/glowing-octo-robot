@@ -414,7 +414,9 @@ the binary rather than the check.**
 
 `image/Containerfile` + `image/build-rootfs.sh` turn `rootfs/` into `output/rootfs.erofs`:
 directory skeleton, `image/files/etc` copied in as the shipped `/etc` (hostname `flfs`,
-credentials from `image/files/etc/shadow` — `root`/`root` and `user`/`user`, the latter
+accounts `root` and `user` with **no passwords** — `image/files/etc/shadow` is all `*`
+and the build fails on a hash; the console takes the `login.noauth` credential the qemu
+harness passes, ssh takes keys only — `user` being
 uid 1000 with its home made at every boot by `image/files/etc/tmpfiles.d/flfs-home.conf`
 because nothing in the image would make one on login), `/sbin/init` → systemd, the trim
 (below), `ld.so.conf` + `ldconfig`, first boot done at build time (below), permission
@@ -672,7 +674,7 @@ Networking is systemd end to end: `image/files/etc/systemd/network/20-wired.netw
 symlink into resolved's `/run` stub. The qemu scripts pass `-nic user,model=virtio-net-pci`;
 the NIC shows up as `ens3`, so match on the naming scheme rather than a fixed name.
 `test/network.sh` is the check — it boots systemd for real and logs in at the serial
-getty (`root`/`root`, from `image/files/etc/shadow`) — and it runs **two rounds**, which is
+getty (as `root`, with no password, through the `login.noauth` credential) — and it runs **two rounds**, which is
 the thing to preserve when adding to it. The first asks whether the system has a network
 and uses bash builtins, `networkctl` and `getent` only. That was forced when the image had
 no `grep`, `sed` or `awk`; those are packages now, but the round still sticks to builtins
