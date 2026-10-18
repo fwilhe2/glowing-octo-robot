@@ -641,10 +641,10 @@ chmod 644 etc/passwd etc/group etc/hosts etc/profile etc/nsswitch.conf etc/ld.so
 
 if [ "$flavour" = erofs ]; then
     chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
-              etc/systemd/system/dbus.service.d
+              etc/systemd/system/dbus.service.d etc/systemd/system-preset
     chmod 644 etc/fstab etc/hostname etc/pam.d/* etc/tmpfiles.d/flfs-home.conf \
               etc/systemd/network/*.network \
-              etc/systemd/system/dbus.service.d/*.conf
+              etc/systemd/system/dbus.service.d/*.conf etc/systemd/system-preset/*.preset
     # Password hashes must not be world-readable. Only reachable for this flavour: the
     # subtractions above delete etc/shadow outright, a container having no login to
     # authenticate.
