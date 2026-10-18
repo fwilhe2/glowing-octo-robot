@@ -420,6 +420,17 @@ if [ -n "$setid" ]; then
     exit 1
 fi
 
+# Nor does any account have a password. Access is handed to each machine as a credential
+# (see image/files/etc/shadow), and a hash in a public image is a password everyone has.
+# `*` and `!…` are the only shapes that match nothing; sysusers writes `!*`.
+if [ -e etc/shadow ]; then
+    hashed=$(grep -v '^#' etc/shadow | awk -F: '$2 != "*" && $2 !~ /^!/ { print $1 }')
+    if [ -n "$hashed" ]; then
+        echo "error: accounts with a password in /etc/shadow: $hashed" >&2
+        exit 1
+    fi
+fi
+
 elf_list=$(mktemp)
 set +x
 while IFS= read -r -d '' f; do
