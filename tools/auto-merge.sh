@@ -82,14 +82,19 @@ at_night() {
 merged_any=
 git fetch --quiet origin main
 
+# Separated by \x1f, not tabs: a tab is whitespace to `read`, so an empty field — a pull
+# request with no labels, which is nearly all of them — collapsed into its neighbour and
+# shifted the URL into $labels. dispatch-ci.sh was then handed an empty URL, GitHub
+# refused the check run with a bare 422, and every rebased branch was left without CI.
 prs=$(gh pr list --state open --base main --author app/github-actions --limit 100 \
     --json number,headRefName,createdAt,labels,url,isCrossRepository \
     --jq 'sort_by(.createdAt)[]
           | select(.headRefName | startswith("update/")) | select(.isCrossRepository | not)
-          | [.number, .headRefName, (.createdAt | fromdateiso8601),
-             ([.labels[].name] | join(",")), .url] | @tsv')
+          | [.number, .headRefName, (.createdAt | fromdateiso8601 | tostring),
+             ([.labels[].name] | join(",")), .url] | join("\u001f")')
 
-while IFS=$'\t' read -r pr branch created labels url; do
+# On fd 3, so that nothing in the loop body (gh, git) can read the list from stdin.
+while IFS=$'\x1f' read -r -u 3 pr branch created labels url; do
     [ -n "$pr" ] || continue
     if ! at_night; then
         echo "outside ${NIGHT_START_UTC}:00–0${NIGHT_END_UTC}:00 UTC, stopping; the rest waits for tomorrow night"
@@ -143,7 +148,7 @@ while IFS=$'\t' read -r pr branch created labels url; do
             head=$(git rev-parse HEAD)
         fi
 
-        if ! ./tools/dispatch-ci.sh "$branch" "$url" >/dev/null; then
+        if ! ./tools/dispatch-ci.sh "$branch" "$url"; then
             echo "  CI failed after the rebase, needs a human"
             continue
         fi
@@ -175,7 +180,7 @@ while IFS=$'\t' read -r pr branch created labels url; do
         fi
         sleep 5
     done
-done <<< "$prs"
+done 3<<< "$prs"
 
 if [ -n "$merged_any" ]; then
     gh workflow run ci.yml --ref main
