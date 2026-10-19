@@ -7,18 +7,18 @@ name: Auto-merge updates
 # Nothing here may happen during European business hours. The updater runs at 21:00 UTC
 # and this during the night after, so a pull request opened one night is merged the night
 # after next, once it is MIN_AGE_HOURS (24) old — a full working day to look at it and
-# label it `hold`. tools/auto-merge.sh enforces the 22:00–03:00 UTC window itself.
+# label it `hold`. tools/auto-merge.sh enforces the 22:00–05:00 UTC window itself.
 #
 # One cron line is not enough, because GitHub starts scheduled runs late, and late by
 # hours around midnight UTC: the single 00:30 slot this used to have started at 04:57 and
-# 05:06, outside the window, so every night ended in "the rest waits for tomorrow night"
-# at seven in the morning in Germany. So it is tried once an hour across the window, off
+# 05:06, outside what was then a 22:00–03:00 window, so every night ended in "the rest
+# waits for tomorrow night" at seven in the morning in Germany. So it is tried once an hour across the window, off
 # the full hour where the queue is longest. A run with nothing to do takes seconds, the
 # concurrency group below keeps them from overlapping, and whichever starts inside the
 # window does the work; the ones after find nothing left.
 on:
   schedule:
-    - cron: "17 22,23,0,1,2 * * *"
+    - cron: "17 22,23,0,1,2,3,4 * * *"
   workflow_dispatch:
 
 permissions:

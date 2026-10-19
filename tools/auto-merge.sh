@@ -24,12 +24,13 @@
 #   - the rebase conflicts, or the rebuilt CI fails
 #
 # Scheduled runs only act at night in Europe: no pull request is started outside
-# 22:00–03:00 UTC (00:00–05:00 CEST, 23:00–04:00 CET). GitHub's cron can start a run an
+# 22:00–05:00 UTC (00:00–07:00 CEST, 23:00–06:00 CET). GitHub's cron can start a run an
 # hour or more late, so the schedule alone does not guarantee that — this check does, and
 # it is made before each pull request rather than once, because one rebuild can take an
-# hour. The cutoff leaves room for the last one and the CI on main after it to finish
-# before the working day. A run started by hand (workflow_dispatch, or locally) is
-# somebody choosing to act now, and is not held to the window.
+# hour. A pull request started just before the cutoff can still be building at eight in
+# the morning in Germany; that is the accepted cost of a window wide enough to survive a
+# late cron. A run started by hand (workflow_dispatch, or locally) is somebody choosing
+# to act now, and is not held to the window.
 #
 # Pushes made with GITHUB_TOKEN start no workflow, which applies to main as much as to a
 # branch: once anything was merged, ci.yml is dispatched on main, so publish-oci and the
@@ -44,7 +45,7 @@ if [ "${1:-}" = -n ]; then DRY_RUN=1; shift; fi
 
 MIN_AGE_HOURS=${MIN_AGE_HOURS:-24}
 NIGHT_START_UTC=22
-NIGHT_END_UTC=3
+NIGHT_END_UTC=5
 HOLD_LABEL=hold
 now=$(date +%s)
 
