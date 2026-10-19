@@ -130,6 +130,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/check-rootfs-deps.sh rootfs      # unresolved NEEDED entries
 ./test/check-symbol-versions.sh rootfs  # symbol versions no shipped library defines
 ./test/kernel-caps.sh rootfs            # kernel config vs what a container needs
+./test/kernel-config-diff.sh <old> <new> [src]  # what a kernel build turned on or off
 ./test/check-licenses.sh                # every package declares a DFSG-free license
 ./tools/check-updates.sh [pkg...] # what upstream has released since the pinned VERSION
 ./test/boot.sh output/rootfs.erofs rootfs/boot/bzImage   # headless boot smoke test (reads rootfs.cmdline beside the image)
@@ -954,6 +955,26 @@ still allowed to name symbols that do not exist on this architecture — that is
 x86-only lines behave on arm64 — it just may not name one that exists and stayed on.
 When adding to `vm.config`, expect to clear the symbol that *selects* the one you want
 gone, not only the one you want gone.
+
+**The kernel follows the latest stable release, not a longterm series, and two things
+make that safe.** `packages/kernel/env.sh` proposes only point releases — x.y.0 is still
+"mainline" to kernel.org, so a new series is taken at x.y.1. Then:
+
+- **A renamed symbol fails the build.** "Not on this architecture" and "not any more" used
+  to look the same to the check above, so a cleared symbol upstream renamed became a line
+  that did nothing, and its driver came back under the new name. Every symbol any
+  fragment names must now be defined by *some* Kconfig in the tree. The price: a fragment
+  cannot clear a symbol before the pinned kernel has it, so that line goes in with the
+  bump. 7.3 renaming `PROC_SYSCTL` to `SYSCTL` is the kind of change this is for.
+- **What the fragments do not name is reported, not gated.** A new `default y` driver
+  arrives with a bump and nothing fails — 7.3 brought a Moxa PCIe serial driver on both
+  arches and Qualcomm firmware drivers on arm64. The kernel job runs
+  `test/kernel-config-diff.sh` against main's last green kernel and posts the result on
+  the pull request; the 24 hours before auto-merge are the time to clear a line in
+  `vm.config` or label it `hold`. It filters out what Kconfig derives from the toolchain,
+  so a Debian snapshot bump does not produce noise. A report rather than a committed
+  lock file, on purpose: a lock either blocks every bump until somebody accepts it, or
+  goes stale the first time it does not — and an unattended kernel is the point.
 
 `tools/fetch-image.sh` / `tools/boot-qemu.sh` are for poking at CI artifacts locally. The `rootfs-dir`
 CI artifact is lossy (`upload-artifact` dereferences symlinks); never rebuild a bootable

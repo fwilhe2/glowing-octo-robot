@@ -151,6 +151,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: read # main's kernel artifact, for the config report
+      pull-requests: write # posting that report on the branch's pull request
     needs:
       - builder
       - sources
@@ -167,6 +169,50 @@ jobs:
         with:
           package: kernel
           arch: ${{ matrix.arch }}
+
+      # What this branch's kernel builds in that main's does not, and the reverse. The kernel
+      # follows the latest stable release rather than a pinned series, and the fragments in
+      # packages/kernel/build.sh only constrain the symbols they name — a new `default y`
+      # driver arrives with a bump and nothing fails. This makes it visible on the pull
+      # request instead, where the 24 hours before auto-merge are the time to clear it in
+      # vm.config or label the pull request `hold`. A report, so it never fails the job.
+      #
+      # Only when the kernel was compiled: the source tree it reads Kconfig from is there
+      # only then, and a cache hit is a kernel some earlier run already built. The baseline
+      # is the kernel artifact of main's last green run, the kernel that is shipping.
+      - name: Report the kernel config against main
+        if: github.ref != 'refs/heads/main'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          src=$(find packages/kernel -mindepth 1 -maxdepth 1 -type d -name 'linux-*' | head -1)
+          if [ -z "$src" ]; then
+            echo "kernel came from the cache, nothing new to report" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          main_run=$(gh run list --workflow ci.yml --branch main --status success --limit 1 \
+            --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$main_run" ] || ! gh run download "$main_run" -n "package-kernel-$ARCH" -D baseline; then
+            echo "no kernel artifact from a green run on main to compare against" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          tar xf baseline/kernel.tar -C baseline
+          ./test/kernel-config-diff.sh baseline/rootfs/boot/config rootfs/boot/config "$src" > config.diff
+          if [ ! -s config.diff ]; then
+            echo "kernel config ($ARCH): same as main" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          report=$(printf '%s\n' \
+            "Kernel config ($ARCH) against main's last green build (run $main_run): what this kernel builds in (+) and no longer does (-)." \
+            '' '```diff' "$(cat config.diff)" '```' '' \
+            'A driver a VM never needs goes in `vm.config` in `packages/kernel/build.sh`, pushed to this branch. Run: '"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+          echo "$report" >> "$GITHUB_STEP_SUMMARY"
+          pr=$(gh pr list --head "$GITHUB_REF_NAME" --state open --json url --jq '.[0].url // empty')
+          if [ -n "$pr" ]; then
+            gh pr comment "$pr" --body "$report"
+          fi
 
   build:
     runs-on: *runner

@@ -14,3 +14,8 @@ NO_SYSROOT=1
 # to a pin in 6.x. Release candidates are filed separately under v7.x/testing/.
 UPSTREAM_INDEX="https://cdn.kernel.org/pub/linux/kernel/"
 UPSTREAM_SUBDIR="v[0-9]+\.x/"
+# Only point releases: x.y.0 is filed next to them but is what kernel.org still calls
+# mainline, and the regressions a merge window brings in are what x.y.1 and x.y.2 fix.
+# Following stable means waiting for the first of those, not pinning to a longterm
+# series — 7.3 is skipped while 7.2.11 is current, and 7.3.1 is proposed when it exists.
+UPSTREAM_IGNORE='[0-9]+\.[0-9]+'

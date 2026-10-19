@@ -392,8 +392,28 @@ make vm.config
 # The two halves are not checked the same way. Everything container.config and
 # rootfs.config turn on has to be there, no exceptions. vm.config is allowed to name
 # symbols that do not exist on this architecture — the x86-only lines above are expected
-# to vanish on arm64 — so the bar there is only that nothing it clears came back on.
+# to vanish on arm64 — so the bar there is that nothing it clears came back on...
+#
+# ...and that every symbol any fragment names is still defined by *some* Kconfig file in
+# the tree, on any architecture. Without that, "not on this arch" and "not any more" look
+# the same: a cleared symbol upstream renamed is a line that does nothing, and the driver
+# it was clearing comes back under its new name with no check able to notice. This is the
+# one that keeps following the latest stable kernel safe — a release that renames a
+# symbol fails here, before the compile, instead of quietly changing the image. The cost
+# is that a fragment cannot clear a symbol before the kernel it is pinned to has it: a
+# line for a driver the next release adds goes in with the bump, not ahead of it.
 unapplied=""
+
+kconfig_symbols=$(find . -name 'Kconfig*' -not -path './Documentation/*' -print0 \
+    | xargs -0 sed -n -E 's/^[[:space:]]*(menu)?config[[:space:]]+([A-Z0-9_]+)[[:space:]]*$/\2/p' \
+    | sort -u)
+while read -r sym; do
+    if ! grep -qx "$sym" <<< "$kconfig_symbols"; then
+        unapplied="$unapplied  CONFIG_$sym  (no Kconfig in this kernel defines it — renamed or removed?)"$'\n'
+    fi
+done < <(sed -n -E 's/^# CONFIG_([A-Z0-9_]+) is not set$/\1/p; s/^CONFIG_([A-Z0-9_]+)=.*/\1/p' \
+             kernel/configs/container.config kernel/configs/rootfs.config \
+             kernel/configs/vm.config | sort -u)
 while read -r sym; do
     if ! grep -qx "$sym" .config; then
         unapplied="$unapplied  $sym  (asked for, not in .config)"$'\n'
