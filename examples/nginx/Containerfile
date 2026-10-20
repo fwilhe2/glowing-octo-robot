@@ -1,0 +1,138 @@
+# syntax=docker/dockerfile:1.7
+#
+# nginx on flfs: compile in Debian, ship on flfs, prove it runs before the image exists.
+#
+# The builder is Debian *stable* on purpose, not sid. A binary only runs on a glibc at
+# least as new as the one it was compiled against, and trixie is frozen at 2.41 for its
+# whole life while flfs only moves forward (2.44 today) — so the builder can never
+# overtake the runtime. The same holds for openssl and zlib, which flfs ships: trixie's
+# 3.5 / 1.3.1 against flfs's 3.5.9 / 1.3.2. Compile against the older headers, run
+# against the newer library by SONAME — the arrangement the repo itself uses for curl
+# and libssl.
+#
+# pcre2 is the other case. The disk image has it, but the container image subtracts it
+# along with podman and glib, so Debian's libpcre2-8.so.0 is bundled — it was compiled
+# against trixie's glibc too, so the same argument covers it.
+
+ARG FLFS=ghcr.io/fwilhe2/glowing-octo-robot/flfs:latest
+ARG DEBIAN=debian:trixie-slim
+# Pin both by digest in real use: FLFS=…/flfs:<commit>@sha256:…, DEBIAN=…@sha256:…
+
+FROM ${FLFS} AS runtime
+
+# ---------------------------------------------------------------------------------------
+FROM ${DEBIAN} AS build
+
+ARG NGINX_VERSION=1.30.6
+ARG NGINX_SHA256=3cf46f5ed7504d460125866b7bea99fb357f31d887e2e63b35503310e9b8b6c8
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+         build-essential ca-certificates curl \
+         libpcre2-dev zlib1g-dev libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN curl -fsSLo nginx.tar.gz "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" \
+    && echo "${NGINX_SHA256}  nginx.tar.gz" | sha256sum -c - \
+    && tar xzf nginx.tar.gz --strip-components=1
+
+# Paths are chosen for a container rather than a host: logs go to the container's
+# stdio, and everything nginx writes at runtime lives under one directory owned by the
+# unprivileged account the final stage runs as.
+RUN ./configure \
+        --prefix=/usr/share/nginx \
+        --sbin-path=/usr/bin/nginx \
+        --conf-path=/etc/nginx/nginx.conf \
+        --pid-path=/run/nginx/nginx.pid \
+        --lock-path=/run/nginx/nginx.lock \
+        --error-log-path=/dev/stderr \
+        --http-log-path=/dev/stdout \
+        --http-client-body-temp-path=/var/cache/nginx/client \
+        --http-proxy-temp-path=/var/cache/nginx/proxy \
+        --http-fastcgi-temp-path=/var/cache/nginx/fastcgi \
+        --without-http_uwsgi_module \
+        --without-http_scgi_module \
+        --with-http_ssl_module \
+        --with-http_v2_module \
+        --with-http_realip_module \
+        --with-http_stub_status_module \
+        --with-threads \
+        --with-cc-opt='-O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2' \
+        --with-ld-opt='-Wl,-z,relro,-z,now' \
+    && make \
+    && make install DESTDIR=/out \
+    && strip /out/usr/bin/nginx \
+    # nginx installs a copy of every config file as *.default; one copy is enough.
+    && rm -f /out/etc/nginx/*.default \
+    # nginx's install makes an empty /dev for its log paths; the runtime provides one.
+    && rmdir /out/dev
+
+# Libraries the runtime image lacks, copied from the builder. -L because the multiarch
+# name is a symlink to the versioned file.
+RUN install -d /out/usr/lib \
+    && cp -L "/usr/lib/$(gcc -print-multiarch)/libpcre2-8.so.0" /out/usr/lib/
+
+# Fail here, with a readable message, rather than at `docker run`: every library the
+# binary and the bundled libraries name must exist in flfs or in the bundle, and every
+# symbol version asked for must be one that copy defines. This is
+# test/check-rootfs-deps.sh and check-symbol-versions.sh in miniature, run against the
+# real runtime image's /usr/lib.
+COPY --from=runtime /usr/lib /flfs/usr/lib
+RUN set -e; status=0; \
+    for elf in /out/usr/bin/nginx /out/usr/lib/*.so*; do \
+        for lib in $(readelf -d "$elf" | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p'); do \
+            have=; for dir in /flfs/usr/lib /out/usr/lib; do \
+                [ -e "$dir/$lib" ] && { have=$dir/$lib; break; }; \
+            done; \
+            [ -n "$have" ] || { echo "${elf#/out}: no $lib in flfs or the bundle" >&2; status=1; continue; }; \
+            for ver in $(readelf -V "$elf" | awk -v l="$lib" \
+                           '/File:/ {f=($4==l)} f && /Name:/ {print $3}'); do \
+                readelf -V "$have" | grep -q "Name: $ver\$" \
+                    || { echo "${elf#/out}: ${have#/flfs} does not define $ver" >&2; status=1; }; \
+            done; \
+        done; \
+    done; \
+    exit $status
+
+# ---------------------------------------------------------------------------------------
+FROM runtime
+
+COPY --from=build /out/ /
+
+COPY <<'EOF' /etc/nginx/nginx.conf
+worker_processes auto;
+daemon off;
+
+events { worker_connections 1024; }
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    sendfile      on;
+
+    server {
+        listen 8080;
+        listen [::]:8080;
+        root   /usr/share/nginx/html;
+    }
+}
+EOF
+
+# uid 1000 is the image's `user` account, so no passwd edit and no root. Port 8080
+# because an unprivileged process cannot bind below 1024.
+RUN install -d -o user -g user /var/cache/nginx /run/nginx && ldconfig
+
+# Numeric, not `USER user`: flfs's /etc/passwd carries comment lines, which glibc skips
+# but buildah's own passwd parser (podman build) rejects as "unknown user".
+USER 1000:1000
+
+# The check that cannot lie: run the binary on flfs's own loader and libraries.
+# LD_BIND_NOW resolves every symbol at load, so an *unversioned* one missing from a
+# library (pcre2's are versioned, but not everything's is) fails here too instead of
+# on the first request that happens to call it. It runs as `user` because that is how
+# the container runs — as root, nginx would switch to `nobody`, which flfs has no
+# account for.
+RUN LD_BIND_NOW=1 nginx -V && nginx -t
+EXPOSE 8080
+ENTRYPOINT ["/usr/bin/nginx"]

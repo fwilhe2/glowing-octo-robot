@@ -108,6 +108,8 @@ tools/            local conveniences and maintenance, not part of a build — ex
                   lib.sh, the helpers build.sh, tools/ and test/ all source
 docs/             design notes for work not done yet — proposals, not descriptions —
                   except how-it-works.md, the mechanics and pitfalls of the system as it is
+examples/         images built FROM the published flfs image, each with its own README;
+                  templates for users, not part of a build or of CI
 downloads/        source tarballs (gitignored)
 rootfs/           shared, cumulative staging tree every package installs into (gitignored)
 output/           built images, fetched CI artifacts, test console logs (gitignored)

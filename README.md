@@ -45,6 +45,8 @@ test/             everything CI runs to verify a build
 tools/            local conveniences and maintenance, not part of a build
 docs/             design notes for work not done yet, plus how-it-works.md:
                   the mechanics and pitfalls of the system as it is
+examples/         images built FROM the published flfs image — templates, not
+                  part of a build (examples/nginx: compiling C software for it)
 downloads/        source tarballs (gitignored)
 rootfs/           shared staging tree every package installs into (gitignored)
 output/           built images, fetched CI artifacts, test console logs (gitignored)
@@ -339,6 +341,11 @@ That is also its limit: a container runs on the *host's* kernel, so this says no
 about `packages/kernel` and does not replace the boot tests. It is a check on the image
 we produce; [Containers](#containers) below is the unrelated question of the runtime the
 *disk* image ships.
+
+There is no package manager to add software to it with. To build an image on top that
+needs C software flfs does not package, compile it in Debian stable and copy the result
+in: [`examples/nginx`](examples/nginx/README.md) is a template that does that, and fails
+the build if the result would not run on flfs.
 
 ## What the image leaves out
 
