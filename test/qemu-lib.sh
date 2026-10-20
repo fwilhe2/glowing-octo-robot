@@ -93,11 +93,14 @@ qemu_setup() {
             echo "note: /dev/kvm not available, emulating (slow)"
             accel=(-cpu max)
         fi
-        # pit/pic off as in Firecracker, which emulates neither; the RTC and one UART are
-        # what it does have. arm64 keeps the virt board, whose device tree already has
-        # MMIO transports for the -device …-device forms qemu_argv uses.
+        # ACPI off, so the devices are announced on the command line as Firecracker does.
+        # The PIT is named rather than left to qemu's "auto": Firecracker gives an x86 guest
+        # KVM's in-kernel PIT and PIC, and without KVM — CI — a guest without a PIT has no
+        # timer interrupt and hangs at boot after "Unable to calibrate against PIT".
+        # arm64 keeps the virt board, whose device tree already has MMIO transports for the
+        # -device …-device forms qemu_argv uses.
         [ "$PROFILE" != microvm ] ||
-            machine=(-machine microvm,acpi=off,pit=off,pic=off,rtc=on,isa-serial=on)
+            machine=(-machine microvm,acpi=off,pit=on,rtc=on,isa-serial=on)
     fi
     [ "$PROFILE" != vz ] || CONSOLE=hvc0
 }
