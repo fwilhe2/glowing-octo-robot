@@ -279,6 +279,8 @@ Three things that are awkward or impossible today, as evidence the shape is righ
   rather than inside it, exactly as it already is for qemu, so no variant pays for it.
 - **`k8s-node` becomes a list of packages and a `/etc` overlay** rather than a fork of the
   image build, which is what issue #83 will need once it has an answer.
+  `docs/sysext.md` proposes going one step further: Kubernetes as a system extension over
+  the unchanged base, which is then a variant whose platform is `sysext`.
 
 ## The `lima` variant, and the four things it forces
 
