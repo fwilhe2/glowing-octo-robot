@@ -519,6 +519,10 @@ jobs:
       # has to get right is installing the package that ships that binary. qemu-system-
       # arm is Debian/Ubuntu's name for the package that provides qemu-system-aarch64,
       # not a typo.
+      #
+      # virtiofsd and socat are test/vmm.sh's host half of virtiofs and vsock, and vsock
+      # also needs the host's vhost_vsock module and a device the runner user can open.
+      # The test skips either part, with a note, where the host cannot provide it.
       - name: Install qemu
         run: |
           sudo apt-get update
@@ -527,6 +531,8 @@ jobs:
           else
             sudo apt-get install -y --no-install-recommends qemu-system-x86
           fi
+          sudo apt-get install -y --no-install-recommends virtiofsd socat
+          sudo modprobe vhost_vsock && sudo chmod 666 /dev/vhost-vsock || true
 
       - name: Boot the image
         run: ./test/boot.sh artifacts/rootfs.erofs rootfs/boot/bzImage
@@ -584,6 +590,13 @@ jobs:
 
       - name: Check a persistent /var
         run: ./test/persistent-var.sh artifacts/rootfs.erofs rootfs/boot/bzImage
+
+      # The shapes of machine the kernel is built for besides qemu's own, which every boot
+      # above uses. Firecracker's: no PCI, virtio over MMIO announced on the command line,
+      # and on amd64 the bzImage's own vmlinux booted through PVH. Virtualization.framework's:
+      # an hvc0 console with no UART behind it, a virtiofs mount, and ssh over vsock.
+      - name: Check Firecracker- and Virtualization.framework-shaped boots
+        run: ./test/vmm.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
       - name: Upload console log
         if: always()

@@ -16,6 +16,11 @@
 #   VAR_DISK a file to keep this VM's /var on, created if missing; without it /var is RAM
 #            and every boot starts empty. VAR_SIZE sizes a new one (default 4G). See
 #            qemu_var_disk in test/qemu-lib.sh. e.g. VAR_DISK=output/var.img
+#   QEMU_PROFILE  pc (default), microvm (Firecracker's devices; on amd64 KERNEL has to be
+#            an uncompressed vmlinux) or vz (Virtualization.framework's: hvc0, and
+#            VIRTIOFS_SOCKET/VSOCK_CID for virtiofs and vsock). See qemu_setup in
+#            test/qemu-lib.sh and test/vmm.sh. vz has no qemu monitor on the console, so
+#            Ctrl-a x does not exit it: `poweroff` in the guest, or kill qemu.
 #
 # The guest gets one virtio-net NIC on qemu's user-mode network (10.0.2.15/24, gateway
 # and DNS forwarder at 10.0.2.2/10.0.2.3), which systemd-networkd picks up over DHCP.

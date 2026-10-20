@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The qemu plumbing shared by the boot tests and tools/boot-qemu.sh.
 #
-# Sourced, never executed. Five scripts in test/ and one in tools/ all have to launch the
+# Sourced, never executed. The scripts in test/ and one in tools/ all have to launch the
 # same guest — same machine type, same console device, same accel flags, same kernel
 # command line — and four of them then have to drive a serial login. Written out per
 # script that was ~470 lines of identical text, and the failure mode of letting it drift
@@ -38,8 +38,27 @@ QEMU_DIED='Kernel panic|Attempted to kill init|Requesting system (poweroff|reboo
 # runner, so it never has to be told. Override with ARCH=amd64|arm64 to point at the other
 # qemu binary and machine type explicitly. Both uname's spelling (x86_64/aarch64) and this
 # repo's (amd64/arm64) are accepted.
+#
+# QEMU_PROFILE picks the shape of the machine, for the VMMs the kernel is built for
+# (packages/kernel/build.sh, guest.config). qemu is the only one CI can run, so the other
+# two are approximated by the devices they give a guest:
+#
+#   pc       qemu's own PCI machine, virtio-pci devices, a UART console. The default, and
+#            what every other test boots.
+#   microvm  Firecracker's shape: no PCI device at all, everything virtio over MMIO, a UART
+#            console. On amd64 that is qemu's microvm machine with ACPI off, booting an
+#            uncompressed vmlinux through PVH — which is how Firecracker boots one.
+#   vz       Virtualization.framework's shape: a virtio console (hvc0) and no UART,
+#            virtiofs when VIRTIOFS_SOCKET names a virtiofsd, vsock when VSOCK_CID is set.
+#
+# VAR_DISK is only wired into pc; the other two are about the devices, not the state.
 qemu_setup() {
     ARCH=$(normalize_arch "${ARCH:-}")
+    PROFILE="${QEMU_PROFILE:-pc}"
+    case "$PROFILE" in
+        pc|microvm|vz) ;;
+        *) echo "error: QEMU_PROFILE=$PROFILE (expected pc, microvm or vz)" >&2; exit 1 ;;
+    esac
 
     # amd64's "pc" machine needs no flag (the cpu does, below); arm64 has no implicit
     # machine type, so qemu-system-aarch64 refuses to start without one. ttyS0 is the 8250
@@ -74,7 +93,13 @@ qemu_setup() {
             echo "note: /dev/kvm not available, emulating (slow)"
             accel=(-cpu max)
         fi
+        # pit/pic off as in Firecracker, which emulates neither; the RTC and one UART are
+        # what it does have. arm64 keeps the virt board, whose device tree already has
+        # MMIO transports for the -device …-device forms qemu_argv uses.
+        [ "$PROFILE" != microvm ] ||
+            machine=(-machine microvm,acpi=off,pit=off,pic=off,rtc=on,isa-serial=on)
     fi
+    [ "$PROFILE" != vz ] || CONSOLE=hvc0
 }
 
 # $QEMU_HINT is appended to a missing-image message: tools/boot-qemu.sh boots what
@@ -167,18 +192,54 @@ EOF
 # (image/files/etc/fstab) unless VAR_DISK gives /var a disk (qemu_var_disk below). The
 # root= and dm-mod.* arguments come from the image's own rootfs.cmdline.
 qemu_argv() {
-    local root_args
+    local root_args devices=() display=(-nographic)
     root_args=$(cat "$(root_cmdline_file)")
     qemu_var_disk
+    case "$PROFILE" in
+        pc)
+            devices=(
+                -drive file="$ROOTFS",format=raw,if=virtio,readonly=on
+                "${QEMU_VAR_DRIVE[@]}"
+                -nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}"
+            ) ;;
+        microvm)
+            # Every device on the MMIO transport, which is all Firecracker has. On x86 the
+            # microvm machine with acpi=off describes them the way Firecracker does, as
+            # virtio_mmio.device= arguments qemu appends to the command line.
+            devices=(
+                -drive id=root,file="$ROOTFS",format=raw,if=none,readonly=on
+                -device virtio-blk-device,drive=root
+                -netdev "user,id=net0${QEMU_NIC_EXTRA:-}" -device virtio-net-device,netdev=net0
+                -device virtio-rng-device
+            ) ;;
+        vz)
+            # Virtualization.framework's devices on qemu's PCI machine: the console is a
+            # virtio console rather than a UART (hvc0, and no serial port at all), a host
+            # directory is virtiofs, and the host reaches the guest over vsock. virtiofs
+            # needs the guest's RAM shared with virtiofsd, hence the memfd backend.
+            display=(-display none -serial none -monitor none -vga none)
+            devices=(
+                -drive file="$ROOTFS",format=raw,if=virtio,readonly=on
+                -nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}"
+                -chardev stdio,id=con,signal=off -device virtio-serial-pci
+                -device virtconsole,chardev=con
+                -device virtio-rng-pci -device virtio-balloon-pci
+                -object "memory-backend-memfd,id=mem,size=${MEM}M,share=on" -numa node,memdev=mem
+            )
+            [ -z "${VIRTIOFS_SOCKET:-}" ] || devices+=(
+                -chardev "socket,id=vfs,path=$VIRTIOFS_SOCKET"
+                -device vhost-user-fs-pci,chardev=vfs,tag=share
+            )
+            [ -z "${VSOCK_CID:-}" ] || devices+=(-device "vhost-vsock-pci,guest-cid=$VSOCK_CID")
+            ;;
+    esac
     QEMU_ARGV=(
         "${accel[@]}" "${machine[@]}"
         -m "$MEM" -smp "$CPUS"
         -kernel "$KERNEL"
-        -drive file="$ROOTFS",format=raw,if=virtio,readonly=on
-        "${QEMU_VAR_DRIVE[@]}"
-        -nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}"
+        "${devices[@]}"
         -append "$root_args console=$CONSOLE init=$INIT systemd.set_credential=login.noauth:yes${QEMU_APPEND_EXTRA:-}${QEMU_VAR_APPEND:-}"
-        -nographic
+        "${display[@]}"
         -no-reboot
     )
 }
