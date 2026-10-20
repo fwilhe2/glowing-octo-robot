@@ -68,28 +68,27 @@ command line. arm64 needs an uncompressed `Image` here, not `Image.gz` *(verify)
 5. **Rosetta (optional).** Mount the rosetta virtiofs share and register binfmt with a
    `binfmt.d` entry given as a credential or a `mount-extra`.
 
-## Credentials: remove the fixed ones
+## Credentials: what is left
 
-The `root`/`root` and `user`/`user` passwords in `image/files/etc/shadow` are the single
-biggest objection to calling this secure. Plan:
+The fixed `root`/`root` and `user`/`user` passwords are gone. Both accounts are `*` in
+`image/files/etc/shadow` and the build fails on any hash. sshd is keys only
+(`PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `PermitRootLogin
+prohibit-password`), with the root key handed in per machine as the
+`ssh.authorized_keys.root` credential. The serial console logs in with no password
+through the `login.noauth` credential the qemu harness passes. What a Mac host still
+needs on top of that:
 
-- Ship both accounts **locked** (`!*`). There are no passwords in the image.
-- Access is by key only, handed in per machine as credentials (this mechanism exists
-  already):
-  - `ssh.authorized_keys.root`, plus a new `ssh.authorized_keys.user`, mirroring the
-    `Match User root` block.
-  - Optional console password via systemd's `passwd.hashed-password.root` /
-    `passwd.plaintext-password.root` credentials (sysusers/firstboot read them), for
-    debugging only.
-- sshd: `PasswordAuthentication no`, `KbdInteractiveAuthentication no`,
-  `PermitRootLogin prohibit-password`. The default login should be `user` (rootless),
-  with root reachable but not the default.
-- Tests: `qemu-lib.sh` already passes credentials, so `console_login` would take a
-  password credential that the harness generates per run. Make a CI check fail if
-  `shadow` contains anything other than `!`/`*` hashes.
-- Consider giving the user its real uid from the host (501 on macOS) with `--uid` at
-  machine creation, so file ownership through virtiofs looks right. The account would be
-  defined by a `userdb` credential rather than `/etc/passwd`. Phase 2.
+- **A key for `user`.** A `ssh.authorized_keys.user` credential, read through a
+  `Match User user` block the way root's is. The default login for a container host
+  should be `user` (rootless), with root reachable but not the default.
+- **Probably not a console password.** systemd's `passwd.hashed-password.<user>`
+  credentials looked like the way to set one per machine. But sysusers and firstboot only
+  read them when they create an account, and here both accounts exist before the image is
+  sealed. `login.noauth` already covers debugging, since whoever writes the kernel command
+  line owns the VM anyway.
+- **The host's uid for `user`** (501 on macOS), set with `--uid` at machine creation, so
+  file ownership through virtiofs looks right. The account would be defined by a
+  `userdb` credential rather than `/etc/passwd`. Phase 2.
 
 ## Hardening
 
@@ -207,8 +206,8 @@ Implementation notes:
 
 ## Order of work
 
-1. **Credentials**: locked accounts, key-only sshd, test harness passwords via
-   credential. This is small, and it is a prerequisite for using the word "secure".
+1. **Credentials**: the shipped passwords are gone and sshd is key only. What remains
+   is a key credential for `user` and, later, the host's uid (see above).
 2. **Kernel host features** (virtiofs, vsock, balloon, rng, hvc), plus the
    `kernel-caps.sh` list.
 3. **`tools/flfs`** with the qemu backend, `init/start/stop/ssh/connect`, tested on Linux
