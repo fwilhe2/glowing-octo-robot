@@ -68,6 +68,9 @@ boot_and_check_running() {
     qemu_preflight
     qemu_boot
     console_login
+    # Kernel messages go to the same console the answers are read from; past this point
+    # only a panic (KERN_EMERG) should get through.
+    console_send "dmesg -n 1"
     console_send "$CHECK"
     await "$STATE" "$((deadline - SECONDS))" || fail "systemd never reported a final state"
     local result
@@ -77,7 +80,8 @@ boot_and_check_running() {
 }
 
 # Which virtio drivers bound to a device: the proof a device was found, not just offered.
-bound() { ask DRIVERS 'for d in /sys/bus/virtio/devices/*/driver; do basename "$(readlink "$d")"; done | sort -u | tr "\n" " "'; }
+# The trailing echo ends the line, so the names are not on the line with ask's end marker.
+bound() { ask DRIVERS 'for d in /sys/bus/virtio/devices/*/driver; do basename "$(readlink "$d")"; done | sort -u | tr "\n" " "; echo'; }
 expect_driver() { # drivers name
     [[ " $1 " == *" $2 "* ]] || fail "no virtio device bound to $2 (bound: $1)"
 }
@@ -148,8 +152,11 @@ round_vz() {
     if [ -n "$VIRTIOFS_SOCKET" ]; then
         expect_driver "$drivers" virtiofs
         local got
+        # A line of the answer, not all of it: the kernel logs to the same console, and
+        # virtiofsd's reply to the unmount's FUSE_DESTROY draws a harmless "response too
+        # short" from it that can land in the middle.
         got=$(ask VIRTIOFS 'mount -t virtiofs share /mnt && cat /mnt/token; umount /mnt')
-        [ "$got" = "$token" ] || fail "read '$got' through virtiofs, the host wrote '$token'"
+        grep -qx "$token" <<<"$got" || fail "read '$got' through virtiofs, the host wrote '$token'"
         echo ">> vz: virtiofs mount reads what the host wrote"
     fi
     if [ -n "$VSOCK_CID" ]; then
