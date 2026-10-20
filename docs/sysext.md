@@ -77,20 +77,17 @@ What issue #83 listed, checked against the tree as it is now:
 | `NFT_CT`, `NFT_NAT`, `NFT_MASQ`, `NFT_FIB_INET` | done (netavark needed them) |
 | seccomp enforced (`libseccomp`), timesyncd, `/var` on a disk, no shipped passwords | done |
 | Go in the builder | done (`golang-go` in `builder/deps.txt`, for podman) |
-| `NFT_NUMGEN` | **missing**; kube-proxy's nftables mode load-balances with `numgen random` *(verify)* |
-| `NFT_REDIR`, `NF_TABLES_NETDEV` | **missing**; nftables-mode kube-proxy, per #83 |
-| `NF_CONNTRACK_NETLINK` | **missing**; kube-proxy flushes stale UDP conntrack entries over netlink |
-| `VXLAN` | **missing**; flannel and Calico's overlay modes, multi-node only |
+| `NFT_NUMGEN`, `NFT_REJECT`, `NF_CT_NETLINK` | done (`k8s.config`): kube-proxy's nftables mode |
+| `VXLAN`, `NFT_REDIR`, `NF_TABLES_NETDEV` | done (`k8s.config`): CNI overlays and nftables dataplanes |
 | per-instance hostname | **missing**; `image/files/etc/hostname` is `flfs` on every machine |
 | `SYSEXT_LEVEL` in os-release | **missing**; see below |
 
 kube-proxy should run in **nftables mode** (GA since 1.33 *(verify)*). The iptables mode
 wants a much longer list (`XT_MATCH_COMMENT`, `STATISTIC`, `RECENT`, `MULTIPORT` and so
-on) for the older mechanism. The symbols go in a `k8s.config` fragment of their own rather
-than in `container.config`, which describes what a *container* needs. The check after
-`make vm.config` has to cover it like the others. A fragment line whose dependencies are
-unmet is dropped in silence, and every silent kernel-config failure in this tree has
-happened that way.
+on) for the older mechanism. The symbols are in a `k8s.config` fragment of their own
+rather than in `container.config`, which describes what a *container* needs, and the
+check after `make vm.config` holds it like the others. Issue #83 named the conntrack one
+`NF_CONNTRACK_NETLINK`; the symbol is `NF_CT_NETLINK`, and that check is what said so.
 
 **The hostname** is the one base change that is about identity, not code. A cluster of
 nodes all named `flfs` is not a cluster. The VMM can pass `systemd.hostname=` on the

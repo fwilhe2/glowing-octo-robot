@@ -254,9 +254,13 @@ shows up here.
 
 The kernel is a package like any other (`packages/kernel/`), built with `defconfig` plus
 `kvm_guest.config`, a `container.config` fragment that adds what containers need (see
-[Containers](#containers)) and a `vm.config` fragment that takes away what a virtual
-machine does not have (see [What the image leaves out](#what-the-image-leaves-out)), and
-staged at `rootfs/boot/bzImage`, so a CI run produces an image that can boot on its own.
+[Containers](#containers)), a `k8s.config` for what a Kubernetes node needs on top, a
+`guest.config` for the virtual hardware of the VMMs it targets — qemu, Firecracker and
+Apple's Virtualization.framework — and a `vm.config` fragment that takes away what a
+virtual machine does not have (see [What the image leaves out](#what-the-image-leaves-out)),
+and staged at `rootfs/boot/bzImage`, so a CI run produces an image that can boot on its own.
+Firecracker on x86 wants the uncompressed kernel inside it, which `test/vmm.sh` shows how
+to extract, and boots it through PVH.
 The `boot` job does exactly that:
 
 ```sh

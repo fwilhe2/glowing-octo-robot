@@ -40,7 +40,10 @@ command line. arm64 needs an uncompressed `Image` here, not `Image.gz` *(verify)
 | `VIRTIO_CONSOLE` | hvc0 console under vfkit |
 | `BINFMT_MISC` | Rosetta (amd64 containers on arm64), and qemu-user if wanted |
 
-`test/kernel-caps.sh` should grow a "host" list for these.
+All of these are in the kernel now — `guest.config` and `container.config` in
+`packages/kernel/build.sh` — and `test/kernel-caps.sh` holds it to them. `test/vmm.sh`
+boots the image with Virtualization.framework's devices on qemu: an hvc0 console with no
+UART, a virtiofs mount, and ssh over vsock.
 
 ### Host integration (the real work)
 
@@ -146,8 +149,11 @@ first.
 
 ### Kernel
 
-The kernel is defconfig minus `vm.config` today. That gets the size down but is never
-auditable, especially on arm64. The proposal:
+The kernel is defconfig minus `vm.config` today, with what it is *for* written down as
+fragments of its own (`container.config`, `k8s.config`, `guest.config`). A second pass of
+subtractions took arm64 from 1826 built-in symbols to 1280 (amd64: 1257), most of it board
+support outside the `ARCH_*` gates; CLAUDE.md has why `VT` stays and why the base stays
+defconfig rather than `tinyconfig`. What follows is the original proposal:
 
 1. Short term: keep subtracting. Candidates are `VT`/`FRAMEBUFFER_CONSOLE`/`INPUT`
    (only with a serial or hvc console), `ACPI` on arm64 if the VMM gives a device tree

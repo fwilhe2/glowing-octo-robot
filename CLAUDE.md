@@ -102,7 +102,7 @@ builder/          how a package is compiled: the one builder image, deps.txt (it
 image/            how the staging tree becomes an image, disk or OCI: Containerfile,
                   build-rootfs.sh, and files/ — the /etc the image ships
 test/             everything CI runs to verify a build, plus known-missing-libs.txt
-                  and size-budget.txt; qemu-lib.sh is the boot harness the five qemu
+                  and size-budget.txt; qemu-lib.sh is the boot harness the qemu
                   tests and tools/boot-qemu.sh all source
 tools/            local conveniences and maintenance, not part of a build — except
                   lib.sh, the helpers build.sh, tools/ and test/ all source
@@ -144,6 +144,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/rootless.sh output/rootfs.erofs rootfs/boot/bzImage   # podman as `user`: ID maps, pasta
 ./test/persistent-var.sh output/rootfs.erofs rootfs/boot/bzImage  # two boots, one /var disk: state survives
 ./test/verity.sh output/rootfs.erofs rootfs/boot/bzImage   # a tampered copy of the image is refused
+./test/vmm.sh output/rootfs.erofs rootfs/boot/bzImage      # Firecracker- and Virtualization.framework-shaped boots
 ./test/reproducible.sh <pkg>...   # build twice from clean worktrees, compare to the byte (AGAINST_RUN=<id>: against CI's)
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./test/prebuilt.sh [build|oci|ssh] # host-compiled C, C++, Rust and Go binaries, run in the image
@@ -622,7 +623,7 @@ same RAM by another name. Persistent logs, like persistent anything, want a writ
 for `/var` that this image deliberately does not have yet.
 
 The kernel is a normal package (`packages/kernel/`, `defconfig` + `kvm_guest.config` +
-`container.config` + `vm.config`) staged at `rootfs/boot/bzImage`, so a CI run is self-contained. `test/boot.sh` runs `/bin/bash` as
+`container.config` + `rootfs.config` + `k8s.config` + `guest.config` + `vm.config`) staged at `rootfs/boot/bzImage`, so a CI run is self-contained. `test/boot.sh` runs `/bin/bash` as
 PID 1 by default, not systemd: it isolates "the kernel booted and the loader resolved a
 real binary" from everything systemd does on top. `test/systemd.sh`, `test/network.sh`,
 `test/ssh.sh` and `test/container.sh` boot systemd for real (they reach `multi-user.target` and a login
@@ -640,6 +641,15 @@ one. A test now sets its own `ROOTFS`/`KERNEL`/`INIT`/`LOG` and a `TEST_NAME`, t
 `qemu_setup`, `qemu_preflight`, `qemu_boot` and drives the console with `console_send`,
 `console_mark`, `await` and `console_login`. `DIAGNOSE`, when a test sets it, is what
 `fail` types at the guest before dumping the transcript.
+
+`QEMU_PROFILE` is the one deliberate exception to "the same guest": `microvm` gives the
+guest Firecracker's devices (no PCI, virtio over MMIO announced on the command line, an
+uncompressed vmlinux booted through PVH) and `vz` gives it Virtualization.framework's (an
+hvc0 console and no UART, virtiofs, vsock). qemu can be neither VMM, but the devices are
+what the kernel sees, and `test/vmm.sh` is the only thing that boots them — every other
+test runs on `pc`, where virtio-pci and a UART are enough, and would never notice
+`guest.config` losing a line. `tools/boot-qemu.sh` takes the same variable, so a failure
+there can be booted interactively in the same shape.
 
 All four that log in drive a real serial login, and `await` only matches console output
 that arrived *after* the point the caller passes in. That is load-bearing rather than tidy:
@@ -913,11 +923,39 @@ pinctrl, clocks, PHYs, regulators, MMC, SPI and RTC — and clearing all of them
 **1594 built-in symbols**, 43% of the arm64 kernel. Nothing is lost: qemu's `virt` board
 has no `ARCH_*` symbol of its own because it is described entirely by the device tree qemu
 passes in and driven by generic drivers (GICv3, the PL011 UART, the architected timer,
-PSCI, virtio). The arm64 kernel still has ~40% more built in than amd64's; the rest is
-crypto implementations and generic subsystems, and trimming further has a worse
-risk-to-reward ratio than what is already gone. **`SERIAL_8250` must never be added to
-`vm.config`** however tempting it looks on arm64 — the fragment is shared, and it is
-amd64's console.
+PSCI, virtio). That left arm64 with ~40% more built in than amd64, and most of the
+difference turned out to be board support that is *not* behind an `ARCH_*` gate, because
+the driver has a `COMPILE_TEST` or device-tree alternative: ASPEED, PolarFire, Xilinx, the
+Raspberry Pi's RP1, PMICs, SoC GPIO and pin controllers, plus Xen, a KVM *host*, VFIO,
+ChromeOS's EC, OP-TEE, NVMe/UFS/SAS, DSA switch chips and framebuffer consoles. Clearing
+those took arm64 from 1826 built-in symbols to 1280, against amd64's 1257 — the two are
+now the same kernel give or take what the architecture itself needs. **`SERIAL_8250`
+must never be added to `vm.config`** however tempting it looks on arm64 — the fragment is
+shared, it is amd64's console, and Firecracker's on both.
+
+**What the kernel is for is written down as two more fragments, not left to defconfig.**
+`k8s.config` is what a Kubernetes node needs on top of a container runtime — kube-proxy's
+nftables mode (`NFT_NUMGEN`, `NFT_REJECT`, `NF_CT_NETLINK`) and the overlays and
+dataplanes CNIs run as pods (`VXLAN`, `NFT_REDIR`, `NF_TABLES_NETDEV`) — because with
+modules off there is no loading it later. `guest.config` is the virtual hardware of the
+three VMMs the image targets, beyond the qemu PCI devices `kvm_guest.config` already
+covers: virtio over MMIO with command-line discovery and the PVH entry point for
+Firecracker, virtiofs, vsock and the virtio console for Virtualization.framework, and the
+balloon, virtio-rng and VMGenID all of them offer. VMGenID is the one that is about
+correctness rather than devices: it is how a guest restored twice from one snapshot learns
+to reseed its RNG instead of handing both copies the same key stream. Its arm64 and x86
+halves differ, so `build.sh` appends the architecture's own lines — the check holds every
+`=y` in it, and a line for the other architecture would fail it. virtiofs replaces 9p,
+which `kvm_guest.config` asks for and `vm.config` clears. `test/kernel-caps.sh` holds the
+result to both lists, and `test/vmm.sh` boots it in both shapes.
+
+Two subtractions that look obvious are deliberately not made. `VT` only has a prompt under
+`CONFIG_EXPERT`, and turning EXPERT on changes defaults across the tree to buy one line.
+And the base stays defconfig rather than `tinyconfig`: building up from nothing would
+make every symbol a booting machine needs ours to name and keep naming through every
+stable release, where subtracting from defconfig lets upstream keep the architecture's
+own requirements current and leaves us the hardware, which is the part that is ours to
+judge. `test/kernel-config-diff.sh` is what keeps that honest in the other direction.
 
 systemd's own BPF sandboxing is a separate axis from crun's. crun reaches the cgroup v2
 device controller through raw `bpf(2)` and needs no library; systemd loads its compiled-in
@@ -951,7 +989,7 @@ word. Every silent kernel-config failure this repo has had went that way — `BP
 asked for with no `BPF_EVENTS` under it, `DEBUG_INFO_BTF` asked for inside an `if
 DEBUG_INFO` that was off, `WIRELESS`/`FAT_FS`/`CPU_FREQ`/`I2C` cleared and immediately
 `select`ed back by `WLAN`/`VFAT_FS`/`SCHED_MC_PRIO`/`MEDIA_SUBDRV_AUTOSELECT`. The check
-after `make vm.config` fails the build instead: everything `container.config` turns on
+after `make vm.config` fails the build instead: everything the additive fragments turn on
 has to be `=y`, and nothing either fragment clears may come back `=y`. `vm.config` is
 still allowed to name symbols that do not exist on this architecture — that is how the
 x86-only lines behave on arm64 — it just may not name one that exists and stayed on.

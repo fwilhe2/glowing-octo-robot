@@ -93,6 +93,11 @@ CONFIG_DEBUG_INFO_BTF=y
 # Image layers.
 CONFIG_OVERLAY_FS=y
 
+# Containers built for another architecture: `podman run --platform` runs them through a
+# qemu-user interpreter the kernel hands their binaries to, and Rosetta on an Apple host
+# registers itself the same way. arm64's defconfig has it; x86_64_defconfig does not.
+CONFIG_BINFMT_MISC=y
+
 # Container networking: a veth pair per container into a bridge, tun for anything
 # doing userspace networking (slirp4netns and friends).
 CONFIG_VETH=y
@@ -142,6 +147,85 @@ CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y
 CONFIG_NETFILTER_XT_NAT=y
 EOF
 make container.config
+
+# What an orchestrator needs on top of a container runtime: kubelet and CRI-O on the
+# host, kube-proxy and a CNI as pods (docs/sysext.md). Its own fragment rather than more
+# of container.config, which is about what *a container* needs — this is what a node in
+# a cluster needs, and there is no module to load it from later: CONFIG_MODULES is off,
+# so a feature a pod expects of the host kernel is in the image or it is nowhere.
+#
+# kube-proxy runs in nftables mode — GA, and the older iptables mode wants a much longer
+# list of x_tables matches for the same job. What its rules use beyond the container
+# fragment:
+#   NFT_NUMGEN   `numgen random mod N vmap`, how a service picks an endpoint
+#   NFT_REJECT   `reject`, which a service with no endpoints answers with
+#   NF_CT_NETLINK  kube-proxy deletes stale UDP conntrack entries over netlink when
+#                an endpoint goes away; without it DNS to a restarted CoreDNS blackholes
+#                until the entry times out
+# and for the CNIs that run as pods:
+#   VXLAN        the overlay flannel and Calico default to on a multi-node cluster
+#   NFT_REDIR    `redirect`, used by service meshes and Calico's nftables dataplane
+#   NF_TABLES_NETDEV  the netdev family, ingress hooks on an interface rather than a
+#                table — Calico's nftables dataplane and Cilium's host firewall
+cat > kernel/configs/k8s.config <<'EOF'
+CONFIG_NFT_NUMGEN=y
+CONFIG_NFT_REJECT=y
+CONFIG_NF_CT_NETLINK=y
+CONFIG_VXLAN=y
+CONFIG_NFT_REDIR=y
+CONFIG_NF_TABLES_NETDEV=y
+EOF
+make k8s.config
+
+# The virtual hardware of the VMMs this image targets, beyond the qemu PCI devices
+# kvm_guest.config already turns on. What each one brings:
+#
+#   Firecracker (and cloud-hypervisor) has no PCI: every device is virtio over MMIO, and
+#     on x86 the devices are named on the kernel command line (`virtio_mmio.device=`),
+#     which VIRTIO_MMIO_CMDLINE_DEVICES is what parses. It boots an uncompressed vmlinux
+#     through the PVH entry point. Its console is an 8250 on both architectures — on
+#     arm64 a device-tree one, which SERIAL_OF_PLATFORM drives — and on x86 its "send
+#     Ctrl-Alt-Del" goes through an i8042 keyboard controller, which is why SERIO_I8042
+#     and ATKBD stay on.
+#   Apple's Virtualization.framework (and vfkit on top of it) gives the guest a virtio
+#     console (hvc0), virtiofs for shared directories and vsock for host↔guest control,
+#     and boots an uncompressed arm64 Image directly.
+#   All of them offer a balloon, an entropy source and, after a snapshot restore, a VM
+#     generation id: VMGENID is what tells the guest's RNG that it has been cloned and
+#     has to reseed, so two VMs restored from one snapshot do not share a key stream.
+#
+# virtiofs replaces 9p (which kvm_guest.config asks for, and vm.config clears) as the
+# way to share a host directory: it is what Virtualization.framework offers, qemu has it
+# through virtiofsd, and it is the one with page-cache sharing and real POSIX semantics.
+cat > kernel/configs/guest.config <<'EOF'
+CONFIG_VIRTIO_MMIO=y
+CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y
+CONFIG_VIRTIO_CONSOLE=y
+CONFIG_VIRTIO_BALLOON=y
+CONFIG_HW_RANDOM=y
+CONFIG_HW_RANDOM_VIRTIO=y
+CONFIG_VSOCKETS=y
+CONFIG_VIRTIO_VSOCKETS=y
+CONFIG_FUSE_FS=y
+CONFIG_VIRTIO_FS=y
+CONFIG_VIRT_DRIVERS=y
+CONFIG_VMGENID=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+EOF
+# The lines that only exist on one architecture, appended per architecture because the
+# check below holds every =y line of this fragment to being in .config. x86: Firecracker's
+# PVH entry and i8042 above. arm64: qemu virt's PL011 console, PL031 clock and PL061 GPIO
+# with gpio-keys on top (its power button is a GPIO line), the generic ECAM host bridge
+# that both qemu virt and Virtualization.framework expose, and Firecracker's 8250. The
+# defconfig has all of these already; naming them is what makes losing one an error.
+case "$(uname -m)" in
+    x86_64)  printf '%s\n' CONFIG_PVH=y CONFIG_SERIO_I8042=y CONFIG_KEYBOARD_ATKBD=y ;;
+    aarch64) printf '%s\n' CONFIG_SERIAL_OF_PLATFORM=y CONFIG_SERIAL_AMBA_PL011=y \
+                 CONFIG_SERIAL_AMBA_PL011_CONSOLE=y CONFIG_PCI_HOST_GENERIC=y \
+                 CONFIG_RTC_DRV_PL031=y CONFIG_GPIO_PL061=y CONFIG_KEYBOARD_GPIO=y ;;
+esac >> kernel/configs/guest.config
+make guest.config
 
 # The root filesystem. The image is EROFS — read-only by construction, compressed, and
 # what image/build-rootfs.sh lays the tree out as — so the kernel has to mount it with no
@@ -377,6 +461,310 @@ cat > kernel/configs/vm.config <<'EOF'
 
 # cgroup controllers for hardware this kernel no longer has drivers for.
 # CONFIG_CGROUP_RDMA is not set
+
+# Everything below this line is the same rule applied further: hardware no VMM this
+# image targets (qemu, Firecracker, Virtualization.framework) puts in a guest, and
+# kernel features with nothing in the image to use them. Most of it is arm64's, whose
+# defconfig is a board-support config and turns these on outside the ARCH_* gates above;
+# the lines that only exist on one architecture vanish on the other, as above.
+#
+# Other hypervisors' guest support, and being a hypervisor: KVM is the host side, which a
+# guest only needs for nested virtualization, and VFIO is passing a device through to a
+# guest of our own. Xen is a platform this image does not run on.
+# CONFIG_XEN is not set
+# CONFIG_KVM is not set
+# CONFIG_VFIO is not set
+
+# Firmware interfaces and management controllers of real machines: ChromeOS's embedded
+# controller and coreboot tables, TrustZone (OP-TEE), the TPM, IPMI BMCs, memory error
+# reporting, ARM's SoC power/clock firmware (SCMI, SCPI) and its mailboxes, UEFI capsule
+# updates, and coprocessors (remoteproc, rpmsg).
+# CONFIG_CHROME_PLATFORMS is not set
+# CONFIG_GOOGLE_FIRMWARE is not set
+# CONFIG_TEE is not set
+# CONFIG_TCG_TPM is not set
+# CONFIG_IPMI_HANDLER is not set
+# CONFIG_EDAC is not set
+# CONFIG_ACPI_APEI_EINJ is not set
+# CONFIG_ARM_SCMI_PROTOCOL is not set
+# CONFIG_ARM_SCPI_PROTOCOL is not set
+# CONFIG_MAILBOX is not set
+# CONFIG_EFI_CAPSULE_LOADER is not set
+# CONFIG_REMOTEPROC is not set
+# CONFIG_RPMSG is not set
+# CONFIG_RPMSG_VIRTIO is not set
+
+# SoC buses and the device classes that only exist on boards: industrial I/O sensors,
+# PWM, FPGAs, LEDs, batteries and chargers, thermal zones and fans, hardware monitoring,
+# the power-reset drivers (PSCI and ACPI already power a guest off), on-chip
+# interconnects, memory controllers, muxes, hardware spinlocks and timestamping, device
+# frequency scaling, infrared remotes, HDMI CEC, CoreSight tracing, and the staging tree.
+# POWER_SUPPLY and POWER_RESET themselves are selected by ARM64, so on arm64 it is the
+# drivers under them that go. THERMAL is selected by ACPI_PROCESSOR, which ACPI CPU
+# hotplug needs, so only ACPI's thermal zone goes (below), not the framework.
+# CONFIG_SLIMBUS is not set
+# CONFIG_SPMI is not set
+# CONFIG_GREYBUS is not set
+# CONFIG_MHI_BUS is not set
+# CONFIG_IIO is not set
+# CONFIG_PWM is not set
+# CONFIG_FPGA is not set
+# CONFIG_NEW_LEDS is not set
+# CONFIG_BATTERY_BQ27XXX is not set
+# CONFIG_POWER_RESET_GPIO is not set
+# CONFIG_POWER_RESET_GPIO_RESTART is not set
+# CONFIG_POWER_RESET_SYSCON is not set
+# CONFIG_POWER_RESET_SYSCON_POWEROFF is not set
+# CONFIG_POWER_RESET_XGENE is not set
+# CONFIG_HWMON is not set
+# CONFIG_INTERCONNECT is not set
+# CONFIG_MEMORY is not set
+# CONFIG_MULTIPLEXER is not set
+# CONFIG_MDIO_BUS_MUX_MULTIPLEXER is not set
+# CONFIG_EXTCON is not set
+# CONFIG_COUNTER is not set
+# CONFIG_HWSPINLOCK is not set
+# CONFIG_HTE is not set
+# CONFIG_PM_DEVFREQ is not set
+# CONFIG_RC_CORE is not set
+# CONFIG_MEDIA_CEC_SUPPORT is not set
+# CONFIG_CORESIGHT is not set
+# CONFIG_STM is not set
+# CONFIG_STAGING is not set
+
+# Radios other than the Wi-Fi and Bluetooth already cleared: NFC, cellular modems, GPS.
+# CONFIG_NFC is not set
+# CONFIG_WWAN is not set
+# CONFIG_GNSS is not set
+
+# PCI from the other side, and PCI host controllers of real SoCs. qemu's virt board and
+# Virtualization.framework both expose a generic ECAM host (PCI_HOST_GENERIC, kept in
+# guest.config); x86 has no host driver to choose. A guest is never a PCI endpoint, and
+# SR-IOV's PF side belongs to the host. The IOMMU a guest could be given is virtio-iommu,
+# not an SMMU.
+# CONFIG_PCI_ENDPOINT is not set
+# CONFIG_PCI_IOV is not set
+# CONFIG_PCIE_ALTERA is not set
+# CONFIG_PCIE_KIRIN is not set
+# CONFIG_PCIE_XILINX is not set
+# CONFIG_PCI_MESON is not set
+# CONFIG_PCI_XGENE is not set
+# CONFIG_PCI_HOST_THUNDER_ECAM is not set
+# CONFIG_PCI_HOST_THUNDER_PEM is not set
+# CONFIG_ARM_SMMU is not set
+# CONFIG_ARM_SMMU_V3 is not set
+
+# Storage controllers no target VMM emulates: the root and /var are virtio-blk, and
+# virtio-scsi stays for the VMMs that prefer it. NVMe, SAS HBAs and UFS do not.
+# CONFIG_BLK_DEV_NVME is not set
+# CONFIG_MEGARAID_SAS is not set
+# CONFIG_SCSI_MPT3SAS is not set
+# CONFIG_SCSI_UFSHCD is not set
+
+# Filesystems with nothing to mount, as above: the image is EROFS, /var is ext4, a host
+# directory is virtiofs (guest.config) rather than 9p, and nothing ships a btrfs or
+# squashfs. CUSE is character devices in userspace, which nothing here implements.
+# CONFIG_NET_9P is not set
+# CONFIG_9P_FS is not set
+# CONFIG_BTRFS_FS is not set
+# CONFIG_SQUASHFS is not set
+# CONFIG_CUSE is not set
+
+# Networking for switch silicon and time-sensitive networking: DSA drives the switch chip
+# on a router board, HSR/PRP is industrial ring redundancy, and CBS/ETF/TAPRIO/MQPRIO
+# schedule hardware transmit queues a virtio NIC does not have. Ethernet PHYs are the
+# chip under a NIC driver, and the NIC drivers went with CONFIG_ETHERNET — PHYLIB itself
+# is what the Synopsys PCS (an stmmac part) selects, and the generic PHY framework is what
+# the Cadence SerDes and MIPI D-PHYs and the CAN transceiver select. IPVS is kube-proxy's
+# third mode, behind the nftables one k8s.config is for.
+# CONFIG_NET_DSA is not set
+# CONFIG_HSR is not set
+# CONFIG_NET_SCH_CBS is not set
+# CONFIG_NET_SCH_ETF is not set
+# CONFIG_NET_SCH_TAPRIO is not set
+# CONFIG_NET_SCH_MQPRIO is not set
+# CONFIG_PCS_XPCS is not set
+# CONFIG_PHYLIB is not set
+# CONFIG_PHY_CADENCE_TORRENT is not set
+# CONFIG_PHY_CADENCE_DPHY is not set
+# CONFIG_PHY_CADENCE_DPHY_RX is not set
+# CONFIG_PHY_CADENCE_SIERRA is not set
+# CONFIG_PHY_CADENCE_SALVO is not set
+# CONFIG_PHY_CAN_TRANSCEIVER is not set
+# CONFIG_IP_VS is not set
+
+# No display, as with DRM above: no framebuffer and no boot logo. The virtual terminal
+# layer stays, though every console here is a serial line or hvc0: VT only has a prompt
+# under CONFIG_EXPERT, and turning EXPERT on changes defaults all over the tree to buy one
+# subtraction — exactly the kind of silent change this file exists to avoid.
+# CONFIG_FB is not set
+# CONFIG_LOGO is not set
+
+# Input devices of a desk: a PS/2 mouse, ARM's PS/2 controller, polled GPIO keys. The
+# i8042 keyboard on x86 and the GPIO power key on arm64 stay (guest.config).
+# CONFIG_INPUT_MOUSE is not set
+# CONFIG_SERIO_AMBAKMI is not set
+# CONFIG_KEYBOARD_GPIO_POLLED is not set
+
+# UARTs. Every console here is a plain 8250/16550 (x86 qemu, Firecracker), a PL011
+# (arm64 qemu) or hvc0, so the many-ports and RSA extensions, the PCI serial cards and
+# the vendor variants — Intel's LPSS and MID, Exar, Pericom, DesignWare, Freescale,
+# Xilinx — and the serdev bus for devices hanging off a UART have nothing to drive. To
+# repeat the warning above: SERIAL_8250 itself is amd64's console and must never be here.
+# CONFIG_SERIAL_8250_EXTENDED is not set
+# CONFIG_SERIAL_8250_PCI is not set
+# CONFIG_SERIAL_8250_EXAR is not set
+# CONFIG_SERIAL_8250_LPSS is not set
+# CONFIG_SERIAL_8250_MID is not set
+# CONFIG_SERIAL_8250_PERICOM is not set
+# CONFIG_SERIAL_8250_DW is not set
+# CONFIG_SERIAL_FSL_LPUART is not set
+# CONFIG_SERIAL_FSL_LINFLEXUART is not set
+# CONFIG_SERIAL_XILINX_PS_UART is not set
+# CONFIG_SERIAL_DEV_BUS is not set
+
+# Entropy sources of particular CPUs and SoCs. The guest's are virtio-rng (guest.config)
+# and, on arm64, the SMCCC TRNG KVM offers, which stays; RDRAND needs no driver.
+# CONFIG_HW_RANDOM_INTEL is not set
+# CONFIG_HW_RANDOM_AMD is not set
+# CONFIG_HW_RANDOM_VIA is not set
+# CONFIG_HW_RANDOM_ATMEL is not set
+# CONFIG_HW_RANDOM_CN10K is not set
+# CONFIG_HW_RANDOM_HISI_TRNG is not set
+
+# Performance counters of the physical machine. A guest gets the architected core PMU
+# (x86's, ARM's PMUv3) virtualized, and nothing else: uncore, power and C-state counters,
+# ARM's interconnect and memory-controller PMUs and its statistical profiling are host
+# hardware no VMM passes in.
+# CONFIG_PERF_EVENTS_INTEL_UNCORE is not set
+# CONFIG_PERF_EVENTS_INTEL_RAPL is not set
+# CONFIG_PERF_EVENTS_INTEL_CSTATE is not set
+# CONFIG_PERF_EVENTS_AMD_UNCORE is not set
+# CONFIG_ARM_CCI_PMU is not set
+# CONFIG_ARM_CCN is not set
+# CONFIG_ARM_CMN is not set
+# CONFIG_ARM_DMC620_PMU is not set
+# CONFIG_ARM_DSU_PMU is not set
+# CONFIG_ARM_SPE_PMU is not set
+# CONFIG_ARM_SMMU_V3_PMU is not set
+# CONFIG_ARM_CORESIGHT_PMU_ARCH_SYSTEM_PMU is not set
+# CONFIG_HISI_PMU is not set
+
+# A laptop's ACPI devices: no battery, no AC adapter, no fan, no thermal zone, no
+# backlight (ACPI_VIDEO, which selects THERMAL on its own account).
+# CONFIG_ACPI_VIDEO is not set
+# CONFIG_ACPI_AC is not set
+# CONFIG_ACPI_BATTERY is not set
+# CONFIG_ACPI_FAN is not set
+# CONFIG_ACPI_THERMAL is not set
+
+# Board support that arm64's defconfig turns on outside the ARCH_* gates, because the
+# driver has a COMPILE_TEST or OF alternative to the platform symbol: the ASPEED BMC
+# family, Microchip PolarFire, Xilinx, the Raspberry Pi 5's RP1 southbridge, ARM's
+# Versatile Express, TI's SoC glue, Freescale's power controller, Socionext's interrupt
+# bridge, the MediaTek and HiSilicon PMICs behind phone and board power rails, SoC GPIO
+# blocks, SoC reset and pin controllers, the backlight a panel would have, the power
+# sequencing of Qualcomm's Wi-Fi/Bluetooth combo, Qualcomm's IPC router, an accelerator
+# framework, a reserved-memory NVMEM, and the reboot-mode plumbing for a bootloader that
+# reads a magic value, and the generic PCI slot power control that pulls power
+# sequencing in. qemu's virt board needs the PL011, PL031, PL061 and GPIO keys
+# (guest.config), and nothing in this list.
+# CONFIG_ASPEED_LPC_CTRL is not set
+# CONFIG_ASPEED_LPC_SNOOP is not set
+# CONFIG_ASPEED_P2A_CTRL is not set
+# CONFIG_ASPEED_SOCINFO is not set
+# CONFIG_ASPEED_UART_ROUTING is not set
+# CONFIG_COMMON_CLK_ASPEED is not set
+# CONFIG_COMMON_CLK_RP1 is not set
+# CONFIG_COMMON_CLK_XGENE is not set
+# CONFIG_COMMON_CLK_XLNX_CLKWZRD is not set
+# CONFIG_MCHP_CLK_MPFS is not set
+# CONFIG_VEXPRESS_CONFIG is not set
+# CONFIG_ARM_TIMER_SP804 is not set
+# CONFIG_MISC_RP1 is not set
+# CONFIG_PINCTRL_RP1 is not set
+# CONFIG_PINCTRL_SINGLE is not set
+# CONFIG_POLARFIRE_SOC_IRQ_MUX is not set
+# CONFIG_POLARFIRE_SOC_SYSCONS is not set
+# CONFIG_RESET_POLARFIRE_SOC is not set
+# CONFIG_RESET_TI_SYSCON is not set
+# CONFIG_RESET_GPIO is not set
+# CONFIG_SOC_TI is not set
+# CONFIG_FSL_RCPM is not set
+# CONFIG_SOCIONEXT_SYNQUACER_PREITS is not set
+# CONFIG_XILINX_INTC is not set
+# CONFIG_XILINX_SDFEC is not set
+# CONFIG_XILINX_VCU is not set
+# CONFIG_MFD_HI6421_PMIC is not set
+# CONFIG_MFD_MT6397 is not set
+# CONFIG_RTC_DRV_ZYNQMP is not set
+# CONFIG_GPIO_ALTERA is not set
+# CONFIG_GPIO_CADENCE is not set
+# CONFIG_GPIO_DWAPB is not set
+# CONFIG_GPIO_MB86S7X is not set
+# CONFIG_GPIO_SYSCON is not set
+# CONFIG_GPIO_XGENE is not set
+# CONFIG_GPIO_XILINX is not set
+# CONFIG_GPIO_AGGREGATOR is not set
+# CONFIG_BACKLIGHT_CLASS_DEVICE is not set
+# CONFIG_PCI_PWRCTRL_GENERIC is not set
+# CONFIG_POWER_SEQUENCING is not set
+# CONFIG_QRTR is not set
+# CONFIG_UACCE is not set
+# CONFIG_PCI_ENDPOINT_TEST is not set
+# CONFIG_NVMEM_RMEM is not set
+# CONFIG_NVMEM_LAYOUT_SL28_VPD is not set
+# CONFIG_NVMEM_REBOOT_MODE is not set
+# CONFIG_SYSCON_REBOOT_MODE is not set
+# CONFIG_IOMMU_IO_PGTABLE_DART is not set
+# CONFIG_IOMMU_IO_PGTABLE_ARMV7S is not set
+# CONFIG_SCSI_SAS_LIBSAS is not set
+
+# And x86's equivalent: Intel's Management Engine interface, the WMI and laptop-platform
+# drivers, Microsoft Surface support, the package-temperature and thermal-control-circuit
+# drivers, which read MSRs a VMM does not virtualize, and ACPI's debug statements and
+# initrd table override.
+# CONFIG_INTEL_MEI is not set
+# CONFIG_X86_PLATFORM_DEVICES is not set
+# CONFIG_ACPI_WMI is not set
+# CONFIG_SURFACE_PLATFORMS is not set
+# CONFIG_X86_PKG_TEMP_THERMAL is not set
+# CONFIG_INTEL_TCC_COOLING is not set
+# CONFIG_ACPI_DEBUG is not set
+# CONFIG_ACPI_TABLE_UPGRADE is not set
+# CONFIG_PNP_DEBUG_MESSAGES is not set
+
+# Hardware features of block devices and switches no virtual one has: inline encryption
+# engines, T10 protection information, uploading firmware into a device, VLAN and
+# multicast registration with a physical switch (GVRP, MVRP), switchdev offload, the
+# per-stream gate of time-sensitive networking, and the macvtap device a host gives *its*
+# guests. MACVLAN and 802.1Q VLANs themselves stay: they are container networking.
+# CONFIG_BLK_INLINE_ENCRYPTION is not set
+# CONFIG_BLK_DEV_INTEGRITY is not set
+# CONFIG_FW_UPLOAD is not set
+# CONFIG_VLAN_8021Q_GVRP is not set
+# CONFIG_VLAN_8021Q_MVRP is not set
+# CONFIG_NET_SWITCHDEV is not set
+# CONFIG_NET_ACT_GATE is not set
+# CONFIG_MACVTAP is not set
+
+# Kernel features with nothing in the image to use them: loading another kernel or
+# writing a crash dump (no kexec-tools, no kdump), merging identical pages (a host
+# feature, for its guests), the contiguous allocator and DMA-buf heaps (for camera and
+# display pipelines), and /proc/config.gz (the config is shipped as /boot/config).
+# CONFIG_KEXEC_FILE is not set
+# CONFIG_CRASH_DUMP is not set
+# CONFIG_KSM is not set
+# CONFIG_CMA is not set
+# CONFIG_DMABUF_HEAPS is not set
+# CONFIG_IKCONFIG is not set
+# Nor for a RAM-backed oops log, which needs a memory region a bootloader reserves, or
+# one in EFI variables, the boot-time memory test, or the BSD-style ptys that predate
+# /dev/pts. pstore itself stays on arm64, where ACPI_APEI selects it for error records.
+# CONFIG_PSTORE_RAM is not set
+# CONFIG_EFI_VARS_PSTORE is not set
+# CONFIG_MEMTEST is not set
+# CONFIG_LEGACY_PTYS is not set
 EOF
 make vm.config
 
@@ -389,10 +777,11 @@ make vm.config
 # under it, WIRELESS cleared and immediately selected back by WLAN. A fragment that
 # quietly does nothing is worse than one that fails, so fail.
 #
-# The two halves are not checked the same way. Everything container.config and
-# rootfs.config turn on has to be there, no exceptions. vm.config is allowed to name
-# symbols that do not exist on this architecture — the x86-only lines above are expected
-# to vanish on arm64 — so the bar there is that nothing it clears came back on...
+# The two halves are not checked the same way. Everything container.config,
+# rootfs.config, k8s.config and guest.config turn on has to be there, no exceptions.
+# vm.config is allowed to name symbols that do not exist on this architecture — the
+# x86-only lines above are expected to vanish on arm64 — so the bar there is that nothing
+# it clears came back on...
 #
 # ...and that every symbol any fragment names is still defined by *some* Kconfig file in
 # the tree, on any architecture. Without that, "not on this arch" and "not any more" look
@@ -413,13 +802,15 @@ while read -r sym; do
     fi
 done < <(sed -n -E 's/^# CONFIG_([A-Z0-9_]+) is not set$/\1/p; s/^CONFIG_([A-Z0-9_]+)=.*/\1/p' \
              kernel/configs/container.config kernel/configs/rootfs.config \
+             kernel/configs/k8s.config kernel/configs/guest.config \
              kernel/configs/vm.config | sort -u)
 while read -r sym; do
     if ! grep -qx "$sym" .config; then
         unapplied="$unapplied  $sym  (asked for, not in .config)"$'\n'
     fi
 done < <(grep -hE '^CONFIG_[A-Z0-9_]+=y$' kernel/configs/container.config \
-             kernel/configs/rootfs.config)
+             kernel/configs/rootfs.config kernel/configs/k8s.config \
+             kernel/configs/guest.config)
 
 while read -r sym; do
     if grep -qx "$sym=y" .config; then
