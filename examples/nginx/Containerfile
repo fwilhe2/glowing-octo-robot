@@ -123,8 +123,8 @@ EOF
 # because an unprivileged process cannot bind below 1024.
 RUN install -d -o user -g user /var/cache/nginx /run/nginx && ldconfig
 
-# Numeric, not `USER user`: flfs's /etc/passwd carries comment lines, which glibc skips
-# but buildah's own passwd parser (podman build) rejects as "unknown user".
+# Numeric, so it works with any flfs image: earlier ones had comment lines in
+# /etc/passwd, which buildah's own passwd parser (podman build) rejects as "unknown user".
 USER 1000:1000
 
 # The check that cannot lie: run the binary on flfs's own loader and libraries.

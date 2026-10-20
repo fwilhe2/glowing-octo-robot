@@ -420,11 +420,39 @@ if [ -n "$setid" ]; then
     exit 1
 fi
 
+# The account files image/files ships are data only, and their reasons are kept here,
+# because a comment line in them is not harmless. glibc skips one, but not every reader
+# of /etc/passwd is glibc: buildah parses it itself to resolve a Containerfile's
+# `USER user`, gives up at the first line without seven fields, and reports *unknown
+# user* — so an image built FROM flfs could not name its own account.
+#
+#   passwd   `user` is uid 1000 deliberately: systemd allocates system users from below
+#            SYSTEM_UID_MAX, which is 999 when there is no /etc/login.defs to say
+#            otherwise, so nothing systemd-sysusers creates can collide with it. Its home
+#            is made above for the container and by tmpfiles.d/flfs-home.conf at boot.
+#   group    the user's own group, and only that. The groups worth joining —
+#            systemd-journal, wheel, adm — are `g <name> - -` in systemd's sysusers.d, so
+#            sysusers allocates their GIDs below, after this file is copied in; naming
+#            one here would mean guessing a number sysusers is entitled to choose.
+#   shadow   no account has a password, and `*` is not a hash any password can match.
+#            Logins are handed in per machine as systemd credentials on the kernel
+#            command line: ssh.authorized_keys.root for sshd, and login.noauth for the
+#            serial console, which util-linux's login reads and test/qemu-lib.sh passes.
+#            Whoever controls the VMM already owns the guest; nobody else has a password
+#            to try.
+for f in etc/passwd etc/group etc/shadow; do
+    [ -e "$f" ] || continue
+    if grep -nE '^[[:space:]]*(#|$)' "$f" >&2; then
+        echo "error: $f has comment or blank lines (above); keep the reasons in build-rootfs.sh" >&2
+        exit 1
+    fi
+done
+
 # Nor does any account have a password. Access is handed to each machine as a credential
-# (see image/files/etc/shadow), and a hash in a public image is a password everyone has.
+# (see above), and a hash in a public image is a password everyone has.
 # `*` and `!…` are the only shapes that match nothing; sysusers writes `!*`.
 if [ -e etc/shadow ]; then
-    hashed=$(grep -v '^#' etc/shadow | awk -F: '$2 != "*" && $2 !~ /^!/ { print $1 }')
+    hashed=$(awk -F: '$2 != "*" && $2 !~ /^!/ { print $1 }' etc/shadow)
     if [ -n "$hashed" ]; then
         echo "error: accounts with a password in /etc/shadow: $hashed" >&2
         exit 1

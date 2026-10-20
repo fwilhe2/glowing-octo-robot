@@ -113,9 +113,11 @@ listens on 8080 rather than 80. It listens on both IPv4 and IPv6, because rootle
 podman's port forwarding reaches the container over IPv6. With only `listen 8080;` the
 connection is reset from the host while working from inside the container.
 
-`USER` is given as `1000:1000` rather than `user`. flfs's `/etc/passwd` contains comment
-lines, which glibc skips but buildah's own passwd parser (what `podman build` uses) rejects,
-so `USER user` fails with *unknown user*.
+`USER` is given as `1000:1000` rather than `user`, so the template works with any flfs
+image. Images published before the account files were made comment-free have comment
+lines in `/etc/passwd`, which glibc skips but buildah's own passwd parser (what
+`podman build` uses) rejects, so `USER user` fails there with *unknown user*. On a current
+image either form works.
 
 ## Adapting it
 
