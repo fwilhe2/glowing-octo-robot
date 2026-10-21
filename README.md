@@ -275,6 +275,23 @@ apart from anything systemd does on top; the tests below are the ones that boot 
 for real. `./tools/boot-qemu.sh` is still the way to poke at an image interactively, and
 `./tools/ssh.sh` logs into the guest it started without a password — see [SSH](#ssh).
 
+The same image, unchanged, boots on the two other VMMs the kernel is built for, each with
+its own launcher and the same `./tools/ssh.sh` afterwards:
+
+```sh
+./tools/boot-firecracker.sh   # Linux + KVM; FIRECRACKER= names the binary
+./tools/boot-vz.sh            # macOS on Apple silicon, through vfkit (brew install vfkit)
+```
+
+Neither has a user-mode network to forward ssh through, so both reach the guest's sshd
+over vsock instead, which systemd's ssh generator sets up on its own when the machine has a
+vsock device. Firecracker on amd64 boots an uncompressed vmlinux through PVH, so the
+script extracts it from the bzImage each time; its network is opt-in (`TAP=`), since a tap
+device needs root, and the script's header has the host side. Virtualization.framework
+gets a NAT network with DHCP, and `SHARE=<dir>` a virtiofs mount. The Firecracker script
+has booted on Firecracker 1.17; the vfkit one has not been run on a Mac, and
+`test/vmm.sh` is what CI checks instead — the same devices on qemu.
+
 ```sh
 ./test/systemd.sh output/rootfs.erofs rootfs/boot/bzImage
 ```

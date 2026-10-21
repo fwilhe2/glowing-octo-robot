@@ -95,3 +95,17 @@ mib() {
     local tenths=$(( ($1 * 10 + 524288) / 1048576 ))
     printf '%d.%d' $(( tenths / 10 )) $(( tenths % 10 ))
 }
+
+# extract_vmlinux <bzImage> <out> — the uncompressed kernel inside an x86 bzImage, which is
+# what Firecracker loads there (through its PVH entry point; it does not take a bzImage).
+# The payload is the first gzip stream after the setup code — packages/kernel/build.sh
+# leaves the compression at defconfig's gzip — and gzip stops at the end of it, ignoring
+# the trailer the bzImage carries after. arm64's Image is already uncompressed and needs
+# none of this. Used by tools/boot-firecracker.sh and test/vmm.sh.
+extract_vmlinux() {
+    local off
+    off=$(grep -abo $'\x1f\x8b\x08' "$1" | head -1 | cut -d: -f1)
+    [ -n "$off" ] || { echo "error: no gzip payload in $1" >&2; return 1; }
+    tail -c "+$((off + 1))" "$1" | gzip -dc 2>/dev/null > "$2" || true
+    [ "$(head -c 4 "$2")" = $'\x7fELF' ] || { echo "error: $1 did not unpack to an ELF" >&2; return 1; }
+}

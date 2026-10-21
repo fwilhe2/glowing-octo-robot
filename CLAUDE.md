@@ -153,7 +153,9 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
 ./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
-./tools/ssh.sh [cmd...]           # passwordless root ssh into the guest boot-qemu.sh started
+./tools/boot-firecracker.sh       # the same, in Firecracker (Linux + KVM; ssh over vsock)
+./tools/boot-vz.sh                # the same, in Virtualization.framework via vfkit (macOS)
+./tools/ssh.sh [cmd...]           # passwordless root ssh into the guest any of those started
 ./tools/clean.sh [-n] [--downloads|--images|--all]  # delete build state, tarballs, stale images
 ```
 
@@ -649,7 +651,12 @@ hvc0 console and no UART, virtiofs, vsock). qemu can be neither VMM, but the dev
 what the kernel sees, and `test/vmm.sh` is the only thing that boots them — every other
 test runs on `pc`, where virtio-pci and a UART are enough, and would never notice
 `guest.config` losing a line. `tools/boot-qemu.sh` takes the same variable, so a failure
-there can be booted interactively in the same shape.
+there can be booted interactively in the same shape. `tools/boot-firecracker.sh` and
+`tools/boot-vz.sh` launch the real VMMs and source `qemu-lib.sh` too, for the image
+defaults, the `/var` disk and the ssh key — with `SSH_PROXY` swapping the port forward for
+a vsock connection, since neither VMM has a user-mode network. `boot-vz.sh` runs on macOS,
+so what it uses from `qemu-lib.sh` and `tools/lib.sh` has to stay within bash 3.2 and a
+BSD userland: no `base64 -w`, no `truncate`, no `${x,,}`.
 
 All four that log in drive a real serial login, and `await` only matches console output
 that arrived *after* the point the caller passes in. That is load-bearing rather than tidy:

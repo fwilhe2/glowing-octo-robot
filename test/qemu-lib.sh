@@ -105,6 +105,23 @@ qemu_setup() {
     [ "$PROFILE" != vz ] || CONSOLE=hvc0
 }
 
+# Where tools/fetch-image.sh put the image, for the scripts that boot it interactively —
+# tools/boot-qemu.sh, boot-firecracker.sh and boot-vz.sh — and the rest of their defaults.
+# fetch-image.sh only appends -$ARCH to its output directory when ARCH is overridden away
+# from the host's own, so a plain ./tools/fetch-image.sh followed by a plain boot script
+# still finds output/boot-image with no suffix on either side.
+fetched_image_defaults() {
+    if [ "$ARCH" = "$(normalize_arch)" ]; then
+        OUT="${OUT:-output/boot-image}"
+    else
+        OUT="${OUT:-output/boot-image-$ARCH}"
+    fi
+    KERNEL="${KERNEL:-$OUT/bzImage}"
+    ROOTFS="${ROOTFS:-$OUT/rootfs.erofs}"
+    INIT="${INIT:-/usr/lib/systemd/systemd}"
+    QEMU_HINT="(run ./tools/fetch-image.sh)"
+}
+
 # $QEMU_HINT is appended to a missing-image message: tools/boot-qemu.sh boots what
 # tools/fetch-image.sh downloaded, and naming the command that produces the file is the
 # whole difference between a useful error and a true one.
@@ -149,10 +166,19 @@ root_cmdline_file() {
 # The forward binds 127.0.0.1 only. SSH_PORT picks the port; by default it is the first
 # from 2222 that nothing on this host is listening on, which is racy in theory and lets
 # two guests run side by side in practice.
+#
+# SSH_PROXY replaces the forward with a ProxyCommand, for VMMs that have no user-mode
+# network to forward through but do have vsock: tools/boot-firecracker.sh and
+# tools/boot-vz.sh. sshd in the guest listens on vsock port 22 on its own — systemd's
+# ssh generator sets that up whenever the machine has a vsock device — so the command
+# only has to get ssh's bytes onto that port. Everything else here is the same.
+#
+# Sourced by tools/boot-vz.sh on macOS too, so this function and the two after it stay
+# within what bash 3.2 and a BSD userland have: no base64 -w, no truncate.
 qemu_ssh_setup() {
     command -v ssh-keygen >/dev/null || { echo "error: ssh-keygen not found (install an openssh client)" >&2; exit 1; }
     SSH_DIR="${SSH_DIR:-output/ssh}"
-    if [ -z "${SSH_PORT:-}" ]; then
+    if [ -z "${SSH_PORT:-}" ] && [ -z "${SSH_PROXY:-}" ]; then
         SSH_PORT=2222
         while (exec 9<>"/dev/tcp/127.0.0.1/$SSH_PORT") 2>/dev/null; do
             SSH_PORT=$((SSH_PORT + 1))
@@ -171,10 +197,12 @@ qemu_ssh_setup() {
     # other keys from using up MaxAuthTries before this one is offered, and BatchMode
     # turns "the key was refused" into an error rather than a password prompt root could
     # never pass (PermitRootLogin prohibit-password).
+    local reach="    ProxyCommand ${SSH_PROXY:-}"
+    [ -n "${SSH_PROXY:-}" ] || reach="    HostName 127.0.0.1
+    Port $SSH_PORT"
     cat > "$SSH_DIR/config" <<EOF
 Host flfs
-    HostName 127.0.0.1
-    Port $SSH_PORT
+$reach
     User root
     IdentityFile $(realpath "$SSH_DIR/id_ed25519")
     IdentitiesOnly yes
@@ -184,8 +212,8 @@ Host flfs
     LogLevel ERROR
 EOF
 
-    QEMU_NIC_EXTRA=",hostfwd=tcp:127.0.0.1:$SSH_PORT-:22"
-    QEMU_APPEND_EXTRA=" systemd.set_credential_binary=ssh.authorized_keys.root:$(base64 -w0 < "$SSH_DIR/id_ed25519.pub")"
+    [ -n "${SSH_PROXY:-}" ] || QEMU_NIC_EXTRA=",hostfwd=tcp:127.0.0.1:$SSH_PORT-:22"
+    QEMU_APPEND_EXTRA=" systemd.set_credential_binary=ssh.authorized_keys.root:$(base64 < "$SSH_DIR/id_ed25519.pub" | tr -d '\n')"
     QEMU_SSH_DIR="$SSH_DIR"
 }
 
@@ -266,7 +294,12 @@ qemu_var_disk() {
     [ -n "${VAR_DISK:-}" ] || return 0
     if [ ! -e "$VAR_DISK" ]; then
         mkdir -p "$(dirname "$VAR_DISK")"
-        truncate -s "${VAR_SIZE:-4G}" "$VAR_DISK"
+        # A sparse file either way; macOS has mkfile rather than truncate.
+        if command -v truncate >/dev/null; then
+            truncate -s "${VAR_SIZE:-4G}" "$VAR_DISK"
+        else
+            mkfile -n "$(echo "${VAR_SIZE:-4G}" | tr '[:upper:]' '[:lower:]')" "$VAR_DISK"
+        fi
     fi
     if [ ! -s "$VAR_DISK.machine-id" ]; then
         od -An -tx1 -N16 /dev/urandom | tr -d ' \n' > "$VAR_DISK.machine-id"
