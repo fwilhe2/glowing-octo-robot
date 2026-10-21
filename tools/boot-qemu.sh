@@ -56,19 +56,7 @@ source test/qemu-lib.sh
 
 qemu_setup
 
-# fetch-image.sh only appends -$ARCH to its output directory when ARCH is overridden
-# away from the host's own, so a plain ./tools/fetch-image.sh followed by a plain
-# ./tools/boot-qemu.sh still finds output/boot-image with no suffix on either side.
-host_arch=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
-if [ "$ARCH" = "$host_arch" ]; then
-    OUT="${OUT:-output/boot-image}"
-else
-    OUT="${OUT:-output/boot-image-$ARCH}"
-fi
-KERNEL="${KERNEL:-$OUT/bzImage}"
-ROOTFS="${ROOTFS:-$OUT/rootfs.erofs}"
-INIT="${INIT:-/usr/lib/systemd/systemd}"
-QEMU_HINT="(run ./tools/fetch-image.sh)"
+fetched_image_defaults
 
 qemu_preflight
 if [ "${SSH:-1}" = 1 ]; then

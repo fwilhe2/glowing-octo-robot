@@ -42,17 +42,6 @@ DIAGNOSE="systemctl --failed --no-pager --plain; journalctl -p err -b --no-pager
 STATE="VMM-STATE:"
 CHECK="echo VMM'-STATE':\$(systemctl is-system-running --wait)"
 
-# The uncompressed kernel inside a bzImage: the payload is the first gzip stream after
-# the setup code (packages/kernel/build.sh leaves the compression at defconfig's gzip),
-# and gzip stops at the end of it, ignoring the trailer the bzImage carries after.
-extract_vmlinux() { # bzImage out
-    local off
-    off=$(grep -abo $'\x1f\x8b\x08' "$1" | head -1 | cut -d: -f1)
-    [ -n "$off" ] || { echo "error: no gzip payload in $1" >&2; return 1; }
-    tail -c "+$((off + 1))" "$1" | gzip -dc 2>/dev/null > "$2" || true
-    [ "$(head -c 4 "$2")" = $'\x7fELF' ] || { echo "error: $1 did not unpack to an ELF" >&2; return 1; }
-}
-
 # One shell command, one marked answer. The marker is assembled by the guest's shell, so
 # the echo of what was typed cannot satisfy the wait.
 ask() { # name command
