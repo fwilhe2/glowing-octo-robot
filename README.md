@@ -506,6 +506,7 @@ written into the image:
 ./tools/boot-qemu.sh            # terminal one: the serial console
 ./tools/ssh.sh                  # terminal two: a root shell over ssh
 ./tools/ssh.sh uname -a         # or one command
+./tools/ssh.sh --user           # or as `user` — a real login, which rootless podman needs
 scp -F output/ssh/config file flfs:/tmp/
 ```
 

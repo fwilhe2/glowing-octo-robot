@@ -52,14 +52,16 @@ trap 'rm -rf "$work"; [ -z "${QEMU_SSH_DIR:-}" ] || rm -rf "$QEMU_SSH_DIR"' EXIT
 append="$(cat "$(root_cmdline_file)") console=hvc0 init=$INIT"
 append="$append systemd.set_credential=login.noauth:yes"
 
-# vsock's "listen" mode: vfkit listens on the Unix socket and forwards each connection to
-# the guest's port, host to guest (verify: vfkit's default, connect, is guest to host).
+# vsock's "connect" mode: the host connects to a port the guest listens on, through the
+# Unix socket vfkit makes at socketURL. Not "listen", which is vfkit's default and the
+# other direction — guest to a socket the host listens on, as podman machine's ignition
+# server does — and with which nothing on the host end ever answers ssh.
 vsock=()
 if [ "${SSH:-1}" = 1 ]; then
     SSH_PROXY="nc -U $work/ssh.sock"
     qemu_ssh_setup
     append="$append$QEMU_APPEND_EXTRA"
-    vsock=(--device "virtio-vsock,port=22,socketURL=$work/ssh.sock,listen")
+    vsock=(--device "virtio-vsock,port=22,socketURL=$work/ssh.sock,connect")
     echo ">> ssh: ./tools/ssh.sh  (over vsock, key in $SSH_DIR, gone when the VM exits)"
 fi
 
