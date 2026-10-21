@@ -504,9 +504,9 @@ written into the image:
 
 ```sh
 ./tools/boot-qemu.sh            # terminal one: the serial console
-./tools/ssh.sh                  # terminal two: a root shell over ssh
+./tools/ssh.sh                  # terminal two: a shell as `user` over ssh
 ./tools/ssh.sh uname -a         # or one command
-./tools/ssh.sh --user           # or as `user` — a real login, which rootless podman needs
+./tools/ssh.sh --root           # or as root
 scp -F output/ssh/config file flfs:/tmp/
 ```
 
@@ -559,8 +559,10 @@ helpers, `sftp-server`, `sshd_config`, `moduli` and `/usr/share/empty.sshd` are 
 is the check, in the `boot` job, and it runs three rounds: the daemon is up and
 listening (systemctl and bash's `/dev/tcp`), the guest can log into itself with a key and
 logind registers the session (`$XDG_SESSION_ID`), and the runner can log in through
-`tools/ssh.sh` with the boot's ephemeral key. The last one runs after the second has
-replaced `/root/.ssh/authorized_keys`, so it can only pass through the credential.
+`tools/ssh.sh --root` with the boot's ephemeral key. The last one runs after the second has
+replaced `/root/.ssh/authorized_keys`, so it can only pass through the credential. A
+plain `tools/ssh.sh` then has to land as `user` with `/run/user/1000` as its runtime
+directory — its own session, which is what rootless podman needs.
 
 ## TLS and the trust store
 

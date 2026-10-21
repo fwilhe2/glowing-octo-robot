@@ -29,8 +29,9 @@
 #
 # Log in over ssh, without a password, from another terminal:
 #
-#     ./tools/ssh.sh                  # a root shell
+#     ./tools/ssh.sh                  # a shell as `user`
 #     ./tools/ssh.sh systemctl status # or a command
+#     ./tools/ssh.sh --root           # a root shell
 #     scp -F output/ssh/config file flfs:/tmp/
 #
 # That works because every boot gets a fresh ed25519 key pair, generated here into
@@ -61,7 +62,7 @@ fetched_image_defaults
 qemu_preflight
 if [ "${SSH:-1}" = 1 ]; then
     qemu_ssh_setup
-    echo ">> ssh: ./tools/ssh.sh  (root@127.0.0.1:$SSH_PORT, key in $SSH_DIR, gone when qemu exits)"
+    echo ">> ssh: ./tools/ssh.sh  (127.0.0.1:$SSH_PORT, key in $SSH_DIR, gone when qemu exits)"
 fi
 qemu_argv
 

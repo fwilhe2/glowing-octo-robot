@@ -37,7 +37,9 @@
 # guest's own key, so whatever systemd's provision.conf copied there at boot is gone, and
 # a login now can only have been authorized by the credential where PID 1 put it, in
 # /run/credentials/@system. Which is the path every later boot of the same disk depends
-# on. It needs an ssh client on the host, which every CI runner image has.
+# on. It needs an ssh client on the host, which every CI runner image has. That round
+# passes --root; a last login with tools/ssh.sh's default then has to arrive as `user`
+# with /run/user/1000, its own session.
 #
 # A fourth, only when PREBUILT names a directory of binaries test/prebuilt.sh compiled:
 # copy them in over that same login and run them. It rides on this test because this is
@@ -143,7 +145,7 @@ echo ">> logging in from the host, through tools/ssh.sh and the forward on port 
 # Round three. `id -un` and whether there is a session id, in one answer, so a single
 # connection proves both. No marker trick needed: this is ssh's stdout, not a console that
 # echoes what was typed, and the comparison is exact.
-until out=$(SSH_DIR="$SSH_DIR" tools/ssh.sh -o ConnectTimeout=10 \
+until out=$(SSH_DIR="$SSH_DIR" tools/ssh.sh --root -o ConnectTimeout=10 \
                 'echo "$(id -un) ${XDG_SESSION_ID:+session}"' 2>&1) \
         && [ "$out" = "root session" ]; do
     [ "$SECONDS" -lt "$deadline" ] || \
@@ -154,6 +156,16 @@ until out=$(SSH_DIR="$SSH_DIR" tools/ssh.sh -o ConnectTimeout=10 \
 done
 
 echo ">> ssh from the host OK: the ephemeral key was accepted through the boot credential"
+
+# And tools/ssh.sh's default, `user`, through the copy flfs-home.conf made of the same
+# credential. The runtime directory is the point: it is what rootless podman needs and
+# what `su user` from a root session does not give it, so the answer has to name
+# /run/user/1000, not merely the account.
+out=$(SSH_DIR="$SSH_DIR" tools/ssh.sh -o ConnectTimeout=10 \
+          'echo "$(id -un) ${XDG_RUNTIME_DIR:-none}"' 2>&1) || true
+[ "$out" = "user /run/user/1000" ] || \
+    fail "tools/ssh.sh did not log in as user with its own session (answer: ${out:-nothing})"
+echo ">> ssh as user OK: its own session, with /run/user/1000"
 
 if [ -n "${PREBUILT:-}" ]; then
     echo ">> running binaries built elsewhere, from $PREBUILT"

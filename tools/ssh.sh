@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Log into the guest tools/boot-qemu.sh (or boot-firecracker.sh, boot-vz.sh) is running,
-# as root, without a password:
+# as `user`, without a password:
 #
 #     ./tools/ssh.sh                      # interactive shell
-#     ./tools/ssh.sh uname -a             # one command
-#     ./tools/ssh.sh --user               # as the unprivileged account, uid 1000
-#     ./tools/ssh.sh --user podman ps     # ... and one command as it
+#     ./tools/ssh.sh podman ps            # one command
+#     ./tools/ssh.sh --root               # as root
+#     ./tools/ssh.sh --root journalctl -b # ... and one command as root
 #     ./tools/ssh.sh -L 8080:localhost:80 # any ssh option, as long as it comes before a command
 #
 # The key, the port and every option are in the ssh_config qemu_ssh_setup (test/qemu-lib.sh)
@@ -13,11 +13,12 @@
 # sftp and rsync -e take the same -F. The key exists only while that guest runs; there is
 # nothing to set up and nothing left behind.
 #
-# --user, which has to come first, logs in as `user` with the same key
-# (image/files/etc/tmpfiles.d/flfs-home.conf puts it in that account's authorized_keys).
-# It is a login of its own, with a logind session, /run/user/1000 and a user manager —
-# which is what rootless podman needs and what `su user` from root's session never gives
-# it: su keeps root's $XDG_RUNTIME_DIR, and pam_systemd will not open a session inside one.
+# `user` by default, because the unprivileged account is the one to work in, and because
+# a login of its own — a logind session, /run/user/1000 and a user manager — is what
+# rootless podman needs and what `su user` from a root session never gives it: su keeps
+# root's $XDG_RUNTIME_DIR, and pam_systemd will not open a session inside one. The key is
+# the same one either way; image/files/etc/tmpfiles.d/flfs-home.conf copies it into
+# user's authorized_keys. --root, which has to come first, logs in as root instead.
 #
 # Overrides:
 #   SSH_DIR   where the boot script put the key and config   (default output/ssh)
@@ -31,10 +32,10 @@ if [ ! -f "$SSH_DIR/config" ]; then
     exit 1
 fi
 
-login=()
-if [ "${1:-}" = --user ]; then
-    login=(-l user)
+login=user
+if [ "${1:-}" = --root ]; then
+    login=root
     shift
 fi
 
-exec ssh -F "$SSH_DIR/config" ${login[@]+"${login[@]}"} flfs "$@"
+exec ssh -F "$SSH_DIR/config" -l "$login" flfs "$@"
