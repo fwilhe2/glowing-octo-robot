@@ -10,11 +10,11 @@
 #
 # Versions track the kernel's, one release behind at most; 7.1.0 is the pair to the
 # 7.1.x in packages/kernel.
-VERSION="7.2.0"
+VERSION="7.3.0"
 PACKAGE="iproute2-${VERSION}"
 TARBALL="$PACKAGE.tar.xz"
 URL="https://www.kernel.org/pub/linux/utils/net/iproute2/${TARBALL}"
-SHA256="4c2fa124c2cf0afd7ca34d1eeacba6ba048a56f6374e2aab93dafbdbd4eea9c0"
+SHA256="5c1789d290bba048a6135ed1ab81b0402dd0fb528d1f1421765c42b1fc3d6289"
 # COPYING is GPLv2, and most sources say GPL-2.0-or-later; the tc schedulers carry a
 # BSD-3-Clause offer alongside the GPL. What the tarball also holds and does not ship is
 # netem's table generators, which are NIST public domain: they run at build time and
