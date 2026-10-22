@@ -229,8 +229,10 @@ make guest.config
 
 # The root filesystem. The image is EROFS — read-only by construction, compressed, and
 # what image/build-rootfs.sh lays the tree out as — so the kernel has to mount it with no
-# initrd to load a driver from. ZIP is the compressed-file support; LZ4 decompression is
-# always built in with it, and LZ4HC is what mkfs.erofs writes. Its own fragment rather
+# initrd to load a driver from. ZIP is the compressed-file support, with LZ4 always built
+# in; ZIP_ZSTD is the one mkfs.erofs is asked for, because on this tree it makes an image
+# 28% smaller than LZ4HC at the same cluster size and still decompresses faster than a
+# virtio disk reads (see image/build-rootfs.sh). Its own fragment rather
 # than a line in container.config: it is what boots the machine, not what runs containers
 # on it, and the check below holds both to the same standard.
 #
@@ -243,6 +245,7 @@ make guest.config
 cat > kernel/configs/rootfs.config <<'EOF'
 CONFIG_EROFS_FS=y
 CONFIG_EROFS_FS_ZIP=y
+CONFIG_EROFS_FS_ZIP_ZSTD=y
 CONFIG_MD=y
 CONFIG_BLK_DEV_DM=y
 CONFIG_DM_INIT=y

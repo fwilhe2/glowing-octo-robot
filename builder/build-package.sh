@@ -131,6 +131,14 @@ export RUSTFLAGS
 # build.sh from VENDOR_TARBALL) rather than crates.io. --locked so that a Cargo.lock that
 # disagrees with the vendored crates is an error instead of a re-resolution. The source
 # replacement goes in $CARGO_HOME rather than the source tree, which stays as unpacked.
+#
+# So does the release profile, which a crate's own Cargo.toml would otherwise decide and
+# neither netavark's nor aardvark-dns's does: cargo's default is no LTO and sixteen
+# codegen units, which buys parallel compile time and pays for it in every copy of every
+# generic the dependency tree instantiates. One unit with LTO is what lets the linker see
+# that most of tokio, hickory and serde are never called. It is not opt-level "s": these
+# are small programs whose speed nobody notices either way, but -O3 is what upstream
+# tests.
 cargo_vendored() {
     install -d "$CARGO_HOME"
     cat > "$CARGO_HOME/config.toml" <<CARGO
@@ -139,6 +147,10 @@ replace-with = "vendored-sources"
 
 [source.vendored-sources]
 directory = "$PWD/vendor"
+
+[profile.release]
+lto = true
+codegen-units = 1
 CARGO
     cargo build --release --offline --locked "$@"
 }

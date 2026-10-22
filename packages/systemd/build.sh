@@ -56,15 +56,23 @@ systemd_opts=(
     # Container and image machinery we do not use: crun is the runtime (constraint 3),
     # and there is no image tooling to feed nspawn/machined/importd a machine image.
     # nss-mymachines resolves container hostnames through machined, so it goes too.
+    # mountfsd and nsresourced are the same machinery's unprivileged half — varlink
+    # services that mount a disk image and hand out a user-namespace range to a caller
+    # without root, for nspawn, vmspawn and systemd-dissect. podman allocates its own
+    # ranges from /etc/subuid through newuidmap, and mounts through crun.
     -Dmachined=false -Dnspawn=disabled -Dvmspawn=disabled -Dimportd=disabled
     -Dnss-mymachines=disabled -Dportabled=false -Dsysext=false
+    -Dmountfsd=false -Dnsresourced=false
 
     # Deployment and provisioning: repartitioning the disk, A/B image updates, cloud
     # instance metadata, home-directory management, exporting block devices over NVMe.
     # firstboot goes with them — the image ships a complete /etc, which is why the
     # service used to be masked in image/build-rootfs.sh.
+    # libfdisk goes with them: repart, sysupdate and homed are its only callers, so
+    # nothing would ever take the dlopen and packages/util-linux no longer builds it.
     -Drepart=disabled -Dsysupdate=disabled -Dsysinstall=false -Dfirstboot=false
     -Dimds=disabled -Dhomed=disabled -Dstoragetm=false -Doomd=false
+    -Dfdisk=disabled
 
     # Coredump handling needs elfutils to symbolize a backtrace, and the journal's
     # remote transports need libcurl/gnutls/microhttpd. We ship none of those to the

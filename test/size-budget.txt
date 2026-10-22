@@ -74,8 +74,24 @@
 # move: build-rootfs.sh subtracts the engine from the container image, which measured 59.0
 # and 73.1 MiB.
 #
+# Lowered for the first time, after a pass over what the image carries rather than what it
+# needs. Measured locally on amd64: the erofs tree from 160.3 to 143.7 MiB and the oci
+# tree from 59.0 to 46.7. coreutils as one multicall binary is 5.2 MiB of that by itself;
+# the rest is the Rust helpers built with LTO, e2fsprogs and zstd linking their own shared
+# libraries instead of a static copy per tool, and files nothing in the image can reach —
+# libdw and libfdisk, unconfigured PAM and NSS modules, bash's loadable builtins,
+# iproute2's hardware tools, ssh-agent and /etc/ssh/moduli, D-Bus introspection XML.
+# The disk image itself, compressed, went from 96.3 to 61.4 MiB, most of that from
+# mkfs.erofs's options rather than from anything removed: see image/build-rootfs.sh.
+#
+# The amd64 rows are the measurement plus the usual 8%. The arm64 rows are CI's last
+# arm64 measurement (186.1 and 73.1 MiB) minus amd64's absolute saving, plus 8%, which
+# should be loose: arm64 pads every shared object's segments to 64 KiB, so a hundred
+# coreutils binaries becoming one saves more there than here. Tighten them from the
+# first CI run's numbers.
+#
 # flavour  arch   MiB
-erofs      amd64  170
-erofs      arm64  209
-oci        amd64  96
-oci        arm64  121
+erofs      amd64  155
+erofs      arm64  183
+oci        amd64  51
+oci        arm64  66

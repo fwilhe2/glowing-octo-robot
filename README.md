@@ -549,7 +549,7 @@ in there either. Whoever writes the command line owns the VM anyway, so a creden
 there costs nothing a password would have protected.
 
 The container image keeps the client and drops the server: `sshd`, its two PAM-linked
-helpers, `sftp-server`, `sshd_config`, `moduli` and `/usr/share/empty.sshd` are all subtracted in
+helpers, `sftp-server`, `sshd_config` and `/usr/share/empty.sshd` are all subtracted in
 `image/build-rootfs.sh` along with PAM itself.
 
 ```sh
@@ -746,9 +746,8 @@ as skeletons; it then `dlopen`s `libbpf.so.1` at runtime to load them. Not shipp
 library disabled all of it with a single line in the journal, which is why `libbpf` and
 `elfutils` (for `libelf.so.1`, which libbpf parses ELF objects with) are packages.
 
-The LSM-based ones — `RestrictFileSystems=` and the user-namespace lockdown
-`systemd-nsresourced` does — need the kernel side too, and the `container.config`
-fragment carries all four symbols:
+The LSM-based one, `RestrictFileSystems=`, needs the kernel side too, and the
+`container.config` fragment carries all four symbols:
 
 | symbol | why |
 | --- | --- |

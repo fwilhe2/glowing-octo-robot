@@ -37,7 +37,17 @@ export gl_cv_func_mknod_works=yes
 # when they find it, and libgmp-dev is in builder/deps.txt for packages/gcc's sake. The
 # image ships no libgmp, so finding it would leave both unable to start. Without it they
 # fall back to gnulib's mini-gmp, compiled in.
-./configure --prefix=/usr --without-selinux --without-openssl --without-libgmp
+#
+# --enable-single-binary=symlinks: one `coreutils` binary, with every program a symlink
+# to it that dispatches on argv[0]. Built the default way, each of the hundred-odd
+# programs is its own executable carrying its own copy of gnulib — 6.7 MiB of them, for
+# what is mostly the same code a hundred times; this way it is 1.5 MiB. Upstream's own
+# option, and the shape busybox made familiar without any of busybox: these are the same
+# GNU programs, they simply share one text segment.
+# libstdbuf.so stays its own file, since stdbuf preloads it into another program.
+./configure --prefix=/usr --without-selinux --without-openssl --without-libgmp \
+    --enable-single-binary=symlinks
 make
 make install DESTDIR=$ROOTFS
-assert_not_linked libgmp usr/bin/factor usr/bin/expr
+assert_not_linked libgmp usr/bin/coreutils
+[ -L $ROOTFS/usr/bin/ls ] || { echo "coreutils: ls is not a link to the multicall binary" >&2; exit 1; }

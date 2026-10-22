@@ -57,7 +57,7 @@ An OCI *image* whose layer is a disk would be worse than neutral — it would pu
 holds. If a machine ever consumes these as part of a pipeline, revisit with a real OCI
 artifact and `oras`, not with an image.
 
-Not compressed again: the disk is EROFS, which is already lz4hc-compressed and sized to
+Not compressed again: the disk is EROFS, which is already zstd-compressed and sized to
 its contents — ~71 MiB on amd64 — so there is no empty 1 GiB to squeeze out of it, which
 was the reason the ext4 image needed zstd. Checksummed because this project pins a
 `SHA256` for every byte it consumes, across every package; shipping unverifiable output

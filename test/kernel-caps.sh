@@ -55,7 +55,7 @@ BLK_DEV_THROTTLING  io.max takes no bandwidth or iops limit
 CGROUP_BPF          the cgroup v2 device controller is a BPF program, not a knob
 BPF_SYSCALL         crun loads that program with bpf(2); without it, no device rules
 BPF_JIT             BPF_LSM depends on it
-BPF_LSM             systemd's RestrictFileSystems= and nsresourced's userns lockdown
+BPF_LSM             systemd's RestrictFileSystems=
 BPF_EVENTS          BPF_LSM depends on it, and it needs a probe type under FTRACE
 SECURITYFS          how /sys/kernel/security/lsm reports that bpf-lsm is on
 DEBUG_INFO_BTF      an LSM program names the kernel function it hooks; resolving it
@@ -106,6 +106,7 @@ VMGENID             reseeding the RNG after a snapshot restore, so clones differ
 DM_VERITY           the root is a verity device; a kernel without it cannot mount /
 DM_INIT             building that device from the command line, with no initrd
 EROFS_FS            the root filesystem's format
+EROFS_FS_ZIP_ZSTD   and its compression; without it every compressed file is an I/O error
 EOF
 )
 # Architecture-specific halves of the same: what boots the machine at all on each.

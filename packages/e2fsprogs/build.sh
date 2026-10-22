@@ -25,6 +25,11 @@
 #               modules either, CONFIG_MODULES being off. 361 KB in usr/lib that
 #               nothing could ever exec.
 #
+# --enable-elf-shlibs: libext2fs, libe2p and libcom_err as shared libraries. Without it
+# they are linked statically into every tool, so e2fsck, mke2fs, tune2fs, resize2fs and
+# dumpe2fs each carry their own copy of the filesystem library — 2.3 MiB for five
+# programs that are mostly the same code. Every distribution builds it this way.
+#
 # --enable-mmp is deliberately left alone. Multi-Mount Protection is a filesystem
 # feature rather than a tool, and turning it off would make e2fsck unable to read an
 # image that has it set. e2mmpstatus goes with it and would save nothing anyway, being
@@ -38,7 +43,8 @@
     --disable-fuse2fs \
     --disable-nls \
     --disable-fsck \
-    --disable-e2initrd-helper
+    --disable-e2initrd-helper \
+    --enable-elf-shlibs
 
 make
 make install DESTDIR=$ROOTFS
@@ -59,6 +65,11 @@ make install DESTDIR=$ROOTFS
 # it, so that a rename upstream fails the build rather than silently shipping the binary.
 drop_installed badblocks e4crypt e2undo e2freefrag filefrag mklost+found logsave \
                compile_et mk_cmds
+
+# libss is the command-line parser debugfs is built on, and debugfs is configured out
+# above, so with shared libraries on it installs a library nothing links. mk_cmds,
+# removed just above, is its code generator.
+rm -f $ROOTFS/usr/lib/libss.so*
 
 # e2scrub is an online-consistency-check harness: two shell scripts, a cron job, udev
 # rules and five systemd units that snapshot an LVM volume and fsck the snapshot. There

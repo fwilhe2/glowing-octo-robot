@@ -268,11 +268,11 @@ if [ "$flavour" = oci ]; then
     # in a container is ordinary, an ssh *server* in one has no PID 1 to be started by,
     # no /etc/pam.d to authenticate through and no host key anything would generate. So
     # the listener goes with its helpers, and so do the files that exist only to serve
-    # it — the sftp subsystem sshd execs, the config and moduli only sshd reads, and the
-    # privilege separation chroot only sshd enters. Its unit and sysusers.d snippet went
-    # with usr/lib/systemd above.
+    # it — the sftp subsystem sshd execs, the config only sshd reads, and the privilege
+    # separation chroot only sshd enters. Its unit and sysusers.d snippet went with
+    # usr/lib/systemd above.
     rm -f  usr/bin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth \
-           usr/libexec/sftp-server etc/ssh/sshd_config etc/ssh/moduli
+           usr/libexec/sftp-server etc/ssh/sshd_config
     rm -rf usr/share/empty.sshd
 
     # The container engine, which in a container is a niche (podman-in-podman) rather
@@ -570,6 +570,54 @@ find usr/lib/systemd/catalog -name 'systemd.*.catalog' -delete 2>/dev/null || tr
 # ship), and polkit rules with no polkitd to enforce them.
 rm -rf usr/share/bash-completion usr/share/zsh usr/share/fish etc/bash_completion.d
 rm -rf usr/share/polkit-1 usr/share/X11 etc/X11
+
+# D-Bus introspection XML, 0.6 MiB of it, installed by systemd for each of its services.
+# It is documentation for people writing a client: `busctl introspect` and every other
+# caller ask the running service, which answers from its own vtable, and dbus-daemon
+# reads only the policy files in share/dbus-1/system.d and the activation files beside
+# them, never interfaces/.
+rm -rf usr/share/dbus-1/interfaces
+
+# CMake package files, which are the same link-time metadata as the pkg-config above in
+# another build system's dialect. OpenSSL installs them.
+rm -rf usr/lib/cmake
+
+# PAM modules no PAM configuration names. Linux-PAM builds and installs all forty of its
+# modules; a module is only ever loaded because a line in /etc/pam.d or /usr/lib/pam.d
+# names it, both are read-only here, and the image's services name nine between them.
+# Derived from the files rather than listed, so that a service gaining a module keeps it
+# without an edit here. The match takes the name with or without `.so`, since both
+# spellings appear (openssh's file writes `pam_unix`). Helpers whose only caller is a
+# module that has just gone go with it. A no-op on the container flavour, which the
+# subtractions have already taken PAM away from.
+if [ -d usr/lib/security ]; then
+    pam_conf=$(cat etc/pam.d/* usr/lib/pam.d/* 2>/dev/null | grep -v '^[[:space:]]*#')
+    for module in usr/lib/security/pam_*.so; do
+        name=$(basename "$module" .so)
+        if ! grep -Eq "(^|[[:space:]/])$name(\\.so)?([[:space:]]|\$)" <<<"$pam_conf"; then
+            rm -f "$module"
+            case $name in
+                pam_filter)    rm -rf usr/lib/security/pam_filter ;;
+                pam_faillock)  rm -f usr/bin/faillock ;;
+                pam_pwhistory) rm -f usr/bin/pwhistory_helper ;;
+                pam_mkhomedir) rm -f usr/bin/mkhomedir_helper ;;
+                pam_timestamp) rm -f usr/bin/pam_timestamp_check ;;
+            esac
+        fi
+    done
+fi
+
+# NSS modules nsswitch.conf does not name, by the same argument: glibc loads
+# libnss_<name>.so.2 only for a <name> in that file, which is read-only. That is glibc's
+# compat (the NIS `+user` syntax), db (Berkeley DB maps) and hesiod (DNS TXT records),
+# all three legacy directory services nothing here is configured for. Both flavours.
+nss_conf=$(grep -v '^[[:space:]]*#' etc/nsswitch.conf)
+for module in usr/lib/libnss_*.so.2; do
+    [ -e "$module" ] || continue
+    name=${module##*/libnss_}
+    name=${name%.so.2}
+    grep -Eq "[[:space:]]$name([[:space:]]|\$)" <<<"$nss_conf" || rm -f "$module"
+done
 
 # terminfo is 12 MB describing some 2500 terminals. The console here is a serial line,
 # so keep the handful of TERM values that can actually appear on it and drop the rest.
@@ -1023,12 +1071,31 @@ if [ "$flavour" = erofs ]; then
     # mount option somebody can remount away. It is also compressed and sized to its
     # contents — there is no free space to choose, and so no 1G to outgrow.
     #
-    # lz4hc: decompression is cheap enough that it is the right default for a root
-    # filesystem, and it is the one compressor packages/kernel's rootfs.config does not
-    # have to ask for separately. The label is for people and blkid; nothing mounts by it
-    # (the root is the verity device on top, /etc/fstab says why). With
-    # SOURCE_DATE_EPOCH set — the same switch the SBOM honours below — every timestamp and
-    # the UUID are pinned, so the same tree makes the same bytes.
+    # The compression is where most of the disk image's size is decided, more than by
+    # anything any package does. Measured on one amd64 tree of 160 MiB:
+    #
+    #   -zlz4hc,12                                     95.6 MiB   what this used to be
+    #   -zlz4hc,12  -C65536 -Eztailpacking,fragments   80.1 MiB
+    #   -zzstd,15  -C131072 -Eztailpacking,fragments   65.9 MiB   this
+    #   -zzstd,19  -C131072 -Eztailpacking             64.1 MiB   at 3-4x the build time
+    #   -zlzma,6   -C131072                            61.4 MiB
+    #
+    # -C is the bigger half of it. EROFS compresses each physical cluster on its own, and
+    # the default cluster is one 4 KiB block, so lz4hc was compressing 4 KiB at a time with
+    # no history to match against; 128 KiB is squashfs's default block for the same
+    # reason. A read now decompresses up to that much to return one page, which for a
+    # root filesystem that is read sequentially at boot and then cached costs nothing
+    # anybody measures. ztailpacking puts a file's last partial block inline with its
+    # inode instead of in a cluster of its own, and fragments compresses those tails
+    # together, which is all there is to most of the unit files and /etc. zstd rather
+    # than lzma: decompression an order of magnitude faster, for 4.5 MiB.
+    # It needs CONFIG_EROFS_FS_ZIP_ZSTD, which packages/kernel's rootfs.config turns on
+    # and test/kernel-caps.sh holds it to.
+    #
+    # The label is for people and blkid; nothing mounts by it (the root is the verity
+    # device on top, /etc/fstab says why). With SOURCE_DATE_EPOCH set — the same switch
+    # the SBOM honours below — every timestamp and the UUID are pinned, so the same tree
+    # makes the same bytes.
     erofs_repro=()
     if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
         erofs_repro=(-T "$SOURCE_DATE_EPOCH" --all-time -U 00000000-0000-0000-0000-000000000000)
@@ -1044,7 +1111,7 @@ if [ "$flavour" = erofs ]; then
     # --xattrs-include names: security.capability, nothing else, on any host.
     repro_tar --xattrs --xattrs-include='security.capability' --directory "$IMAGE" . \
         > /tmp/rootfs.tar
-    mkfs.erofs -L root -zlz4hc,12 --tar=f "${erofs_repro[@]}" \
+    mkfs.erofs -L root -zzstd,15 -C131072 -Eztailpacking,fragments --tar=f "${erofs_repro[@]}" \
         /usr/local/output/rootfs.erofs /tmp/rootfs.tar
     rm -f /tmp/rootfs.tar
 

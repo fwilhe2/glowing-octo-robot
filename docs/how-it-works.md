@@ -144,7 +144,7 @@ Steps, in order:
    which are tmpfs mounts at boot.
 5. **SBOM.** Write SPDX 2.3 from the component records, then delete the records.
 6. **Size report.** Write `output/rootfs-size-<flavour>.txt`.
-7. **Write the image.** Disk: `mkfs.erofs` (lz4hc), then `veritysetup format` appends
+7. **Write the image.** Disk: `mkfs.erofs` (zstd, 128 KiB clusters), then `veritysetup format` appends
    the dm-verity hash tree to the same file and `output/rootfs.cmdline` records the
    kernel arguments that pin its root hash. OCI: a gzipped layer plus config,
    manifest, `index.json` and `oci-layout`, assembled by hand.

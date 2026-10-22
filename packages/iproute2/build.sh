@@ -42,6 +42,18 @@ make install DESTDIR=$ROOTFS PREFIX=/usr SBINDIR=/usr/bin LIBDIR=/usr/lib
 # prints `ip route list` in a different table layout.
 drop_installed routel
 
+# Everything but ip, ss, bridge, tc and nstat goes, which is 1.6 MiB of the package's
+# 3.5. Most of it configures hardware a VM guest does not have (constraint 2): dcb (data
+# centre bridging on a physical NIC), devlink (NIC and switch ASIC firmware), dpll (clock
+# synchronisation chips), rdma, vdpa (the *host* side of virtio offload), netshaper (NIC
+# rate limiters). tipc is a cluster transport the kernel does not build. genl lists
+# generic-netlink families, which `ip` and the tools above already speak. ifstat, lnstat
+# (with its ctstat and rtstat aliases), rtacct and rtmon are the old /proc/net counters
+# and route-logging daemons; nstat, which stays, reads the same counters, and `ip monitor`
+# replaces rtmon.
+drop_installed dcb devlink dpll rdma vdpa netshaper tipc genl \
+               ifstat lnstat ctstat rtstat rtacct rtmon
+
 # And the assertion the PKG_CONFIG override above is worth nothing without, since the
 # thing it prevents is a check that passes. `ip` is the binary this whole package exists
 # for; if it came out linked against a library the image has no copy of, stop here rather

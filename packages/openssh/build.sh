@@ -130,6 +130,23 @@ for helper in ssh-keysign ssh-pkcs11-helper ssh-sk-helper; do
     rm -f "$ROOTFS/usr/libexec/$helper"
 done
 
+# The agent and its client, 0.84 MiB: openssh links its protocol code statically into
+# every binary, so each tool costs most of a megabyte however small its job. An agent
+# belongs on the machine the keys are on, not on a server VM — `ssh -A` into the guest
+# forwards the host's agent, and the guest's `ssh` uses it with neither of these present.
+# ssh-keyscan stays: filling known_hosts non-interactively is what a provisioning script
+# on this machine would reach for before `git clone` over ssh.
+drop_installed ssh-agent ssh-add
+
+# /etc/ssh/moduli, 0.66 MiB of Diffie-Hellman groups, is read by sshd for the
+# diffie-hellman-group-exchange key exchange and by nothing else. OpenSSH 10 took every
+# finite-field DH method out of the server's default KexAlgorithms (KEX_SERVER_KEX in
+# myproposal.h), and sshd_config below does not put one back, so the file is
+# unreachable. The client still offers group exchange, but it is the server that
+# chooses the group.
+[ -e $ROOTFS/etc/ssh/moduli ] || { echo "openssh: moduli is not installed — stale removal" >&2; exit 1; }
+rm -f $ROOTFS/etc/ssh/moduli
+
 # ---------------------------------------------------------------------------------
 # The server's configuration, replacing the one install-sysconf wrote. Upstream ships a
 # file whose every line is commented out — it documents the compiled-in defaults rather

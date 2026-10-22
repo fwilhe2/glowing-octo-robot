@@ -54,6 +54,9 @@
 #   fdisks, partx     partition table editors. The image is a single filesystem written
 #                     by `mkfs.ext4 -d`; there is no partition table to edit, and
 #                     dropping partx takes addpart/delpart/resizepart with it.
+#   libfdisk          the library behind them. systemd would dlopen it for repart,
+#                     sysupdate and homed, and is built without all three
+#                     (-Dfdisk=disabled), so it has no caller left.
 #   cramfs, bfs,      mkfs and fsck for three filesystems the kernel does not build.
 #   minix             vm.config already clears them.
 #   hwclock           systemd owns the clock here, and a virtio guest has no RTC policy
@@ -105,6 +108,7 @@
     --without-udev \
     --disable-pylibmount \
     --disable-fdisks \
+    --disable-libfdisk \
     --disable-partx \
     --disable-cramfs \
     --disable-bfs \

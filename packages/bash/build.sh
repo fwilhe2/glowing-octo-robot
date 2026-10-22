@@ -18,3 +18,12 @@ make install DESTDIR=$ROOTFS
 #
 # -f because rootfs/ is cumulative: a rebuild would otherwise meet the previous one's.
 ln -sf bash $ROOTFS/usr/bin/sh
+
+# Two things `make install` adds that a booted image cannot use. The loadable builtins in
+# usr/lib/bash (0.6 MiB) are bash's examples directory compiled: `enable -f` can load
+# them, but most duplicate a coreutils program already in the image — sleep, rm,
+# cut, mkdir, stat — and Debian ships them as bash-builtins, separately, for that reason.
+# And bashbug mails a bug report through a sendmail the image does not have.
+[ -d $ROOTFS/usr/lib/bash ] || { echo "bash: usr/lib/bash is not installed — stale removal" >&2; exit 1; }
+rm -rf $ROOTFS/usr/lib/bash
+drop_installed bashbug

@@ -9,3 +9,11 @@
 ./configure --prefix=/usr --without-selinux
 make
 make install DESTDIR=$ROOTFS
+
+# locate, updatedb and the frcode helper updatedb compresses with. locate only answers
+# from a database updatedb has written, into /var/lib/locate — a tmpfs here unless the VM
+# was given a disk, with no timer to fill it either way — so on this image it can only
+# ever report that the database does not exist. `find` asks the filesystem itself, which
+# on a machine this size is the faster answer anyway. configure has no switch for it.
+drop_installed locate updatedb
+rm -f $ROOTFS/usr/libexec/frcode

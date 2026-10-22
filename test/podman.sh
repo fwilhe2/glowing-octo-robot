@@ -51,11 +51,15 @@ QUADLET_OK="PODMAN-QUADLET-OK"
 
 INFO_CHECK="echo PODMAN'-INFO':\$(podman info --format '{{.Host.OCIRuntime.Name}}/{{.Host.NetworkBackend}}/{{.Host.Security.SECCOMPEnabled}}/{{.Store.GraphDriverName}}')"
 
-# The image: bash, getent, their libraries and the loader, plus the merged-/usr links.
-# cp -L because the libraries are SONAME symlinks on the guest's disk.
+# The image: bash, getent, sleep, their libraries and the loader, plus the merged-/usr
+# links. cp -L because the libraries are SONAME symlinks on the guest's disk, and because
+# sleep is a link to the coreutils multicall binary — which answers to the name it is
+# copied under, and needs what every coreutils program needs: libacl and libattr for
+# ls and cp, libcap for ls.
 IMPORT="rm -rf /run/img && mkdir -p /run/img/usr/bin /run/img/usr/lib && \
 cp -L /usr/bin/bash /usr/bin/getent /usr/bin/sleep /run/img/usr/bin/ && \
-cp -L /usr/lib/libc.so.6 /usr/lib/libtinfo.so.6 /usr/lib/ld-linux-* /run/img/usr/lib/ && \
+cp -L /usr/lib/libc.so.6 /usr/lib/libtinfo.so.6 /usr/lib/libacl.so.1 /usr/lib/libattr.so.1 \
+      /usr/lib/libcap.so.2 /usr/lib/ld-linux-* /run/img/usr/lib/ && \
 ln -s usr/bin /run/img/bin && ln -s usr/lib /run/img/lib && ln -s usr/lib /run/img/lib64 && \
 tar -C /run/img -c . | podman import - localhost/mini >/dev/null && echo PODMAN'-IMPORT-OK'"
 
