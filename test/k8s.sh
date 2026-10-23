@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Form a multi-node Kubernetes cluster from the image and check that it works as one.
+#
+#     ./test/k8s.sh [rootfs.erofs] [bzImage]
+#
+# tools/k8s-demo.sh does all of it — three guests, kubeadm init and join, a pod network,
+# and four replicas behind a Service that a pod then queries by DNS name — and fails on
+# its own if any step does: a node that never turns Ready, CoreDNS or kube-proxy that
+# never rolls out, or a Service whose answers do not come from more than one node. This
+# runs it with STRICT=1, which turns the demo's workarounds for older images into
+# failures, so what is checked is the image as built: that kubeadm's preflight accepts
+# the kernel (/usr/lib/modules/<release>/config and the k8s.config symbols) and that
+# kube-proxy starts with its hostPath /lib/modules.
+#
+# Not checked here, because the demo provides it rather than the image: the binaries
+# (upstream releases, downloaded), a writable /etc (an overlay, docs/sysext.md has the
+# real question) and the pod network (bridge and routes).
+#
+# It needs KVM. Three guests running a control plane under emulation take long enough
+# that a timeout would say nothing about the image, so without a writable /dev/kvm this
+# skips, with a note. It also needs the network: dl.k8s.io and Google's storage for the
+# binaries, registry.k8s.io for the control plane's and the demo's images.
+#
+# The consoles end up in output/k8s-test-<node>.log either way, where CI uploads them.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+export ROOTFS="${1:-${ROOTFS:-output/rootfs.erofs}}"
+export KERNEL="${2:-${KERNEL:-rootfs/boot/bzImage}}"
+
+if [ ! -w /dev/kvm ]; then
+    echo "note: no writable /dev/kvm on this host, skipping the Kubernetes check"
+    exit 0
+fi
+
+keep_logs() {
+    local log
+    for log in output/k8s/*.console.log; do
+        [ -f "$log" ] && cp "$log" "output/k8s-test-$(basename "$log" .console.log).log"
+    done
+    ./tools/k8s-demo.sh down > /dev/null
+}
+trap keep_logs EXIT
+
+STRICT=1 ./tools/k8s-demo.sh up
+./tools/k8s-demo.sh ps
+echo ">> k8s OK"

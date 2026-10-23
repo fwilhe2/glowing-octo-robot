@@ -56,8 +56,13 @@
 #   CRIO_VERSION   CRI-O release; its minor has to match Kubernetes'   (default below)
 #   API_PORT       host port forwarded to the API server               (default 6443)
 #   MCAST          multicast group:port of the cluster segment         (default 230.0.0.1:12345)
-#   ARCH, OUT, KERNEL, ROOTFS   as for tools/boot-qemu.sh: the image tools/fetch-image.sh
-#                  downloaded, by default
+#   ROOTFS, KERNEL the image to boot. By default this checkout's own build when there is
+#                  one — output/rootfs.erofs from tools/build-image.sh, with the kernel
+#                  it was assembled from in rootfs/boot — and otherwise the one
+#                  tools/fetch-image.sh downloaded from CI (OUT, ARCH as for
+#                  tools/boot-qemu.sh)
+#   STRICT         1 to fail rather than work around an image that predates the fixes
+#                  this demo found (below); what test/k8s.sh runs it with
 #
 # State lives in output/k8s/: console logs, the /var disks, the ssh key and config, the
 # kubeconfig and a host kubectl. `down` removes it; `up` starts from nothing every time.
@@ -353,6 +358,9 @@ provision_node() {
 image_workarounds() {
     if node_ssh 1 'test -e /usr/lib/modules/$(uname -r)/config'; then
         PREFLIGHT= OLD_IMAGE=0
+    elif [ "${STRICT:-0}" = 1 ]; then
+        echo "error: $ROOTFS has no /usr/lib/modules/<release>/config, which packages/kernel installs" >&2
+        return 1
     else
         echo "   this image predates /usr/lib/modules/<release>: skipping kubeadm's kernel check, patching kube-proxy"
         PREFLIGHT=--ignore-preflight-errors=SystemVerification OLD_IMAGE=1
@@ -528,13 +536,27 @@ EOF
     ip=$(k get pod "$pod" -o jsonpath='{.status.podIP}')
     node=$(k get pod "$pod" -o jsonpath='{.spec.nodeName}')
     where=$(k get pods -l app=hello -o jsonpath='{range .items[*]}{.metadata.name} {.spec.nodeName}{"\n"}{end}')
-    say "From pod $pod on $node: 12 requests to http://hello.default.svc.cluster.local/hostname"
+    say "From pod $pod on $node: 32 requests to http://hello.default.svc.cluster.local/hostname"
     # netexec's /dial makes the requests from inside the pod and reports who answered.
-    node_ssh 1 "curl -fsS 'http://$ip:8080/dial?request=hostname&protocol=http&host=hello.default.svc.cluster.local&port=80&tries=12'" |
-        grep -o '"hello-[a-z0-9-]*"' | tr -d '"' | sort | uniq -c |
-        while read -r count name; do
-            printf '   %2d × %s on %s\n' "$count" "$name" "$(awk -v p="$name" '$1 == p {print $2}' <<< "$where")"
-        done
+    local answers count name nodes want
+    answers=$(node_ssh 1 "curl -fsS 'http://$ip:8080/dial?request=hostname&protocol=http&host=hello.default.svc.cluster.local&port=80&tries=32'" |
+        grep -o '"hello-[a-z0-9-]*"' | tr -d '"' | sort | uniq -c || true)
+    while read -r count name; do
+        [ -n "$name" ] || continue
+        printf '   %2d × %s on %s\n' "$count" "$name" "$(awk -v p="$name" '$1 == p {print $2}' <<< "$where")"
+    done <<< "$answers"
+
+    # The point of the demo, checked: the answers came from more than one node, so the
+    # Service reached across the cluster network. With pods on two workers, all 32
+    # requests landing on one node's pods by chance is (3/4)^32 at worst — 1 in 10^4.
+    nodes=$(awk '{print $2}' <<< "$answers" | while read -r name; do
+        [ -z "$name" ] || awk -v p="$name" '$1 == p {print $2}' <<< "$where"
+    done | sort -u | wc -l)
+    want=$(( NODES - 1 < 2 ? NODES - 1 : 2 ))
+    if [ "$nodes" -lt "$want" ]; then
+        echo "error: the Service answered from $nodes node(s), expected $want" >&2
+        return 1
+    fi
 }
 
 # --- commands ----------------------------------------------------------------------------
@@ -586,7 +608,12 @@ down() {
 
 up() {
     qemu_setup
+    if [ -z "${ROOTFS:-}${KERNEL:-}" ] && [ "$ARCH" = "$(normalize_arch)" ] &&
+       [ -f output/rootfs.erofs ] && [ -f rootfs/boot/bzImage ]; then
+        ROOTFS=output/rootfs.erofs KERNEL=rootfs/boot/bzImage
+    fi
     fetched_image_defaults
+    QEMU_HINT="(run ./tools/build-image.sh, or ./tools/fetch-image.sh for CI's)"
     qemu_preflight
     command -v curl >/dev/null || { echo "error: curl not found" >&2; exit 1; }
     [ "$NODES" -ge 2 ] || { echo "error: NODES=$NODES — a multi-node cluster needs at least 2" >&2; exit 1; }
@@ -598,7 +625,7 @@ up() {
 
     fetch_binaries
 
-    say "Booting $NODES guests from $ROOTFS"
+    say "Booting $NODES guests from $ROOTFS with $KERNEL"
     : > "$STATE/ssh_config"
     local n
     for n in $(seq 1 "$NODES"); do boot_node "$n"; done

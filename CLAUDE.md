@@ -145,6 +145,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/persistent-var.sh output/rootfs.erofs rootfs/boot/bzImage  # two boots, one /var disk: state survives
 ./test/verity.sh output/rootfs.erofs rootfs/boot/bzImage   # a tampered copy of the image is refused
 ./test/vmm.sh output/rootfs.erofs rootfs/boot/bzImage      # Firecracker- and Virtualization.framework-shaped boots
+./test/k8s.sh output/rootfs.erofs rootfs/boot/bzImage      # 3-node kubeadm cluster via tools/k8s-demo.sh (KVM; skips without)
 ./test/reproducible.sh <pkg>...   # build twice from clean worktrees, compare to the byte (AGAINST_RUN=<id>: against CI's)
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./test/prebuilt.sh [build|oci|ssh] # host-compiled C, C++, Rust and Go binaries, run in the image
@@ -156,7 +157,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./tools/boot-firecracker.sh       # the same, in Firecracker (Linux + KVM; ssh over vsock)
 ./tools/boot-vz.sh                # the same, in Virtualization.framework via vfkit (macOS)
 ./tools/ssh.sh [--root] [cmd...]  # passwordless ssh into the guest any of those started, as `user` or root
-./tools/k8s-demo.sh up|ps|kubectl|ssh|down  # a 3-node kubeadm cluster from upstream binaries (docs/sysext.md)
+./tools/k8s-demo.sh up|ps|kubectl|ssh|down  # a 3-node kubeadm cluster from upstream binaries, on this checkout's build if there is one (docs/sysext.md)
 ./tools/clean.sh [-n] [--downloads|--images|--all]  # delete build state, tarballs, stale images
 ```
 
@@ -1069,7 +1070,8 @@ keep in mind when touching image assembly:
 ## CI
 
 `.github/workflows/ci.yml`: `base` → `glibc` (and `kernel` in parallel) → `build` matrix →
-`rootfs` → `boot` → `publish-oci`. Each package job uses `.github/actions/build-package`,
+`rootfs` → `boot` → `publish-oci`, with `k8s` (test/k8s.sh, on KVM) beside `boot` and
+gating nothing. Each package job uses `.github/actions/build-package`,
 which stages a glibc-only sysroot via `SYSROOT_DIR=sysroot` so each package artifact
 contains only its own files, and caches on a hash that deliberately includes
 `glibc/env.sh` — a glibc bump must rebuild everything.
