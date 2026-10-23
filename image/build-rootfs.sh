@@ -188,8 +188,9 @@ repro_tar() {
 # because a systemd that cannot run is still a systemd someone will try to run. This
 # runs before the trim so the strip pass below has less to walk.
 if [ "$flavour" = oci ]; then
-    # The kernel. The host's is the one the container will be running on.
-    rm -rf boot
+    # The kernel. The host's is the one the container will be running on. Its
+    # /usr/lib/modules/<release> holds nothing but a link to boot/config.
+    rm -rf boot usr/lib/modules
 
     # systemd, in the four places it installs itself: its own tree (36 MB of units,
     # generators, the executor and the private libsystemd-shared/-core), udev, the

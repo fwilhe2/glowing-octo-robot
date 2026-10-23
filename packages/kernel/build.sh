@@ -167,6 +167,13 @@ make container.config
 #   NFT_REDIR    `redirect`, used by service meshes and Calico's nftables dataplane
 #   NF_TABLES_NETDEV  the netdev family, ingress hooks on an interface rather than a
 #                table — Calico's nftables dataplane and Cilium's host firewall
+# and two x_tables extensions that kubeadm's preflight requires of every node, whatever
+# mode kube-proxy runs in — its SystemVerification check reads this kernel's config
+# (through /usr/lib/modules/<release>/config, below) and refuses to init or join without
+# them. They are also what the iptables dataplanes of flannel and Calico use, through
+# NFT_COMPAT here:
+#   NETFILTER_XT_TARGET_REDIRECT  `-j REDIRECT` (kubeadm asks for it as IP_NF_TARGET_REDIRECT)
+#   NETFILTER_XT_MATCH_COMMENT    `-m comment`, which every kube-proxy and CNI rule carries
 cat > kernel/configs/k8s.config <<'EOF'
 CONFIG_NFT_NUMGEN=y
 CONFIG_NFT_REJECT=y
@@ -174,6 +181,8 @@ CONFIG_NF_CT_NETLINK=y
 CONFIG_VXLAN=y
 CONFIG_NFT_REDIR=y
 CONFIG_NF_TABLES_NETDEV=y
+CONFIG_NETFILTER_XT_TARGET_REDIRECT=y
+CONFIG_NETFILTER_XT_MATCH_COMMENT=y
 EOF
 make k8s.config
 
@@ -856,3 +865,16 @@ install -D -m 644 "$kernel_image" $ROOTFS/boot/bzImage
 # changing. It is ~250 KB and it is the only record of how the kernel next to it was
 # configured, which is worth that on its own when a boot misbehaves.
 install -D -m 644 .config $ROOTFS/boot/config
+
+# And under the name software asks for it by. There are no modules, but there is a
+# /usr/lib/modules/<release>, for two consumers that look there and nowhere this image
+# has: kubeadm's preflight reads the kernel config from a list of conventional paths
+# (/proc/config.gz, /boot/config-<release>, /usr/lib/modules/<release>/config — the
+# last is where Fedora ships it) and fails the node when it finds none; and kube-proxy's
+# DaemonSet, like Calico's and Cilium's, bind-mounts the host's /lib/modules, which on a
+# read-only root nothing can create at runtime, so every one of its pods fails with
+# "mkdir /lib/modules: read-only file system". A symlink rather than a second copy, and
+# /proc/config.gz stays off (vm.config) for the same reason: one copy is enough.
+release=$(make -s kernelrelease)
+install -d $ROOTFS/usr/lib/modules/$release
+ln -sfn ../../../../boot/config $ROOTFS/usr/lib/modules/$release/config

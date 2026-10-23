@@ -7,6 +7,13 @@ as the case that justifies the mechanism.
 
 Unverified claims are marked *(verify)*.
 
+`tools/k8s-demo.sh` is the prototype for the stack this note describes, without the
+mechanism: it copies the upstream release binaries (kubeadm, kubelet, kubectl, CRI-O's
+static bundle) into each guest's `/var` over ssh, starts them from units in
+`/run/systemd/system`, and forms a three-node kubeadm cluster on the unmodified image.
+Everything it has to work around is a requirement on the extension, and the findings
+below marked *(demo)* come from it.
+
 ## The problem
 
 The disk image is one EROFS file behind a dm-verity root hash. That is the design: any
@@ -79,7 +86,9 @@ What issue #83 listed, checked against the tree as it is now:
 | Go in the builder | done (`golang-go` in `builder/deps.txt`, for podman) |
 | `NFT_NUMGEN`, `NFT_REJECT`, `NF_CT_NETLINK` | done (`k8s.config`): kube-proxy's nftables mode |
 | `VXLAN`, `NFT_REDIR`, `NF_TABLES_NETDEV` | done (`k8s.config`): CNI overlays and nftables dataplanes |
-| per-instance hostname | **missing**; `image/files/etc/hostname` is `flfs` on every machine |
+| `NETFILTER_XT_TARGET_REDIRECT`, `NETFILTER_XT_MATCH_COMMENT` | done (`k8s.config`): kubeadm's preflight requires them *(demo)* |
+| `/usr/lib/modules/<release>/config` | done (`packages/kernel`): kubeadm's preflight and kube-proxy's hostPath *(demo)* |
+| per-instance hostname | done, by the VMM: `systemd.hostname=` on the kernel command line *(demo)* |
 | `SYSEXT_LEVEL` in os-release | **missing**; see below |
 
 kube-proxy should run in **nftables mode** (GA since 1.33 *(verify)*). The iptables mode
@@ -90,10 +99,29 @@ check after `make vm.config` holds it like the others. Issue #83 named the connt
 `NF_CONNTRACK_NETLINK`; the symbol is `NF_CT_NETLINK`, and that check is what said so.
 
 **The hostname** is the one base change that is about identity, not code. A cluster of
-nodes all named `flfs` is not a cluster. The VMM can pass `systemd.hostname=` on the
-kernel command line, which systemd applies over `/etc/hostname` *(verify)*, alongside the
+nodes all named `flfs` is not a cluster. The VMM passes `systemd.hostname=` on the
+kernel command line, which systemd applies over `/etc/hostname` *(demo)*, alongside the
 `systemd.machine_id=` `VAR_DISK` already passes. Identity belongs to the VM, not to the
-image, the same reasoning that put the machine id beside the `/var` disk.
+image, the same reasoning that put the machine id beside the `/var` disk. So does a
+node's address on a cluster network: the demo hands systemd-networkd a `.network` file as
+a `network.network.<name>` credential, which systemd-network-generator writes into
+`/run/systemd/network` at boot *(demo)*, and needs nothing from the image.
+
+**`/usr/lib/modules/<release>` exists, though there are no modules** *(demo)*, holding a
+link to `/boot/config`. Two things looked for it. kubeadm's preflight reads the kernel
+config from a list of conventional paths — `/proc/config.gz`, `/boot/config-<release>`,
+`/usr/lib/modules/<release>/config` and a few more, but not plain `/boot/config` — and
+fails the node when it finds none. And kube-proxy's DaemonSet bind-mounts the host's
+`/lib/modules` (Calico's and Cilium's do too), which a read-only root cannot grow at
+runtime, so every kube-proxy pod failed with *mkdir /lib/modules: read-only file system*.
+`packages/kernel/build.sh` installs it; the OCI flavour removes it with `/boot`.
+
+Once kubeadm could read the config it had two complaints, and both are in `k8s.config`
+now: `NETFILTER_XT_TARGET_REDIRECT` and `NETFILTER_XT_MATCH_COMMENT`. They are x_tables
+extensions, which the nftables-mode kube-proxy does not use, but kubeadm's
+SystemVerification requires them of every node whatever the mode, and the iptables
+dataplanes of flannel and Calico use them through `NFT_COMPAT`. With both changes the
+demo needs no workaround for the kernel at all *(demo)*.
 
 ### The extension
 
@@ -157,6 +185,7 @@ Kubernetes stack assumes it can write to paths that are read-only here:
 | `/etc/kubernetes` | kubeadm: kubeconfigs, PKI, static pod manifests for the control plane |
 | `/etc/cni/net.d` | the CNI DaemonSet (flannel, Calico) installs its network config here |
 | `/opt/cni/bin` | the same DaemonSet's init container copies its plugin binaries here |
+| `/usr/libexec/kubernetes` | kubelet and the controller manager, for FlexVolume plugins; created at start *(demo)* |
 | `/var/lib/kubelet`, `/var/lib/containers`, `/var/lib/etcd` | fine, on the `/var` disk |
 
 There are two options, and the first is the one to try:
@@ -181,12 +210,26 @@ node's PKI and identity at every reboot. That's a requirement the extension can 
 both flannel and Calico let the install path be configured, so `/var/lib/cni/bin` on the
 disk works without a writable `/opt`. *(verify: which CNIs make this awkward.)*
 
-Two more fixes belong in the extension's default configuration, not in the base:
+The demo answers `/etc` the bluntest way, an overlayfs over all of it with the upper
+half on `/var`, which works and proves nothing about either option above; it is the one
+part of the demo that should not survive into the extension.
+
+`/usr/libexec/kubernetes` is configuration rather than a writable path, which is how
+distributions with a read-only `/usr` answer it *(verify: Flatcar's docs)*: kubelet's
+`volumePluginDir` and the controller manager's `--flex-volume-plugin-dir` both point under
+`/var/lib/kubelet`, as the demo does. Without the second, the controller manager's static
+pod has a `DirectoryOrCreate` hostPath on `/usr` and should never start *(verify)*.
+
+More fixes belong in the extension's default configuration, not in the base:
 
 - **kubelet `resolvConf: /run/systemd/resolve/resolv.conf`**, not `/etc/resolv.conf`. That
   is resolved's `127.0.0.53` stub, which can't be reached from a pod's network namespace.
   The symptom is pods with no DNS on a node that resolves fine.
 - **`cgroupDriver: systemd`** on both kubelet and CRI-O.
+- **kubelet `--node-ip`** whenever a VM has more than one NIC, and qemu's user-mode one
+  is always 10.0.2.15: left to choose, every node reports the same InternalIP *(demo)*.
+- **CRI-O's runtime is the base's** `/usr/bin/crun` with `/usr/libexec/podman/conmon`;
+  the static bundle's own copies are not needed *(demo)*.
 
 ## Getting an extension into a VM
 
