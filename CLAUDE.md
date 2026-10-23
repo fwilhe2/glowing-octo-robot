@@ -156,6 +156,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./tools/boot-firecracker.sh       # the same, in Firecracker (Linux + KVM; ssh over vsock)
 ./tools/boot-vz.sh                # the same, in Virtualization.framework via vfkit (macOS)
 ./tools/ssh.sh [--root] [cmd...]  # passwordless ssh into the guest any of those started, as `user` or root
+./tools/k8s-demo.sh up|ps|kubectl|ssh|down  # a 3-node kubeadm cluster from upstream binaries (docs/sysext.md)
 ./tools/clean.sh [-n] [--downloads|--images|--all]  # delete build state, tarballs, stale images
 ```
 
