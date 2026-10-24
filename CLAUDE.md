@@ -819,14 +819,14 @@ What it takes, each a package with its reasons in its own files:
 
 | package | what it is for |
 | --- | --- |
-| `podman` | Go. `bin/podman` and `quadlet` (with its system and user generator links), the units from `install.systemd`, none enabled, and `/etc/containers/policy.json` + `registries.conf`, the two files podman cannot start without. Everything else is compiled-in default. |
-| `conmon` | the per-container monitor that makes podman daemonless. C, on glib. |
+| `podman` | Go. `bin/podman` and `quadlet` (with its system and user generator links), the units from `install.systemd`, none enabled. `/etc/containers/policy.json` and `registries.conf`, the two files podman cannot start without, are in `image/files`: CRI-O reads them too. Everything else is compiled-in default. |
+| `conmon` | the per-container monitor that makes podman daemonless, and CRI-O's too. C, on glib, in `/usr/bin` where both engines find it on `$PATH`. |
 | `netavark`, `aardvark-dns` | the network backend and its DNS server. Rust, two tarballs each (below). |
 | `nftables`, `jansson` | netavark 2.x has **no iptables driver**: it hands JSON to `nft -j`, which only exists in an nft built `--with-json`. |
 | `glib`, `pcre2` | for conmon, and only `libglib-2.0` ships of glib's five libraries — which is also why there is no libffi package: only GObject needs it, and `libffi-dev` is in `builder/deps.txt` for glib's build alone, like GMP for gcc. |
 | `libseccomp` | the default seccomp profile podman hands crun, and systemd's filters. |
 
-Helpers live in `/usr/libexec/podman`, the first place podman looks. The build tags are
+Helpers live in `/usr/libexec/podman`, the first place podman looks; conmon is the exception, in `/usr/bin`, being every engine's. The build tags are
 named in `packages/podman/build.sh` rather than probed: `seccomp systemd
 exclude_graphdriver_btrfs containers_image_openpgp` (pure-Go signatures instead of gpgme)
 `grpcnotrace`, with SQLite compiled in. Storage is `/var/lib/containers`, which is the

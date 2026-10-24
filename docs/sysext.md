@@ -152,7 +152,7 @@ confexts/kubernetes.raw        confext: the same, for /etc
 └── etc/
     ├── kubernetes → /var/lib/kubernetes
     ├── cni/net.d → /var/lib/cni/net.d
-    ├── crio/crio.conf.d/10-flfs.conf                conmon's path, plugin_dirs
+    ├── crio/crio.conf.d/10-flfs.conf                crun, plugin_dirs
     ├── crictl.yaml
     └── extension-release.d/extension-release.kubernetes
 ```
@@ -267,10 +267,10 @@ Those drop-ins override what kubeadm writes, and they ship in the sysext's `/usr
 Putting it in the cluster's kubeadm configuration would be wrong, because it is a property
 of the OS, not of the cluster.
 
-What CRI-O needs is one drop-in in the confext: `monitor_path` for conmon, which lives in
-`/usr/libexec/podman` and not on `$PATH`, and `plugin_dirs = ["/usr/libexec/cni",
-"/opt/cni/bin"]`, the extension's plugins first. crun is CRI-O's default runtime and is in
-`/usr/bin`, and pinns is in the sysext's `/usr/bin`, so neither needs naming.
+What CRI-O needs is one drop-in in the confext: crun as its runtime, and `plugin_dirs =
+["/usr/libexec/cni", "/opt/cni/bin"]`, the extension's plugins first. conmon is in the
+base's `/usr/bin` (#192), pinns in the sysext's, so CRI-O finds both on `$PATH`, and the
+policy and registries are the base's `/etc/containers`.
 
 CRI-O also refuses to start unless it can create two directories under `/etc/crio`
 *(demo)*, and they get the two answers above. `policies/`, for per-namespace signature

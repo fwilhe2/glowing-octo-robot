@@ -278,11 +278,11 @@ if [ "$flavour" = oci ]; then
 
     # The container engine, which in a container is a niche (podman-in-podman) rather
     # than the point, and 40-odd MB of Go: podman, quadlet and the helpers in
-    # usr/libexec/podman — conmon, netavark, aardvark-dns — plus its configuration. Its
-    # units and generators went with usr/lib/systemd above. crun stays: it is a few
-    # hundred KB, it is what test/container.sh-style bundles run on, and it was in this
-    # image before podman was.
-    rm -rf usr/bin/podman usr/libexec/podman etc/containers
+    # usr/libexec/podman — netavark, aardvark-dns — plus conmon and the containers/image
+    # configuration. Its units and generators went with usr/lib/systemd above. crun
+    # stays: it is a few hundred KB, it is what test/container.sh-style bundles run on,
+    # and it was in this image before podman was.
+    rm -rf usr/bin/podman usr/libexec/podman usr/bin/conmon etc/containers
 
     # And rootless containers, which are a guest's feature: the ID-map helpers with their
     # file capabilities (which an OCI layer tar would not carry anyway), pasta, and the

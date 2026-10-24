@@ -52,11 +52,10 @@ cat > "$ROOTFS/usr/lib/systemd/system/multi-user.target.d/10-crio.conf" <<'UNIT'
 Upholds=crio.service
 UNIT
 
-# CRI-O on the image's runtime: crun from /usr/bin and conmon from podman's helper
-# directory, which is not on $PATH and so the one path that has to be named. The policy
-# and registries are podman's, already in /etc/containers. CNI plugins: the extension's
-# own first, then wherever a cluster's CNI DaemonSet copies its binaries. pinns is found
-# on $PATH; the storage driver is overlay by default.
+# CRI-O on the image's runtime: crun and conmon from the base's /usr/bin, the policy and
+# registries from its /etc/containers (image/files). CNI plugins: the extension's own
+# first, then wherever a cluster's CNI DaemonSet copies its binaries. conmon and pinns
+# are found on $PATH; the storage driver is overlay by default.
 install -d "$ROOTFS/etc/crio/crio.conf.d"
 # Per-namespace signature policies, which an administrator would supply. CRI-O insists on
 # creating the directory at start and refuses to run when /etc is read-only, so it ships,
@@ -78,7 +77,6 @@ default_runtime = "crun"
 [crio.runtime.runtimes.crun]
 runtime_path = "/usr/bin/crun"
 runtime_root = "/run/crun"
-monitor_path = "/usr/libexec/podman/conmon"
 
 [crio.image]
 signature_policy = "/etc/containers/policy.json"
