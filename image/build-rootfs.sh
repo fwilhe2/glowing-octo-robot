@@ -718,18 +718,27 @@ if [ "$flavour" = erofs ]; then
     # handed, so this is the one place it can be set.
     chmod 555 "$IMAGE"
 
-    # newuidmap and newgidmap (packages/shadow) need CAP_SETUID and CAP_SETGID to write a
-    # rootless container's ID maps from /etc/subuid and /etc/subgid, and get exactly that,
-    # as file capabilities, rather than setuid root: the image's rule is that nothing is
-    # setuid, and Fedora ships them this way. They reach the disk image through the tar
+    # File capabilities, which a package declares rather than sets: CI's package tars
+    # carry no xattrs, so `setcap` in a package's build.sh would not survive the trip to
+    # this tree. A package that needs one writes usr/share/flfs/capabilities/<pkg>, one
+    # "<path> <capabilities>" per line, and whichever assembly takes its files applies it —
+    # this one, or image/build-extension.sh for a package in a system extension. The
+    # image's rule is that nothing is setuid, and a capability is what replaces it: newuidmap
+    # and newgidmap (packages/shadow) get CAP_SETUID and CAP_SETGID for a rootless
+    # container's ID maps, as Fedora ships them. They reach the disk image through the tar
     # mkfs.erofs is fed below, which carries security.capability and no other xattr. The
-    # container flavour removes both programs, rootless containers inside a container
-    # being nobody's use case.
-    if [ -e usr/bin/newuidmap ]; then
-        setcap cap_setuid=ep usr/bin/newuidmap
-        setcap cap_setgid=ep usr/bin/newgidmap
-        getcap usr/bin/newuidmap usr/bin/newgidmap
-    fi
+    # container flavour applies none: an OCI layer would not carry them either.
+    apply_capabilities() { # tree
+        local records="$1/usr/share/flfs/capabilities" path caps
+        [ -d "$records" ] || return 0
+        while read -r path caps; do
+            [ -n "$path" ] || continue
+            [ -f "$1/$path" ] || { echo "error: $records names $path, which is not a file" >&2; exit 1; }
+            setcap "$caps" "$1/$path"
+            getcap "$1/$path"
+        done < <(cat "$records"/*)
+    }
+    apply_capabilities .
 
     # An empty /etc/machine-id, rather than none. On a read-only root PID 1 generates an
     # id at every boot and bind-mounts it over this file from /run; with no file to mount
@@ -781,6 +790,10 @@ UNIT
     # costs bytes. The container keeps all of it: it has no fstab.
     find var home root -mindepth 1 -delete
 fi
+
+# The capability records are an intermediate form, like the component records, and in the
+# container flavour they would name files the subtractions above have deleted.
+rm -rf usr/share/flfs/capabilities
 
 chown -R root:root etc
 
@@ -1104,7 +1117,7 @@ if [ "$flavour" = erofs ]; then
     rm -f /usr/local/output/rootfs.erofs
     #
     # From a tar stream rather than the directory, for the one extended attribute the image
-    # has: newuidmap's and newgidmap's file capabilities, set further up. mkfs.erofs given a
+    # has: the file capabilities packages declare, applied further up. mkfs.erofs given a
     # directory records every xattr it can read, and on an SELinux host that includes the
     # security.selinux label the *host* gives every file — which made a Fedora build differ
     # from CI's in nothing else, and which cannot be removed, the kernel reporting a label

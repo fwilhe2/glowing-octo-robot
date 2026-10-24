@@ -37,3 +37,12 @@ make -C lib
 make -C src newuidmap newgidmap
 install -D -m 755 src/newuidmap $ROOTFS/usr/bin/newuidmap
 install -D -m 755 src/newgidmap $ROOTFS/usr/bin/newgidmap
+
+# CAP_SETUID and CAP_SETGID, which are what writing another user namespace's ID maps
+# takes. Declared rather than set: whichever assembly takes these files applies it
+# (image/build-rootfs.sh has why), and nothing here is setuid.
+install -d $ROOTFS/usr/share/flfs/capabilities
+cat > $ROOTFS/usr/share/flfs/capabilities/shadow <<'CAPS'
+usr/bin/newuidmap cap_setuid=ep
+usr/bin/newgidmap cap_setgid=ep
+CAPS

@@ -77,13 +77,15 @@ assemble() { # class tree
 
     # The same construction as the root image (build-rootfs.sh): from a tar stream, so
     # that no xattr the host put on the files — an SELinux label above all — reaches the
-    # image, with every owner root and every time clamped.
+    # image, only the file capabilities staged mode applied, with every owner root and
+    # every time clamped.
     local erofs_repro=()
     if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
         erofs_repro=(-T "$SOURCE_DATE_EPOCH" --all-time -U 00000000-0000-0000-0000-000000000000)
     fi
     mkdir -p "/usr/local/output/$out"
     tar --create --format=pax --sort=name --numeric-owner --owner=0 --group=0 \
+        --xattrs --xattrs-include='security.capability' \
         --mtime="@${SOURCE_DATE_EPOCH:-$(date +%s)}" --clamp-mtime \
         --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
         --directory "$tree" . > /tmp/extension.tar
@@ -116,6 +118,19 @@ case "$mode" in
             [ "$magic" = $'\177ELF' ] || continue
             strip --strip-unneeded "$f" || { echo "error: strip failed on $f" >&2; exit 1; }
         done < <(find . -type f -print0)
+
+        # File capabilities the packages declare (build-rootfs.sh explains the records),
+        # applied after the strip, which would drop them, and carried into the image by
+        # the tar stream in assemble().
+        if [ -d usr/share/flfs/capabilities ]; then
+            while read -r path caps; do
+                [ -n "$path" ] || continue
+                [ -f "$path" ] || { echo "error: a capability record names $path, which is not a file" >&2; exit 1; }
+                setcap "$caps" "$path"
+                getcap "$path"
+            done < <(cat usr/share/flfs/capabilities/*)
+            rm -rf usr/share/flfs/capabilities
+        fi
 
         mkdir -p /tmp/staged-sysext /tmp/staged-confext
         rm -rf /tmp/staged-sysext/* /tmp/staged-confext/*
