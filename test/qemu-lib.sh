@@ -51,7 +51,8 @@ QEMU_DIED='Kernel panic|Attempted to kill init|Requesting system (poweroff|reboo
 #   vz       Virtualization.framework's shape: a virtio console (hvc0) and no UART,
 #            virtiofs when VIRTIOFS_SOCKET names a virtiofsd, vsock when VSOCK_CID is set.
 #
-# VAR_DISK is only wired into pc; the other two are about the devices, not the state.
+# VAR_DISK and SYSEXTS are only wired into pc; the other two are about the devices, not
+# the state.
 qemu_setup() {
     ARCH=$(normalize_arch "${ARCH:-}")
     PROFILE="${QEMU_PROFILE:-pc}"
@@ -230,13 +231,21 @@ qemu_argv() {
     local root_args devices=() display=(-nographic) nic
     root_args=$(cat "$(root_cmdline_file)")
     qemu_var_disk
+    qemu_sysexts
     case "$PROFILE" in
         pc)
             nic=(-nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}")
             [ -z "${QEMU_NIC_ARGS:-}" ] || nic=("${QEMU_NIC_ARGS[@]}")
+            # Every disk an explicit -device, in this order: the root first, because the
+            # verity table on the command line names it /dev/vda; the /var disk second,
+            # which its mount-extra= names /dev/vdb; extensions after, found by serial.
+            # qemu creates if=virtio disks after all explicit devices, so mixing the two
+            # forms would put the extensions first.
             devices=(
-                -drive file="$ROOTFS",format=raw,if=virtio,readonly=on
+                -drive id=root,file="$ROOTFS",format=raw,if=none,readonly=on
+                -device virtio-blk-pci,drive=root
                 "${QEMU_VAR_DRIVE[@]}"
+                "${QEMU_SYSEXT_DRIVES[@]}"
                 "${nic[@]}"
             ) ;;
         microvm)
@@ -275,7 +284,7 @@ qemu_argv() {
         -m "$MEM" -smp "$CPUS"
         -kernel "$KERNEL"
         "${devices[@]}"
-        -append "$root_args console=$CONSOLE init=$INIT systemd.set_credential=login.noauth:yes${QEMU_APPEND_EXTRA:-}${QEMU_VAR_APPEND:-}"
+        -append "$root_args console=$CONSOLE init=$INIT systemd.set_credential=login.noauth:yes${QEMU_APPEND_EXTRA:-}${QEMU_VAR_APPEND:-}${QEMU_SYSEXT_APPEND:-}"
         "${display[@]}"
         -no-reboot
     )
@@ -317,6 +326,41 @@ qemu_seed_var_disk() { # disk size tree
     "${run[@]}" mkfs.ext4 -q -F -d "$tree" "$disk"
 }
 
+# System extensions attached the way the root is (docs/sysext.md): SYSEXTS names them,
+# and each <name> becomes a read-only virtio disk of EXTENSIONS/extensions/<name>.raw —
+# and of EXTENSIONS/confexts/<name>.raw too, when there is one — with
+# systemd.mount-extra= mounting it at /run/extensions/<name> (/run/confexts/<name>).
+# Those mounts are ordered before local-fs.target and systemd-sysext.service after it, so
+# the merge finds a directory extension there, on a machine whose /var is RAM as much as
+# on one with a disk. One file serves any number of guests, like the root.
+#
+# EXTENSIONS defaults to the directory the image is in, where tools/build-image.sh and
+# tools/fetch-image.sh both put them. The disks are found by serial, not by position,
+# because a VAR_DISK may or may not come first.
+qemu_sysexts() {
+    QEMU_SYSEXT_DRIVES=() QEMU_SYSEXT_APPEND=
+    [ -n "${SYSEXTS:-}" ] || return 0
+    local name class dir file serial ext_dir="${EXTENSIONS:-$(dirname "$ROOTFS")}"
+    for name in $SYSEXTS; do
+        [ -f "$ext_dir/extensions/$name.raw" ] || {
+            echo "error: SYSEXTS names $name, but there is no $ext_dir/extensions/$name.raw" >&2
+            echo "       (tools/build-image.sh builds it, tools/fetch-image.sh downloads CI's)" >&2
+            exit 1
+        }
+        for class in ext conf; do
+            dir=extensions; [ "$class" = ext ] || dir=confexts
+            file="$ext_dir/$dir/$name.raw"
+            [ -f "$file" ] || continue
+            # A virtio-blk serial is at most 20 bytes, and udev names the disk by it.
+            serial="$class-$name"
+            [ "${#serial}" -le 20 ] || { echo "error: extension name $name is too long for a disk serial" >&2; exit 1; }
+            QEMU_SYSEXT_DRIVES+=(-drive "file=$file,format=raw,if=none,readonly=on,id=$serial"
+                                 -device "virtio-blk-pci,drive=$serial,serial=$serial")
+            QEMU_SYSEXT_APPEND+=" systemd.mount-extra=/dev/disk/by-id/virtio-$serial:/run/$dir/$name:erofs:ro"
+        done
+    done
+}
+
 qemu_var_disk() {
     QEMU_VAR_DRIVE=() QEMU_VAR_APPEND=
     [ -n "${VAR_DISK:-}" ] || return 0
@@ -332,7 +376,7 @@ qemu_var_disk() {
     if [ ! -s "$VAR_DISK.machine-id" ]; then
         od -An -tx1 -N16 /dev/urandom | tr -d ' \n' > "$VAR_DISK.machine-id"
     fi
-    QEMU_VAR_DRIVE=(-drive "file=$VAR_DISK,format=raw,if=virtio")
+    QEMU_VAR_DRIVE=(-drive "id=var,file=$VAR_DISK,format=raw,if=none" -device virtio-blk-pci,drive=var)
     QEMU_VAR_APPEND=" systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs"
     QEMU_VAR_APPEND+=" systemd.machine_id=$(cat "$VAR_DISK.machine-id")"
 }
