@@ -13,8 +13,8 @@
 #
 # What the cluster runs on is the image and its kubernetes system extension, as CI built
 # them: the pair is next to the image (tools/k8s-demo.sh's EXTENSIONS), merged at boot from
-# each node's /var disk. Not checked here, because the demo provides it rather than the
-# image: the pod network (bridge and routes).
+# each node's /var disk, and the pod network is a stock flannel DaemonSet writing through
+# the extension's links into /var.
 #
 # It needs KVM. Three guests running a control plane under emulation take long enough
 # that a timeout would say nothing about the image, so without a writable /dev/kvm this

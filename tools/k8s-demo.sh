@@ -29,12 +29,12 @@
 # router's static lease answers with 10.0.0.1N, and kubelet picks that address because it
 # is the only one there is. Nothing about the network is node configuration.
 #
-# Pod networking is deliberately the dullest thing that works, so that the demo is about
-# the image rather than a CNI: the bridge and host-local plugins from CRI-O's bundle, one
-# /24 per node as the controller manager allocates them, a static route per peer node
-# across the shared segment, and a masquerade for traffic leaving the pod network. No
-# CNI daemonset, nothing to pull for it. kube-proxy runs in nftables mode, which is what
-# the kernel's k8s.config fragment (packages/kernel/build.sh) is written for.
+# The pod network is flannel, from its pinned release manifest, unmodified but for one
+# line: VXLAN between the nodes over the router's segment, with its nftables backend, which
+# is what the kernel's k8s.config fragment (packages/kernel/build.sh) is written for, as is
+# kube-proxy's nftables mode. A stock CNI DaemonSet is the point: it writes its config to
+# /etc/cni/net.d and its plugin to /opt/cni/bin, both links into /var the extension ships,
+# and delegates to the extension's bridge and host-local plugins.
 #
 # Overrides:
 #   NODES          number of guests, the first is the control plane   (default 3)
@@ -71,7 +71,7 @@ API_PORT="${API_PORT:-6443}"
 ROUTER_MEM="${ROUTER_MEM:-384}"
 
 STATE=output/k8s
-POD_CIDR=10.244.0.0/16
+POD_CIDR=10.244.0.0/16   # flannel's "Network" in its manifest, which has to agree
 SVC_CIDR=10.96.0.0/12
 
 node_name() { echo "k8s-$1"; }
@@ -295,55 +295,38 @@ EOF
 # argument is quoted for the remote shell; stdin goes along, for `apply -f -`.
 k() { node_ssh 1 "kubectl --kubeconfig=/etc/kubernetes/admin.conf $(printf '%q ' "$@")"; }
 
-has_pod_cidr() {
-    [ -n "$(k get node "$(node_name "$1")" -o jsonpath='{.spec.podCIDR}')" ]
+# flannel's release manifest, pinned to the bytes it had when FLANNEL_VERSION was chosen
+# and kept in downloads/k8s/. One line differs from upstream's: the nftables backend, for a
+# kernel with no legacy iptables tables (packages/kernel/build.sh) — checked, so that a
+# manifest whose default moved is an error rather than a silent no-op.
+FLANNEL_VERSION=v0.28.10
+FLANNEL_SHA256=393bdbce53eb50c8eb97dd513b218518b7d6e7985dc7b889be956e112a711084
+flannel_manifest() {
+    local file="downloads/k8s/kube-flannel-$FLANNEL_VERSION.yml"
+    mkdir -p downloads/k8s
+    if [ ! -f "$file" ]; then
+        "${CURL_DOWNLOAD[@]}" -o "$file.part" \
+            "https://github.com/flannel-io/flannel/releases/download/$FLANNEL_VERSION/kube-flannel.yml"
+        mv "$file.part" "$file"
+    fi
+    echo "$FLANNEL_SHA256  $file" | sha256sum --check --quiet || {
+        echo "error: $file is not the manifest $FLANNEL_VERSION was pinned to — delete it and try again" >&2
+        rm -f "$file"
+        exit 1
+    }
+    grep -q '"EnableNFTables": false' "$file" || { echo "error: $file has no EnableNFTables line to set" >&2; exit 1; }
+    sed 's/"EnableNFTables": false/"EnableNFTables": true/' "$file"
 }
 
-# Once the controller manager has given every node its /24: each node bridges its own pods
-# and routes every other node's /24 to that node across the cluster segment, and pod
-# traffic leaving the pod network leaves as the node. CRI-O picks the config up from
-# /etc/cni/net.d — a link into /var the extension ships — by itself, and the node turns
-# Ready.
+# flannel takes the /24 the controller manager gives each node, writes the CNI config and
+# installs its plugin through the extension's links into /var, and routes between nodes
+# over VXLAN; a node turns Ready once its config exists.
 pod_network() {
-    local n m cidr
-    for n in $(seq 1 "$NODES"); do retry 120 has_pod_cidr "$n"; done
+    flannel_manifest | k apply -f -
+    k -n kube-flannel rollout status daemonset/kube-flannel-ds --timeout=300s
+    local n
     for n in $(seq 1 "$NODES"); do
-        cidr=$(k get node "$(node_name "$n")" -o jsonpath='{.spec.podCIDR}')
-        echo "   $(node_name "$n")  pods in $cidr"
-        node_ssh "$n" "cat > /etc/cni/net.d/10-flfs.conflist" <<EOF
-{
-  "cniVersion": "1.0.0",
-  "name": "flfs",
-  "plugins": [
-    {
-      "type": "bridge",
-      "bridge": "cni0",
-      "isGateway": true,
-      "ipMasq": false,
-      "hairpinMode": true,
-      "ipam": {
-        "type": "host-local",
-        "ranges": [[{ "subnet": "$cidr" }]],
-        "routes": [{ "dst": "0.0.0.0/0" }]
-      }
-    },
-    { "type": "portmap", "capabilities": { "portMappings": true } }
-  ]
-}
-EOF
-        node_ssh "$n" "nft -f -" <<EOF
-table ip flfs-k8s
-delete table ip flfs-k8s
-table ip flfs-k8s {
-    chain postrouting {
-        type nat hook postrouting priority srcnat + 10;
-        ip saddr $POD_CIDR ip daddr != $POD_CIDR masquerade
-    }
-}
-EOF
-        for m in $(seq 1 "$NODES"); do
-            [ "$m" = "$n" ] || node_ssh "$m" "ip route replace $cidr via $(node_ip "$n")"
-        done
+        echo "   $(node_name "$n")  pods in $(k get node "$(node_name "$n")" -o jsonpath='{.spec.podCIDR}'), $(node_ssh "$n" ls /etc/cni/net.d | tr '\n' ' ')"
     done
 }
 
@@ -514,7 +497,7 @@ up() {
     say "kubeadm join on the workers"
     on_nodes 2 join_worker
 
-    say "Pod network"
+    say "Pod network: flannel $FLANNEL_VERSION"
     pod_network
     k wait --for=condition=Ready nodes --all --timeout=300s
     # kube-proxy too: a worker that joined seconds ago may not have its Service rules yet,

@@ -7,7 +7,8 @@ systemd-sysext and systemd-confext merge extensions at boot, the image declares
 `extensions/kubernetes/` (#188), `tools/build-image.sh` assembles that into a sysext and
 a confext, and `tools/k8s-demo.sh` forms its cluster on them with nothing copied into a
 guest (#189). podman is an extension too (#192), so the base is the container runtime
-and the engine is a choice. Still open: flannel (#190), verity (#191). This is the design for
+and the engine is a choice, and the demo's pod network is a stock flannel (#190). Still
+open: verity on extensions (#191). This is the design for
 adding software to the immutable disk image *without changing it*, with a Kubernetes node
 as the case that justifies the mechanism.
 
@@ -360,15 +361,16 @@ sockets go at a relative `output/k8s/<node>.sock`, not under an absolute path. A
 OpenSSH's `PerSourcePenalties` refuses a burst of connections that never authenticate,
 which looks exactly like packet loss to a test that only reads banners.
 
-**The pod network becomes flannel**, in VXLAN mode with its nftables backend
-(`EnableNFTables`), from a release manifest pinned and checksummed like the binaries.
-Today's bridge plugin with static routes and an nft masquerade table was chosen to keep a
-CNI out of the picture. But once paths are symlinks, a stock CNI DaemonSet is precisely
-what the test should exercise: flannel writes `/etc/cni/net.d` and `/opt/cni/bin` through
-the links, and its plugin delegates to the extension's `bridge` and `host-local` through
-CRI-O's `plugin_dirs`. That deletes `pod_network` and the masquerade table from the demo
-*(verify: flannel's nftables mode against `k8s.config`, and that its image comes from
-ghcr.io rather than Docker Hub's rate limits)*.
+**The pod network is flannel** (#190), in VXLAN mode with its nftables backend, from
+its release manifest pinned by checksum in `tools/k8s-demo.sh` and changed in one line,
+`"EnableNFTables": true`. The bridge plugin with static routes and an nft masquerade table
+was chosen at first to keep a CNI out of the picture. But once paths are links, a stock
+CNI DaemonSet is precisely what the test should exercise, and it does: flannel writes
+`10-flannel.conflist` to `/etc/cni/net.d` and its plugin to `/opt/cni/bin`, both landing
+on the `/var` disk through the extension's links, and its plugin delegates to the
+extension's `bridge` and `host-local` through CRI-O's `plugin_dirs`. Its images are on
+ghcr.io, so Docker Hub's rate limits do not come into it, and its `flannel-ipv4` and
+`flannel-ipv6` nftables tables need nothing `k8s.config` does not already have *(demo)*.
 
 ## Getting an extension into a VM
 
@@ -469,7 +471,7 @@ mechanism, and worth an `examples/` entry now that the base supports sysext.
 4. ~~**The packages**~~: done (#188).
 5. ~~**The extension pair**~~: done (#189), assembled by `image/build-extension.sh staged`
    and booted by the demo seeded on `/var`; `setup-node.sh`, the `/etc` overlay and the
-   payload copy are gone. Flannel is #190.
+   payload copy are gone. Flannel too (#190).
 6. **Signing**, together with signed base releases.
 
 ## Open questions
