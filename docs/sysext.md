@@ -1,9 +1,13 @@
 # System extensions: a Kubernetes node without forking the image
 
-**Status: the mechanism is in the base; the Kubernetes extension is not built yet.**
+**Status: the mechanism is in the base, and the Kubernetes node is an extension of it.**
 systemd-sysext and systemd-confext merge extensions at boot, the image declares
-`SYSEXT_LEVEL=1` and `CONFEXT_LEVEL=1`, `tools/build-extension.sh` makes an extension
-image from a directory tree, and `test/sysext.sh` boots one (#187). This is the design for
+`SYSEXT_LEVEL=1` and `CONFEXT_LEVEL=1`, and `test/sysext.sh` boots one (#187).
+`packages/kubernetes`, `cri-o`, `cri-tools` and `cni-plugins` build into
+`extensions/kubernetes/` (#188), `tools/build-image.sh` assembles that into a sysext and
+a confext, and `tools/k8s-demo.sh` forms its cluster on them with nothing copied into a
+guest (#189). Still open: flannel (#190), verity (#191), and podman becoming an extension
+too (#192). This is the design for
 adding software to the immutable disk image *without changing it*, with a Kubernetes node
 as the case that justifies the mechanism.
 
@@ -129,10 +133,11 @@ demo needs no workaround for the kernel at all *(demo)*.
 ### The extension
 
 Two images from one build, with one version, because systemd merges `/usr` and `/etc`
-as separate classes:
+as separate classes. Both are named `kubernetes.raw`, because an image's file name has to
+be the name in its `extension-release.<name>`:
 
 ```
-kubernetes-<k8s version>-<arch>.raw            sysext: EROFS + verity, like rootfs.erofs
+extensions/kubernetes.raw      sysext: EROFS, like rootfs.erofs (verity: #191)
 ├── usr/
 │   ├── bin/kubelet, kubeadm, kubectl, crio, pinns, crictl
 │   ├── libexec/cni/bridge, host-local, loopback, portmap
@@ -143,7 +148,7 @@ kubernetes-<k8s version>-<arch>.raw            sysext: EROFS + verity, like root
 │   └── lib/extension-release.d/extension-release.kubernetes
 └── opt/cni/bin → /var/lib/cni/bin
 
-kubernetes-<k8s version>-<arch>.confext.raw    confext: the same, for /etc
+confexts/kubernetes.raw        confext: the same, for /etc
 └── etc/
     ├── kubernetes → /var/lib/kubernetes
     ├── cni/net.d → /var/lib/cni/net.d
@@ -156,10 +161,10 @@ kubernetes-<k8s version>-<arch>.confext.raw    confext: the same, for /etc
   `policy.json` and `registries.conf`, conmon and crun, all of which the base already
   ships. That's why `CLAUDE.md` calls it the natural pairing. containerd would bring a
   second image store and its own shim.
-- **kubelet and kubeadm build `CGO_ENABLED=0`** as upstream does, so they have no `NEEDED`
-  entries and the glibc coupling doesn't come up. CRI-O uses cgo (seccomp, gpgme or the
-  pure-Go signature tag podman already uses) and goes through the same sysroot flags as
-  podman. Both are Go, and the builder already has Go and pins it offline.
+- **Built as upstream builds them**: kubeadm, kubectl, crictl and the CNI plugins
+  static, kubelet and CRI-O with cgo against our glibc through the same sysroot flags as
+  podman (kubelet because upstream's `hack/lib/golang.sh` builds it so, CRI-O for
+  libseccomp). All are Go, and the builder already has Go and pins it offline.
 - **CNI plugins.** CRI-O uses CNI, not netavark. The reference
   `containernetworking/plugins` cover a single node, and the cluster's own CNI DaemonSet
   replaces them on a real one.
@@ -267,6 +272,14 @@ What CRI-O needs is one drop-in in the confext: `monitor_path` for conmon, which
 "/opt/cni/bin"]`, the extension's plugins first. crun is CRI-O's default runtime and is in
 `/usr/bin`, and pinns is in the sysext's `/usr/bin`, so neither needs naming.
 
+CRI-O also refuses to start unless it can create two directories under `/etc/crio`
+*(demo)*, and they get the two answers above. `policies/`, for per-namespace signature
+policies, is configuration an administrator supplies: it ships, empty, like FlexVolume's
+directory. `auth/` is where CRI-O's credential provider writes per-namespace registry
+credentials: written state, so a link out of `/etc` like `/etc/kubernetes`, but into
+`/run`, because short-lived secrets have no business surviving a reboot on the `/var`
+disk.
+
 **`--node-ip` went away with the second NIC** (see "The demo's network" below). kubelet
 picks the address of the interface that carries the default route. That address is right
 when a node has one NIC, and on a real multi-homed node `--node-ip` is the operator's
@@ -358,7 +371,10 @@ carries the hierarchy's submounts over onto the merged overlay (`move_submounts`
 The demo puts the files there **before the first boot**, rather than copying them in and
 running `systemd-sysext refresh`, so that what it tests is the boot path a real node
 takes. It builds each node's `/var` image with `mkfs.ext4 -d` from a seed tree holding
-`lib/extensions/` and `lib/confexts/`. `x-systemd.makefs` only formats a blank device, so
+`lib/extensions/` and `lib/confexts/` (`qemu_seed_var_disk` in `test/qemu-lib.sh`), under
+`podman unshare` so that every file is owned by root: made as an ordinary user, `/var/lib`
+belonged to uid 1000, and systemd-tmpfiles refused to create anything below it, with
+*unsafe path transition*. `x-systemd.makefs` only formats a blank device, so
 a disk that already has a filesystem is used as it is, and `x-systemd.growfs` still grows
 it. That also replaces the payload tarball, the units in `/run/systemd/system` and the
 whole of `setup-node.sh`.
@@ -382,17 +398,24 @@ item in `docs/container-host.md`, and should be designed together with it, not t
 
 ## Building it
 
-The packages are ordinary packages: `packages/kubernetes`, `packages/cri-o` and
-`packages/cni-plugins`, built in the same builder with the same matrix entry and SBOM
-record, and staged into `rootfs/` like everything else. What differs is assembly. Their
-files go into the extension instead of the base image.
+The packages are ordinary packages — `packages/kubernetes`, `packages/cri-o`,
+`packages/cri-tools` and `packages/cni-plugins` (#188) — built in the same builder with
+the same matrix entry, pins and SBOM record. One line in each `env.sh` is the difference:
+**`EXTENSION=kubernetes` makes root `build.sh` install the package into
+`extensions/kubernetes/` instead of `rootfs/`.** It still compiles against `rootfs/`,
+because the sysroot is a separate mount from the install target, but nothing
+`image/build-rootfs.sh` copies ever contains it. That needed neither the per-package file
+manifests `docs/image-variants.md` asks for nor a list of subtractions to maintain: the
+files never reach the base's tree at all.
 
-That makes it a direct customer of the primitive `docs/image-variants.md` says is
-missing: **per-package file manifests**. With them, an extension is a variant whose
-"platform" is `sysext`. It is a selection from the staging tree like any other variant,
-with the base's files subtracted and an `extension-release` added. Without them, the
-first version can take the files by name, as the OCI subtractions do today, and accept
-that the list has to be maintained.
+Each package installs its own scaffolding there too, as openssh does in the base: units,
+`Upholds=` drop-ins, `tmpfiles.d`, and the `/etc` the confext carries. So
+`extensions/kubernetes/` is laid out like the merged result, and `tools/build-image.sh`
+turns it into the pair with `image/build-extension.sh staged kubernetes`: `usr/` and
+`opt/` become the sysext, `etc/` the confext, ELF objects are stripped as in the base's
+trim, and anything else is an error. The output is `output/extensions/kubernetes.raw` and
+`output/confexts/kubernetes.raw`, next to the image, which is where `tools/k8s-demo.sh`
+and `tools/fetch-image.sh` expect them too.
 
 Software that isn't in this repository can produce an extension the same way
 `examples/nginx` produces a container image. Compile in Debian stable against libraries
@@ -424,11 +447,10 @@ mechanism, and worth an `examples/` entry now that the base supports sysext.
 2. ~~**`-Dsysext=true`, `SYSEXT_LEVEL=1` and `CONFEXT_LEVEL=1`, `test/sysext.sh`**~~: done
    (#187). Plain EROFS only; verity on extensions needs libcryptsetup (#191).
 3. ~~`k8s.config`~~ and ~~per-instance hostname~~: done.
-4. **The packages**: CRI-O (against the base's crun, conmon and containers config),
-   kubelet, kubeadm and kubectl, the CNI plugins.
-5. **The extension pair**, built by `image/build-rootfs.sh` as a flavour of its own, and
-   the demo booting it seeded on `/var`, with flannel. `setup-node.sh`, the `/etc`
-   overlay and the payload copy are deleted with it.
+4. ~~**The packages**~~: done (#188).
+5. ~~**The extension pair**~~: done (#189), assembled by `image/build-extension.sh staged`
+   and booted by the demo seeded on `/var`; `setup-node.sh`, the `/etc` overlay and the
+   payload copy are gone. Flannel is #190.
 6. **Signing**, together with signed base releases.
 
 ## Open questions

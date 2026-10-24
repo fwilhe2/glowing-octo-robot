@@ -9,25 +9,17 @@
 #     ./tools/k8s-demo.sh ps                  # the guests: running or not, ports, memory
 #     ./tools/k8s-demo.sh down                # power everything off and delete its state
 #
-# Nothing Kubernetes is compiled here and nothing in the image changes. The upstream
-# release binaries — kubeadm, kubelet and kubectl from dl.k8s.io, CRI-O's static bundle
-# for the CRI — are downloaded on the host into downloads/k8s/, checked against the
-# checksums published next to them, and copied into each guest's /var over ssh. The
-# container runtime underneath CRI-O is the image's own: crun (/usr/bin/crun) and conmon
-# (/usr/libexec/podman/conmon), not the copies the bundle carries.
+# Kubernetes comes as the image's kubernetes system extension (docs/sysext.md): kubelet,
+# kubeadm, kubectl, CRI-O and the CNI plugins built from source by packages/ with
+# EXTENSION=kubernetes, assembled into a sysext and a confext by tools/build-image.sh. The
+# image itself is unchanged. Both extension images are put on each node's /var disk
+# before its first boot, where systemd-sysext and systemd-confext merge them, CRI-O and
+# kubelet start through the Upholds= the extension ships, and the paths kubeadm writes
+# are links into /var. So nothing is copied into a guest and nothing on it is set up by
+# hand: what this script does after boot is kubeadm and the pod network.
 #
-# What it takes from the image, and what it has to work around:
-#
-#   - The root is a read-only, dm-verity-checked EROFS, and kubeadm hardcodes
-#     /etc/kubernetes. So each node lays an overlayfs over /etc whose upper half is on
-#     /var — the biggest demo-only liberty here. Everything the cluster wrote into /etc
-#     is in /var/lib/flfs-k8s/etc-upper on that node, and nowhere else.
-#   - /usr is read-only too, so the binaries live in /var/lib/flfs-k8s/bin and the units
-#     in /run/systemd/system; kubelet's and the controller manager's FlexVolume
-#     directory (/usr/libexec/kubernetes by default, created at start) is moved under
-#     /var/lib/kubelet.
-#   - Every node gets a /var disk of its own (VAR_DISK in test/qemu-lib.sh), because
-#     the control plane's images and etcd do not fit comfortably in a RAM /var.
+# Every node gets a /var disk of its own (VAR_DISK in test/qemu-lib.sh). A node needs
+# one in any case — its PKI and identity are there — and the extension refuses a tmpfs.
 #
 # Networking is one segment with a router on it, the shape of a real network. The router
 # is one more guest from the same image, configured by nothing but credentials on its
@@ -50,8 +42,6 @@
 #   WORKER_MEM     RAM of each worker in MB                            (default 2048)
 #   CPUS           vCPUs per guest                                     (default 2)
 #   VAR_SIZE       sparse /var disk per guest                          (default 10G)
-#   K8S_VERSION    kubeadm/kubelet/kubectl release                     (default below)
-#   CRIO_VERSION   CRI-O release; its minor has to match Kubernetes'   (default below)
 #   API_PORT       host port forwarded to the API server               (default 6443)
 #   ROUTER_MEM     RAM of the router in MB                             (default 384)
 #   ROOTFS, KERNEL the image to boot. By default this checkout's own build when there is
@@ -59,16 +49,20 @@
 #                  it was assembled from in rootfs/boot — and otherwise the one
 #                  tools/fetch-image.sh downloaded from CI (OUT, ARCH as for
 #                  tools/boot-qemu.sh)
+#   EXTENSIONS     where extensions/kubernetes.raw and confexts/kubernetes.raw are: by
+#                  default next to ROOTFS, which is where both tools/build-image.sh and
+#                  tools/fetch-image.sh put them
 #
-# State lives in output/k8s/: console logs, the /var disks, the ssh key and config, the
-# kubeconfig and a host kubectl. `down` removes it; `up` starts from nothing every time.
+# kubectl runs on the control plane, over ssh, so the host needs no Kubernetes binaries.
+# For a kubectl of your own, output/k8s/kubeconfig points at the API server's forward.
+#
+# State lives in output/k8s/: console logs, the /var disks, the ssh key and config and the
+# kubeconfig. `down` removes it; `up` starts from nothing every time.
 set -Eeuo pipefail
 
 cd "$(dirname "$0")/.."
 source test/qemu-lib.sh
 
-K8S_VERSION="${K8S_VERSION:-v1.37.1}"
-CRIO_VERSION="${CRIO_VERSION:-v1.37.2}"
 NODES="${NODES:-3}"
 CP_MEM="${CP_MEM:-3072}"
 WORKER_MEM="${WORKER_MEM:-2048}"
@@ -77,11 +71,8 @@ API_PORT="${API_PORT:-6443}"
 ROUTER_MEM="${ROUTER_MEM:-384}"
 
 STATE=output/k8s
-DL=downloads/k8s
 POD_CIDR=10.244.0.0/16
 SVC_CIDR=10.96.0.0/12
-# Where everything goes in a guest. /var is the only writable disk it has.
-GUEST_DIR=/var/lib/flfs-k8s
 
 node_name() { echo "k8s-$1"; }
 node_ip()   { echo "10.0.0.$((10 + $1))"; }
@@ -91,10 +82,10 @@ ROUTER_IP=10.0.0.1
 
 say() { printf '\n\033[1m>> %s\033[0m\n' "$*"; }
 
-# ssh into node N as root, with the cluster's binaries on PATH.
+# ssh into node N as root.
 node_ssh() {
     local n="$1"; shift
-    ssh -o ConnectTimeout=10 -F "$STATE/ssh_config" "$(node_name "$n")" "export PATH=$GUEST_DIR/bin:\$PATH; $*"
+    ssh -o ConnectTimeout=10 -F "$STATE/ssh_config" "$(node_name "$n")" "$*"
 }
 
 # Run "$@" once per node, in parallel, prefixing each line with the node's name, and
@@ -118,57 +109,21 @@ retry() { # seconds command...
     done
 }
 
-# --- downloads ---------------------------------------------------------------------------
+# --- the extension -----------------------------------------------------------------------
 
-# Every file is checked against the checksum its publisher puts next to it, and kept in
-# downloads/k8s/ so a second `up` downloads nothing.
-download() { # url file sha256-url
-    local url="$1" out="$DL/$2" sum
-    if [ ! -f "$out" ]; then
-        echo "   $url"
-        "${CURL_DOWNLOAD[@]}" -o "$out.part" "$url"
-        mv "$out.part" "$out"
-    fi
-    sum=$(fetch "$3" | awk '{print $1}')
-    echo "$sum  $out" | sha256sum --check --quiet || {
-        echo "error: checksum mismatch for $out — delete it and try again" >&2
-        rm -f "$out"
-        exit 1
-    }
-}
-
-fetch_binaries() {
-    say "Fetching Kubernetes $K8S_VERSION and CRI-O $CRIO_VERSION for $ARCH"
-    mkdir -p "$DL/$K8S_VERSION-$ARCH"
-    local b
-    for b in kubeadm kubelet kubectl; do
-        download "https://dl.k8s.io/release/$K8S_VERSION/bin/linux/$ARCH/$b" \
-            "$K8S_VERSION-$ARCH/$b" \
-            "https://dl.k8s.io/release/$K8S_VERSION/bin/linux/$ARCH/$b.sha256"
+# Each node's /var disk, made before its first boot with the extension pair where
+# systemd looks for it: /var/lib/extensions and /var/lib/confexts. x-systemd.makefs only
+# formats a blank disk, so this filesystem is what the node finds, and the merge at boot
+# is the path a real node takes. The disk is sparse; growfs makes the filesystem fill it.
+seed_var_disks() {
+    local n seed="$STATE/seed"
+    mkdir -p "$seed/lib/extensions" "$seed/lib/confexts"
+    cp "$EXTENSIONS/extensions/kubernetes.raw" "$seed/lib/extensions/"
+    cp "$EXTENSIONS/confexts/kubernetes.raw" "$seed/lib/confexts/"
+    for n in $(seq 1 "$NODES"); do
+        qemu_seed_var_disk "$STATE/$(node_name "$n")-var.img" "$VAR_SIZE" "$seed"
     done
-    local crio="cri-o.$ARCH.$CRIO_VERSION.tar.gz"
-    download "https://storage.googleapis.com/cri-o/artifacts/$crio" "$crio" \
-        "https://storage.googleapis.com/cri-o/artifacts/$crio.sha256sum"
-
-    # What goes into each guest, as one directory: the three Kubernetes binaries, CRI-O,
-    # pinns and crictl from the bundle (not its crun, runc or conmon — the image has
-    # those), the CNI plugins, and the script that sets a node up.
-    local payload="$STATE/payload"
-    rm -rf "$payload"
-    mkdir -p "$payload/bin" "$payload/cni/bin"
-    install -m 755 "$DL/$K8S_VERSION-$ARCH"/kube{adm,let,ctl} "$payload/bin/"
-    tar -xzf "$DL/$crio" -C "$payload" --strip-components=2 \
-        cri-o/bin/crio cri-o/bin/pinns cri-o/bin/crictl
-    mv "$payload"/{crio,pinns,crictl} "$payload/bin/"
-    tar -xzf "$DL/$crio" -C "$payload/cni/bin" --strip-components=2 \
-        cri-o/cni-plugins/bridge cri-o/cni-plugins/host-local \
-        cri-o/cni-plugins/loopback cri-o/cni-plugins/portmap
-    write_node_setup > "$payload/setup-node.sh"
-
-    # kubectl for the host as well, when the host can run it.
-    if [ "$(uname -s)" = Linux ]; then
-        install -m 755 "$DL/$K8S_VERSION-$ARCH/kubectl" "$STATE/kubectl"
-    fi
+    rm -rf "$seed"
 }
 
 # --- the guests --------------------------------------------------------------------------
@@ -275,128 +230,13 @@ boot_node() {
     echo "   $name  $ip  ${MEM} MB"
 }
 
-# The script each guest runs, as root, once its payload is in $GUEST_DIR. Takes the
-# node's own cluster address.
-write_node_setup() {
-    cat <<EOF
-#!/bin/bash
-set -Eeuo pipefail
-GUEST_DIR=$GUEST_DIR
-POD_CIDR=$POD_CIDR
-EOF
-    cat <<'EOF'
-NODE_IP="$1"
-
-# A writable /etc, layered over the read-only one, its changes kept on the /var disk.
-if [ "$(stat -f -c %T /etc)" != overlayfs ]; then
-    mkdir -p "$GUEST_DIR/etc-upper" "$GUEST_DIR/etc-work"
-    mount -t overlay overlay \
-        -o "lowerdir=/etc,upperdir=$GUEST_DIR/etc-upper,workdir=$GUEST_DIR/etc-work" /etc
-fi
-
-cat > /etc/profile.d/flfs-k8s.sh <<PROFILE
-export PATH=$GUEST_DIR/bin:\$PATH
-export KUBECONFIG=/etc/kubernetes/admin.conf
-PROFILE
-
-# CRI-O on the image's crun and conmon. The policy and registries are podman's, which the
-# image already ships in /etc/containers.
-mkdir -p /etc/crio/crio.conf.d /etc/cni/net.d
-cat > /etc/crio/crio.conf.d/10-flfs.conf <<CONF
-[crio.runtime]
-default_runtime = "crun"
-pinns_path = "$GUEST_DIR/bin/pinns"
-
-[crio.runtime.runtimes.crun]
-runtime_path = "/usr/bin/crun"
-runtime_root = "/run/crun"
-monitor_path = "/usr/libexec/podman/conmon"
-
-[crio.image]
-signature_policy = "/etc/containers/policy.json"
-
-[crio.network]
-network_dir = "/etc/cni/net.d/"
-plugin_dirs = ["$GUEST_DIR/cni/bin"]
-CONF
-cat > /etc/crictl.yaml <<CONF
-runtime-endpoint: unix:///run/crio/crio.sock
-CONF
-
-# The units go in /run: the unit search path's writable directory that needs no /etc,
-# and the right lifetime for a demo.
-cat > /run/systemd/system/crio.service <<UNIT
-[Unit]
-Description=Container Runtime Interface for OCI (CRI-O)
-Wants=network-online.target
-After=network-online.target
-Before=kubelet.service
-
-[Service]
-Type=notify
-ExecStart=$GUEST_DIR/bin/crio
-ExecReload=/bin/kill -s HUP \$MAINPID
-TasksMax=infinity
-LimitNOFILE=1048576
-OOMScoreAdjust=-999
-TimeoutStartSec=0
-Restart=on-failure
-RestartSec=10
-UNIT
-
-# kubeadm's own unit and drop-in, folded into one: kubeadm writes the flags and the
-# config, then restarts this.
-cat > /run/systemd/system/kubelet.service <<UNIT
-[Unit]
-Description=kubelet: The Kubernetes Node Agent
-Wants=network-online.target crio.service
-After=network-online.target crio.service
-
-[Service]
-Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"
-Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"
-EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env
-ExecStart=$GUEST_DIR/bin/kubelet \$KUBELET_KUBECONFIG_ARGS \$KUBELET_CONFIG_ARGS \$KUBELET_KUBEADM_ARGS \$KUBELET_EXTRA_ARGS
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-# Pod traffic leaving the pod network leaves as the node; pod to pod, across nodes,
-# keeps its own address (the per-node routes added once podCIDRs are known).
-nft -f - <<NFT
-table ip flfs-k8s
-delete table ip flfs-k8s
-table ip flfs-k8s {
-    chain postrouting {
-        type nat hook postrouting priority srcnat + 10;
-        ip saddr $POD_CIDR ip daddr != $POD_CIDR masquerade
-    }
-}
-NFT
-
-systemctl daemon-reload
-systemctl enable --runtime kubelet.service
-systemctl start crio.service
-echo "CRI-O is up on $(crun --version | head -1); node address $NODE_IP"
-EOF
-}
-
-provision_node() {
-    local n="$1"
-    tar -C "$STATE/payload" --owner=0 --group=0 --numeric-owner -cf - . | node_ssh "$n" "mkdir -p $GUEST_DIR && tar -C $GUEST_DIR -xf -"
-    node_ssh "$n" "bash $GUEST_DIR/setup-node.sh $(node_ip "$n")"
-}
-
 # --- the cluster -------------------------------------------------------------------------
 
 init_control_plane() {
     local hex
     hex=$(od -An -tx1 -N11 /dev/urandom | tr -d ' \n')
     TOKEN="${hex:0:6}.${hex:6:16}"
-    node_ssh 1 "cat > $GUEST_DIR/kubeadm.yaml" <<EOF
+    node_ssh 1 "cat > /run/kubeadm.yaml" <<EOF
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 bootstrapTokens:
@@ -417,20 +257,12 @@ networking:
   serviceSubnet: $SVC_CIDR
 apiServer:
   certSANs: [127.0.0.1, localhost]
-controllerManager:
-  extraArgs:
-    - name: flex-volume-plugin-dir
-      value: /var/lib/kubelet/volumeplugins
----
-apiVersion: kubelet.config.k8s.io/v1beta1
-kind: KubeletConfiguration
-volumePluginDir: /var/lib/kubelet/volumeplugins
 ---
 apiVersion: kubeproxy.config.k8s.io/v1alpha1
 kind: KubeProxyConfiguration
 mode: nftables
 EOF
-    node_ssh 1 "kubeadm init --config $GUEST_DIR/kubeadm.yaml"
+    node_ssh 1 "kubeadm init --config /run/kubeadm.yaml"
 
     # The admin kubeconfig, pointed at the host's forward rather than the cluster segment
     # the host cannot reach.
@@ -444,7 +276,7 @@ EOF
 
 join_worker() {
     local n="$1"
-    node_ssh "$n" "cat > $GUEST_DIR/kubeadm.yaml" <<EOF
+    node_ssh "$n" "cat > /run/kubeadm.yaml" <<EOF
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: JoinConfiguration
 discovery:
@@ -456,18 +288,22 @@ nodeRegistration:
   name: $(node_name "$n")
   criSocket: unix:///run/crio/crio.sock
 EOF
-    node_ssh "$n" "kubeadm join --config $GUEST_DIR/kubeadm.yaml"
+    node_ssh "$n" "kubeadm join --config /run/kubeadm.yaml"
 }
 
-k() { "$STATE/kubectl" --kubeconfig "$STATE/kubeconfig" "$@"; }
+# kubectl on the control plane, with the admin kubeconfig kubeadm wrote there. Each
+# argument is quoted for the remote shell; stdin goes along, for `apply -f -`.
+k() { node_ssh 1 "kubectl --kubeconfig=/etc/kubernetes/admin.conf $(printf '%q ' "$@")"; }
 
 has_pod_cidr() {
     [ -n "$(k get node "$(node_name "$1")" -o jsonpath='{.spec.podCIDR}')" ]
 }
 
 # Once the controller manager has given every node its /24: each node bridges its own pods
-# and routes every other node's /24 to that node across the cluster segment. CRI-O picks
-# the config up from /etc/cni/net.d by itself, and the node turns Ready.
+# and routes every other node's /24 to that node across the cluster segment, and pod
+# traffic leaving the pod network leaves as the node. CRI-O picks the config up from
+# /etc/cni/net.d — a link into /var the extension ships — by itself, and the node turns
+# Ready.
 pod_network() {
     local n m cidr
     for n in $(seq 1 "$NODES"); do retry 120 has_pod_cidr "$n"; done
@@ -493,6 +329,16 @@ pod_network() {
     },
     { "type": "portmap", "capabilities": { "portMappings": true } }
   ]
+}
+EOF
+        node_ssh "$n" "nft -f -" <<EOF
+table ip flfs-k8s
+delete table ip flfs-k8s
+table ip flfs-k8s {
+    chain postrouting {
+        type nat hook postrouting priority srcnat + 10;
+        ip saddr $POD_CIDR ip daddr != $POD_CIDR masquerade
+    }
 }
 EOF
         for m in $(seq 1 "$NODES"); do
@@ -583,9 +429,7 @@ EOF
 ps_nodes() {
     local pidfile name pid state up rss mem address ssh role ready nodes=""
     [ -n "$(ls "$STATE"/*.pid 2>/dev/null)" ] || { echo "no guests (./tools/k8s-demo.sh up)"; return 0; }
-    if [ -x "$STATE/kubectl" ]; then
-        nodes=$(k get nodes --request-timeout=5s --no-headers 2>/dev/null || true)
-    fi
+    nodes=$(k get nodes --request-timeout=5s --no-headers 2>/dev/null || true)
     printf '%-10s %-8s %-8s %-11s %-10s %-11s %-16s %-14s %s\n' \
         NODE PID STATE UP ADDRESS RSS/RAM SSH ROLE STATUS
     for pidfile in "$STATE"/k8s-*.pid; do
@@ -634,24 +478,35 @@ up() {
     fetched_image_defaults
     QEMU_HINT="(run ./tools/build-image.sh, or ./tools/fetch-image.sh for CI's)"
     qemu_preflight
-    command -v curl >/dev/null || { echo "error: curl not found" >&2; exit 1; }
+    EXTENSIONS="${EXTENSIONS:-$(dirname "$ROOTFS")}"
+    local f
+    for f in extensions/kubernetes.raw confexts/kubernetes.raw; do
+        [ -f "$EXTENSIONS/$f" ] || {
+            echo "error: missing $EXTENSIONS/$f (./tools/build-image.sh builds it with the image," >&2
+            echo "       ./tools/fetch-image.sh downloads CI's)" >&2
+            exit 1
+        }
+    done
     [ "$NODES" -ge 2 ] || { echo "error: NODES=$NODES — a multi-node cluster needs at least 2" >&2; exit 1; }
     [ -w /dev/kvm ] || echo "warning: no KVM — $NODES emulated guests will take a long time to do this"
 
     down
-    mkdir -p "$STATE" "$DL"
+    mkdir -p "$STATE"
     trap 'echo; echo ">> failed — consoles are in $STATE/*.console.log; ./tools/k8s-demo.sh down when done" >&2' ERR
 
-    fetch_binaries
-
-    say "Booting $NODES guests from $ROOTFS with $KERNEL"
+    say "Booting $NODES nodes from $ROOTFS with $KERNEL, and the kubernetes extension from $EXTENSIONS"
+    seed_var_disks
     boot_router
     local n
     for n in $(seq 1 "$NODES"); do boot_node "$n"; done
     for n in $(seq 1 "$NODES"); do retry "$TIMEOUT" node_ssh "$n" true; done
 
-    say "Installing CRI-O and the Kubernetes binaries into each guest's /var"
-    on_nodes 1 provision_node
+    # What the extension started by itself, through Upholds=. kubelet is up but waiting
+    # for kubeadm, so CRI-O answering is the readiness that matters.
+    say "CRI-O from the extension, on every node"
+    for n in $(seq 1 "$NODES"); do retry 120 node_ssh "$n" crictl info; done
+    K8S_VERSION=$(node_ssh 1 kubelet --version | awk '{print $2}')
+    echo "   kubelet $K8S_VERSION, $(node_ssh 1 crio --version | awk 'NR == 1 {print "CRI-O " $3}'), $(node_ssh 1 crun --version | head -1)"
 
     say "kubeadm init on $(node_name 1)"
     init_control_plane

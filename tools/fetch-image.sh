@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Download a bootable combination of the latest rootfs image + kernel into
-# output/boot-image/.
+# output/boot-image/, with the system extensions built in the same run beside them.
 #
 # Both come out of the same CI run, because they have to match: the kernel is a package
 # in this repo (kernel/), and its container.config fragment is what makes the image able
@@ -63,9 +63,20 @@ gh run download "$RUN" -R "$REPO" -n "package-kernel-$ARCH" -D "$tmp/kernel"
 tar xf "$tmp/kernel/kernel.tar" -C "$tmp/kernel" rootfs/boot/bzImage
 cp "$tmp/kernel/rootfs/boot/bzImage" "$OUT/bzImage"
 
+# The system extensions built in the same run (docs/sysext.md), laid out next to the
+# image as tools/build-image.sh lays them out next to its own: extensions/ and confexts/.
+# Optional — a run from before they existed has none, and only tools/k8s-demo.sh wants one.
+echo ">> extensions ($ARCH): $REPO run $RUN (artifact: extensions-$ARCH)"
+if gh run download "$RUN" -R "$REPO" -n "extensions-$ARCH" -D "$tmp/extensions" 2>/dev/null; then
+    rm -rf "$OUT/extensions" "$OUT/confexts"
+    cp -r "$tmp/extensions"/. "$OUT/"
+else
+    echo "   (none in this run)"
+fi
+
 echo
 echo "Downloaded into $OUT/:"
-ls -la "$OUT/rootfs.erofs" "$OUT/rootfs.cmdline" "$OUT/bzImage"
+ls -la "$OUT/rootfs.erofs" "$OUT/rootfs.cmdline" "$OUT/bzImage" "$OUT"/extensions/*.raw "$OUT"/confexts/*.raw 2>/dev/null || true
 if [ "$ARCH" = "$host_arch" ]; then
     echo "Boot it with: ./tools/boot-qemu.sh"
 else

@@ -58,6 +58,19 @@ UNIT
 # own first, then wherever a cluster's CNI DaemonSet copies its binaries. pinns is found
 # on $PATH; the storage driver is overlay by default.
 install -d "$ROOTFS/etc/crio/crio.conf.d"
+# Per-namespace signature policies, which an administrator would supply. CRI-O insists on
+# creating the directory at start and refuses to run when /etc is read-only, so it ships,
+# empty — given what it looks for, like FlexVolume's directory in packages/kubernetes.
+install -d "$ROOTFS/etc/crio/policies"
+# Per-namespace registry credentials, which CRI-O's credential provider writes at runtime
+# and CRI-O also refuses to start without a directory for. Written, so a link out of /etc
+# like /etc/kubernetes — but into /run, being short-lived secrets that have no business
+# surviving a reboot on the /var disk.
+install -d "$ROOTFS/usr/lib/tmpfiles.d"
+ln -sfn /run/crio/auth "$ROOTFS/etc/crio/auth"
+cat > "$ROOTFS/usr/lib/tmpfiles.d/crio.conf" <<'CONF'
+d /run/crio/auth 0700 root root -
+CONF
 cat > "$ROOTFS/etc/crio/crio.conf.d/10-flfs.conf" <<'CONF'
 [crio.runtime]
 default_runtime = "crun"

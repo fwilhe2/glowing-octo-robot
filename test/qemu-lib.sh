@@ -295,6 +295,28 @@ qemu_argv() {
 #     with a persistent /var means a new journal directory and a new DHCP client
 #     identity per boot. The state and the identity of a VM are one thing; this keeps
 #     them in one place.
+# A /var disk with files already on it: <tree> laid out as /var should look, made into
+# an ext4 filesystem in <disk> before the first boot. x-systemd.makefs only formats a blank
+# disk, so this is what the guest finds — tools/k8s-demo.sh and test/sysext.sh put system
+# extensions in lib/extensions and lib/confexts this way.
+#
+# Every file has to arrive owned by root, and mkfs.ext4 -d records the owner it reads.
+# Run as an ordinary user that would be the user's uid on every file and directory — and
+# systemd-tmpfiles then refuses to create anything below a /var/lib it does not trust,
+# with "unsafe path transition". So mkfs runs inside `podman unshare`, where the caller is
+# uid 0 and so is everything they own. Not used by macOS's tools/boot-vz.sh.
+qemu_seed_var_disk() { # disk size tree
+    local disk="$1" size="$2" tree="$3" run=()
+    command -v mkfs.ext4 >/dev/null || { echo "error: mkfs.ext4 not found (install e2fsprogs)" >&2; exit 1; }
+    if [ "$(id -u)" != 0 ]; then
+        command -v podman >/dev/null || { echo "error: podman not found, which seeds a /var disk owned by root" >&2; exit 1; }
+        run=(podman unshare)
+    fi
+    rm -f "$disk"
+    truncate -s "$size" "$disk"
+    "${run[@]}" mkfs.ext4 -q -F -d "$tree" "$disk"
+}
+
 qemu_var_disk() {
     QEMU_VAR_DRIVE=() QEMU_VAR_APPEND=
     [ -n "${VAR_DISK:-}" ] || return 0

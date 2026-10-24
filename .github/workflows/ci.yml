@@ -379,6 +379,7 @@ jobs:
       - name: Check the images are reproducible
         run: |
           outputs="output/rootfs.erofs output/rootfs.cmdline output/flfs-oci.tar output/sbom-erofs.json output/sbom-oci.json"
+          outputs+=" $(ls output/extensions/*.raw output/confexts/*.raw)"
           sha256sum $outputs > first.sha256
           ./tools/build-image.sh --image-only > second-build.log 2>&1 || { tail -50 second-build.log; exit 1; }
           sha256sum --check first.sha256
@@ -499,6 +500,17 @@ jobs:
         with:
           name: oci-image-${{ matrix.arch }}
           path: output/flfs-oci.tar
+
+      # The system extensions, as a guest would get them: extensions/<name>.raw and
+      # confexts/<name>.raw, the layout of /var/lib (docs/sysext.md). The k8s job boots
+      # the kubernetes pair, and tools/fetch-image.sh puts it next to the image.
+      - name: Upload system extensions
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: extensions-${{ matrix.arch }}
+          path: |
+            output/extensions
+            output/confexts
 
   # An image that builds and resolves all its libraries can still fail to boot, so
   # actually boot it: the kernel we build is in rootfs/boot/bzImage.
@@ -630,20 +642,21 @@ jobs:
           name: boot-console-log-${{ matrix.arch }}
           path: output/*.log
 
-  # A three-node Kubernetes cluster from the image (test/k8s.sh, through
-  # tools/k8s-demo.sh): kubeadm init and join from upstream release binaries, CRI-O on the
-  # image's crun, a Service answered from pods on more than one node. What it holds the
-  # image to is the kernel and the layout a node needs — kubeadm's preflight accepting
-  # the kernel config, kube-proxy starting with its hostPath /lib/modules — with no
-  # workaround for either.
+  # A three-node Kubernetes cluster from the image and its kubernetes system extension
+  # (test/k8s.sh, through tools/k8s-demo.sh): the extension merged at boot from each
+  # node's /var disk, kubeadm init and join, CRI-O on the image's crun, a Service answered
+  # from pods on more than one node. What it holds the image to is everything a node
+  # needs from it — kubeadm's preflight accepting the kernel config, kube-proxy starting
+  # with its hostPath /lib/modules, kubeadm writing /etc/kubernetes through the
+  # extension's link into /var — with no workaround for any of it.
   #
   # A job of its own rather than more of `boot`, for two reasons. It needs KVM, which
   # the boot tests do without: three guests running a control plane under emulation
   # take long enough that a timeout would say nothing about the image. GitHub's x86
   # runners have /dev/kvm but not for the runner user, which the udev rule below fixes;
-  # where there is none at all the test skips with a note. And it depends on dl.k8s.io,
-  # Google's storage and registry.k8s.io, so `publish-oci` does not wait on it: a
-  # registry outage is not a reason to hold back an image every other test passed.
+  # where there is none at all the test skips with a note. And it depends on
+  # registry.k8s.io for the control plane's images, so `publish-oci` does not wait on it:
+  # a registry outage is not a reason to hold back an image every other test passed.
   k8s:
     runs-on: *runner
     needs:
@@ -657,6 +670,12 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rootfs.erofs-${{ matrix.arch }}
+          path: artifacts
+
+      # Next to the image, which is where tools/k8s-demo.sh looks for the pair.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: extensions-${{ matrix.arch }}
           path: artifacts
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

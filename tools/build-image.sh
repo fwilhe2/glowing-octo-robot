@@ -98,7 +98,21 @@ for f in $flavours; do
         rootfs-builder /usr/local/bin/build-rootfs.sh "$f"
 done
 
+# And the system extensions, from what packages with EXTENSION= in their env.sh staged
+# into extensions/<name>/: a sysext and a confext each, in output/extensions/ and
+# output/confexts/ (docs/sysext.md).
+for ext in extensions/*/; do
+    [ -d "$ext" ] || continue
+    name=$(basename "$ext")
+    echo "==> extension: $name"
+    podman run --rm --security-opt label=disable \
+        -e SOURCE_DATE_EPOCH="$FLFS_SOURCE_DATE_EPOCH" \
+        --volume "$PWD/$ext":/usr/local/src:ro \
+        --volume "$PWD/output":/usr/local/output \
+        rootfs-builder /usr/local/bin/build-extension.sh staged "$name"
+done
+
 echo
 echo "done:"
-ls -lh output/rootfs.erofs output/flfs-oci.tar 2>/dev/null || true
+ls -lh output/rootfs.erofs output/flfs-oci.tar output/extensions/*.raw output/confexts/*.raw 2>/dev/null || true
 echo "boot it:  ./tools/boot-qemu.sh   (or ./test/systemd.sh output/rootfs.erofs rootfs/boot/bzImage)"

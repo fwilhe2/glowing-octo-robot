@@ -11,14 +11,15 @@
 # kubeadm's preflight accepts the kernel (/usr/lib/modules/<release>/config and the
 # k8s.config symbols) and that kube-proxy starts with its hostPath /lib/modules.
 #
-# Not checked here, because the demo provides it rather than the image: the binaries
-# (upstream releases, downloaded), a writable /etc (an overlay, docs/sysext.md has the
-# real question) and the pod network (bridge and routes).
+# What the cluster runs on is the image and its kubernetes system extension, as CI built
+# them: the pair is next to the image (tools/k8s-demo.sh's EXTENSIONS), merged at boot from
+# each node's /var disk. Not checked here, because the demo provides it rather than the
+# image: the pod network (bridge and routes).
 #
 # It needs KVM. Three guests running a control plane under emulation take long enough
 # that a timeout would say nothing about the image, so without a writable /dev/kvm this
-# skips, with a note. It also needs the network: dl.k8s.io and Google's storage for the
-# binaries, registry.k8s.io for the control plane's and the demo's images.
+# skips, with a note. It also needs the network: registry.k8s.io, for the control plane's
+# and the demo's images.
 #
 # The consoles end up in output/k8s-test-<node>.log either way, where CI uploads them.
 set -euo pipefail
