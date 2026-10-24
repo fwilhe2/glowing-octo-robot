@@ -268,8 +268,9 @@ make rootfs.config
 # machine, whether the extension is attached or not.
 #
 # KPROBES and KPROBE_EVENTS: a probe on any kernel function, which is what `perf probe`
-#   places and what a BPF kprobe program attaches to. x86_64_defconfig already has both,
-#   and nothing named them, so they were one defconfig change away from going quietly.
+#   places and what a BPF kprobe program attaches to. x86_64_defconfig already had both,
+#   with nothing naming them; arm64's defconfig had neither, so arm64 had no kprobes at
+#   all until this fragment (and PROBE_EVENTS_BTF_ARGS came with them).
 # UPROBE_EVENTS: the same for a function in a program or library; container.config
 #   already relies on it for BPF_EVENTS, and this says it is wanted for itself too.
 # FTRACE_SYSCALLS: the syscalls:sys_enter_* and sys_exit_* tracepoints. `perf trace` is

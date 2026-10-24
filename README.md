@@ -35,7 +35,7 @@ machine.
 | `flfs-oci.tar` | the same userspace as an OCI image, without kernel and systemd; published as `ghcr.io/fwilhe2/glowing-octo-robot/flfs` | 19 MiB |
 | `extensions/podman.raw` | podman, Quadlet, netavark, aardvark-dns, pasta, newuidmap | 23 MiB |
 | `extensions/kubernetes.raw` + `confexts/kubernetes.raw` | kubelet, kubeadm, kubectl, CRI-O, crictl, CNI plugins, and the `/etc` that goes with them | 86 MiB + 4 KiB |
-| `extensions/debug.raw` | strace, perf, bpftool, tcpdump, gdbserver, socat, jq | — |
+| `extensions/debug.raw` | strace, perf, bpftool, tcpdump, gdbserver, socat, jq | 4 MiB |
 
 The base is the **container runtime** (the kernel's namespaces, cgroup v2, overlayfs and
 nftables, plus `crun` and `conmon`). The **engine** is whichever extension a machine
