@@ -29,10 +29,11 @@ so they can't be one of them.
 
 Today there are two ways to get them onto a machine, and both are bad:
 
-- **Put them in the image.** kubelet and CRI-O together are tens of MiB *(verify:
-  measure)*. That cost would fall on every user of an image whose size budget is checked
-  in CI (`test/size-budget.txt`), for an aim that `CLAUDE.md` calls *an* aim, not *the*
-  aim.
+- **Put them in the image.** kubelet and CRI-O together are 117 MiB as upstream ships
+  them for 1.37 on amd64, and the whole extension (kubeadm, kubectl, crictl, pinns and
+  four CNI plugins with them) is 307 MiB, against 144 MiB for the whole base image tree.
+  That cost would fall on every user of an image whose size budget is checked in CI
+  (`test/size-budget.txt`), for an aim that `CLAUDE.md` calls *an* aim, not *the* aim.
 - **A `k8s-node` image variant** (`docs/image-variants.md`). That keeps other users'
   images small, but makes Kubernetes a second base image. Every base update becomes a
   Kubernetes node image to rebuild, and every Kubernetes update a base image to republish,
@@ -125,15 +126,28 @@ demo needs no workaround for the kernel at all *(demo)*.
 
 ### The extension
 
+Two images from one build, with one version, because systemd merges `/usr` and `/etc`
+as separate classes:
+
 ```
-kubernetes-<k8s version>-<arch>.raw          EROFS + verity hash tree, like rootfs.erofs
-└── usr/
-    ├── bin/kubelet, kubeadm, crio, pinns
-    ├── libexec/cni/bridge, host-local, loopback, portmap
-    ├── lib/systemd/system/kubelet.service, crio.service
-    ├── lib/systemd/system/multi-user.target.wants/kubelet.service, crio.service
-    ├── share/crio/…, share/kubernetes/…          default configuration (below)
-    └── lib/extension-release.d/extension-release.kubernetes
+kubernetes-<k8s version>-<arch>.raw            sysext: EROFS + verity, like rootfs.erofs
+├── usr/
+│   ├── bin/kubelet, kubeadm, kubectl, crio, pinns, crictl
+│   ├── libexec/cni/bridge, host-local, loopback, portmap
+│   ├── libexec/kubernetes/kubelet-plugins/volume/exec/      empty, and staying so
+│   ├── lib/systemd/system/kubelet.service, crio.service
+│   ├── lib/systemd/system/multi-user.target.d/10-kubernetes.conf   Upholds= both
+│   ├── lib/tmpfiles.d/kubernetes.conf               the /var directories below
+│   └── lib/extension-release.d/extension-release.kubernetes
+└── opt/cni/bin → /var/lib/cni/bin
+
+kubernetes-<k8s version>-<arch>.confext.raw    confext: the same, for /etc
+└── etc/
+    ├── kubernetes → /var/lib/kubernetes
+    ├── cni/net.d → /var/lib/cni/net.d
+    ├── crio/crio.conf.d/10-flfs.conf                conmon's path, plugin_dirs
+    ├── crictl.yaml
+    └── extension-release.d/extension-release.kubernetes
 ```
 
 - **CRI-O, not containerd.** It shares podman's image and storage libraries, its
@@ -147,8 +161,16 @@ kubernetes-<k8s version>-<arch>.raw          EROFS + verity hash tree, like root
 - **CNI plugins.** CRI-O uses CNI, not netavark. The reference
   `containernetworking/plugins` cover a single node, and the cluster's own CNI DaemonSet
   replaces them on a real one.
-- **Enablement ships as `.wants` symlinks in the extension's `/usr/lib`**, the way openssh
-  and dbus do it in the base. Presets can't help, because they write to `/etc`.
+- **Enablement is `Upholds=` in a `multi-user.target` drop-in, not `.wants` symlinks.**
+  Presets can't help, because they write to `/etc`. And the `.wants` links openssh and
+  dbus use in the base arrive too late from an extension: `systemd-sysext.service` merges
+  during `sysinit.target`, after PID 1 has already computed the boot transaction, so a
+  `.wants` link that appears then is visible after the reload but starts nothing until
+  the next boot *(verify; Flatcar's sysext-bakery uses `Upholds=` for this reason)*.
+  `Upholds=` is re-evaluated continuously, so it also starts the units when an extension
+  is merged at runtime with `systemd-sysext refresh`. `EXTENSION_RELOAD_MANAGER=1` in the
+  extension-release file is what makes the merge reload PID 1 (`get_extension_release_metadata`
+  in systemd 262's `sysext.c`).
 - **No accounts.** kubelet and CRI-O run as root, so nothing needs sysusers, which an
   extension couldn't use anyway: the accounts are fixed when the base image is sealed.
 - **No bundled libraries.** Everything else CRI-O links (glibc, libseccomp,
@@ -175,79 +197,175 @@ drops an interface CRI-O uses.
 `test/check-symbol-versions.sh` is the shape of the check that belongs with it: an
 extension's versioned symbols checked against the base it declares itself compatible with.
 
-## Where `/etc` has to be writable
+## What a node writes, and where it goes
 
-This is the hard part, and the reason this is a design note rather than a weekend. The
-Kubernetes stack assumes it can write to paths that are read-only here:
+The Kubernetes stack assumes it can write to paths that are read-only here:
 
-| path | written by |
-| --- | --- |
-| `/etc/kubernetes` | kubeadm: kubeconfigs, PKI, static pod manifests for the control plane |
-| `/etc/cni/net.d` | the CNI DaemonSet (flannel, Calico) installs its network config here |
-| `/opt/cni/bin` | the same DaemonSet's init container copies its plugin binaries here |
-| `/usr/libexec/kubernetes` | kubelet and the controller manager, for FlexVolume plugins; created at start *(demo)* |
-| `/var/lib/kubelet`, `/var/lib/containers`, `/var/lib/etcd` | fine, on the `/var` disk |
+| path | written by | answer |
+| --- | --- | --- |
+| `/etc/kubernetes` | kubeadm: kubeconfigs, PKI, static pod manifests | confext symlink → `/var/lib/kubernetes` |
+| `/etc/cni/net.d` | the CNI DaemonSet (flannel, Calico) installs its network config here | confext symlink → `/var/lib/cni/net.d` |
+| `/opt/cni/bin` | the same DaemonSet's init container copies its plugin binaries here | sysext symlink → `/var/lib/cni/bin` |
+| `/usr/libexec/kubernetes` | kubelet and the controller manager look for FlexVolume plugins; created at start *(demo)* | the sysext ships the directory, empty |
+| `/var/lib/kubelet`, `/var/lib/containers`, `/var/lib/etcd` | kubelet, CRI-O, etcd | fine, on the `/var` disk |
 
-There are two options, and the first is the one to try:
+**Nothing is made writable. Each path a node writes is a symlink into `/var`, and the
+symlink is configuration** *(demo: a run with `/etc/kubernetes` and `/etc/cni/net.d` as
+links into `/var` formed the cluster unchanged, static pods and PKI included)*. That is the rule the base already follows: `/etc/resolv.conf`
+is a link into resolved's `/run`, and sshd's host keys moved to `/var/lib/sshd` rather than
+`/etc/ssh` becoming writable. A link in a confext is as immutable and verity-checked as the
+rest of `/etc`. What it points to is state, on the disk where state belongs, and a node that
+reboots comes back as the same node. Stock manifests work unmodified: flannel's DaemonSet
+writes to `hostPath: /etc/cni/net.d` and `/opt/cni/bin` like it does everywhere else, and
+never learns that the writes land on `/var`. The directories behind the links are made by
+the sysext's `tmpfiles.d` snippet. `systemd-tmpfiles-setup.service` runs after the merge
+(`systemd-sysext.service` is `Before=` it), so the snippet is already visible when it runs.
 
-1. **Mutable extensions.** `systemd-sysext` and `systemd-confext` have a `--mutable=` mode
-   (systemd 256 and later; the base has 262) in which the merged overlay gets a writable
-   upper directory under `/var/lib/extensions.mutable/` *(verify: semantics, and whether
-   `/etc` and `/opt` both work)*. A confext carrying an empty `/etc/kubernetes` and
-   `/etc/cni/net.d`, made mutable, gives kubeadm a writable `/etc/kubernetes` whose
-   contents live on the `/var` disk. That is where node state belongs anyway: a node
-   that reboots must come back as the same node.
-2. **Bind mounts from `/var`.** Mount units in the extension bind
-   `/var/lib/flfs-k8s/etc-kubernetes` over `/etc/kubernetes`, and so on. The mount points
-   have to exist, which a confext can provide. This is more explicit and needs nothing
-   new from systemd, but every writable path becomes a unit to maintain.
+Two alternatives were considered, and both lose:
 
-Either way, **a Kubernetes node requires the `/var` disk.** A tmpfs `/var` would lose the
-node's PKI and identity at every reboot. That's a requirement the extension can check
-(`ConditionPathIsMountPoint=/var` *and* not tmpfs) rather than discover.
+- **A mutable confext** (`--mutable=yes`) does not make `/etc/kubernetes` writable. It
+  makes all of `/etc` writable, with the upper layer in `/var/lib/extensions.mutable/etc`
+  (systemd-sysext(8) in 262, "Mutability"). That is the demo's overlay under a systemd
+  name. Worse, every file anything writes there shadows the base image's copy from then
+  on, so `/etc` stops being "whatever the image says" after the first boot. That breaks
+  updating by booting a new image.
+- **Bind mounts from `/var`** work, but every path becomes a mount unit with a mount point
+  to provide and an ordering against the confext merge to get right. A symlink needs
+  neither.
 
-`/opt/cni/bin` can be avoided rather than solved. CRI-O's `plugin_dirs` takes a list, and
-both flannel and Calico let the install path be configured, so `/var/lib/cni/bin` on the
-disk works without a writable `/opt`. *(verify: which CNIs make this awkward.)*
+**FlexVolume is answered by providing the directory, not by moving it.** kubelet's
+`volumePluginDir` and the controller manager's `DirectoryOrCreate` hostPath both default
+to `/usr/libexec/kubernetes/kubelet-plugins/volume/exec`, and both only need it to exist.
+The demo redirects both to `/var/lib/kubelet`. With the directory in the sysext, both
+settings go away. The directory stays empty, and that is correct: FlexVolume is
+deprecated in favour of CSI, whose drivers run as pods, and on an immutable host a node
+plugin installed by copying a binary to `/usr` is exactly what is not supposed to happen.
+This is the same move as `/usr/lib/modules/<release>` in the base: give the software the
+path it looks for rather than configuring it to look elsewhere.
 
-The demo answers `/etc` the bluntest way, an overlayfs over all of it with the upper
-half on `/var`, which works and proves nothing about either option above; it is the one
-part of the demo that should not survive into the extension.
+**The node needs no kubelet configuration of its own** *(demo)*. The demo used to set two
+kubelet options, and with both removed kubeadm wrote the same values into
+`/var/lib/kubelet/config.yaml` on every node:
 
-`/usr/libexec/kubernetes` is configuration rather than a writable path, which is how
-distributions with a read-only `/usr` answer it *(verify: Flatcar's docs)*: kubelet's
-`volumePluginDir` and the controller manager's `--flex-volume-plugin-dir` both point under
-`/var/lib/kubelet`, as the demo does. Without the second, the controller manager's static
-pod has a `DirectoryOrCreate` hostPath on `/usr` and should never start *(verify)*.
+- **`resolvConf`.** `/etc/resolv.conf` is resolved's `127.0.0.53` stub, which can't be
+  reached from a pod's network namespace. kubeadm checks whether systemd-resolved is
+  active and, if it is, writes `resolvConf: /run/systemd/resolve/resolv.conf` itself.
+- **`cgroupDriver: systemd`** is kubeadm's default, and the same as CRI-O's. kubelet 1.37
+  also asks the CRI which driver to use (`KubeletCgroupDriverFromCRI`), so the two cannot
+  disagree.
 
-More fixes belong in the extension's default configuration, not in the base:
+If a node default is ever needed, it goes in a drop-in through kubelet's `--config-dir`.
+Those drop-ins override what kubeadm writes, and they ship in the sysext's `/usr/lib`.
+Putting it in the cluster's kubeadm configuration would be wrong, because it is a property
+of the OS, not of the cluster.
 
-- **kubelet `resolvConf: /run/systemd/resolve/resolv.conf`**, not `/etc/resolv.conf`. That
-  is resolved's `127.0.0.53` stub, which can't be reached from a pod's network namespace.
-  The symptom is pods with no DNS on a node that resolves fine.
-- **`cgroupDriver: systemd`** on both kubelet and CRI-O.
-- **kubelet `--node-ip`** whenever a VM has more than one NIC, and qemu's user-mode one
-  is always 10.0.2.15: left to choose, every node reports the same InternalIP *(demo)*.
-- **CRI-O's runtime is the base's** `/usr/bin/crun` with `/usr/libexec/podman/conmon`;
-  the static bundle's own copies are not needed *(demo)*.
+What CRI-O needs is one drop-in in the confext: `monitor_path` for conmon, which lives in
+`/usr/libexec/podman` and not on `$PATH`, and `plugin_dirs = ["/usr/libexec/cni",
+"/opt/cni/bin"]`, the extension's plugins first. crun is CRI-O's default runtime and is in
+`/usr/bin`, and pinns is in the sysext's `/usr/bin`, so neither needs naming.
+
+**`--node-ip` goes away with the second NIC** (see "The demo's network" below). kubelet
+picks the address of the interface that carries the default route. That address is right
+when a node has one NIC, and on a real multi-homed node `--node-ip` is the operator's
+decision, not the image's.
+
+**A node needs the `/var` disk**, because a tmpfs `/var` would lose its PKI and identity
+at every reboot. Delivery mostly enforces this already: an extension in
+`/var/lib/extensions` can only be there if `/var` is a disk. One delivered through
+`/run/extensions` is the exception, so `kubelet.service` also refuses to start on a tmpfs
+`/var`. That makes the failure a failed unit that names the reason, not a node that
+silently forgets who it is.
+
+## The demo's network
+
+The demo gives every guest two NICs: qemu's user-mode NAT, which is private to each guest
+and where every guest is 10.0.2.15, plus a multicast segment with static addresses for
+the cluster. That is where `--node-ip` comes from, and the hand-written `.network`
+credential per node. **The proper shape is one NIC per node on one segment, with a
+router.** That is what a real network looks like, and it is the shape in which nothing
+about the network is node configuration.
+
+**The router is a fourth VM, booted from the same image, and configured entirely on its
+kernel command line.** Prototyped by hand with three nodes, and everything below worked:
+
+- Its qemu holds a hub (`-netdev hubport`) joined to one `-netdev stream` unix socket per
+  node, so it is the segment's switch. Each node's qemu connects its single NIC to its
+  socket (`server=off,reconnect-ms=1000`), so start order does not matter. No multicast,
+  no ports to pick, no root.
+- Its second NIC is the user-mode one, with the only port forwards in the demo.
+- systemd-networkd does the rest, from one `network.network.10-lan` credential:
+  `Address=10.0.0.1/24`, `DHCPServer=yes` with a `[DHCPServerStaticLease]` per node MAC,
+  `IPMasquerade=ipv4`, and `EmitDNS=` pointing at qemu's resolver, which the nodes reach
+  through the masquerade.
+- The API server forward is `systemd-socket-proxyd` in a socket unit handed in as
+  `systemd.extra-unit.*` credentials. Both are already in the image.
+- The nodes boot the image as it is. The image's own `20-wired.network` asks for DHCP,
+  the static lease answers, and the address follows the MAC, like on a real network.
+  The only per-node inputs left are the MAC, `systemd.hostname=` and the `/var` disk.
+- The host reaches nodes with `ProxyJump` through the router, one forward in total.
+
+Measured in the prototype: a lease and a default route on every node, 40/40 node-to-node
+TCP connections, 200 MB streamed between nodes, about 8 MB/s out to dl.k8s.io, and no
+duplicated frames. The router runs in 384 MB.
+
+Two cheaper versions were tried first and fail in ways worth recording:
+
+- **Joining node 1's user-mode stack to the segment through a hub**, so slirp is the
+  router, resets every connection between nodes: 0 of 40 got through. A hub floods, slirp
+  sees every SYN between guests, opens the same connection on the host's network, and
+  injects the reset it gets back. slirp cannot be on a segment it does not own.
+- **The multicast socket backend** loops a sender's frames back to itself, and with a hub
+  on the segment that showed up as duplicate replies.
+
+Two things to know when building it. Unix socket paths are capped at 108 bytes, so the
+sockets go at a relative `output/k8s/<node>.sock`, not under an absolute path. And
+OpenSSH's `PerSourcePenalties` refuses a burst of connections that never authenticate,
+which looks exactly like packet loss to a test that only reads banners.
+
+**The pod network becomes flannel**, in VXLAN mode with its nftables backend
+(`EnableNFTables`), from a release manifest pinned and checksummed like the binaries.
+Today's bridge plugin with static routes and an nft masquerade table was chosen to keep a
+CNI out of the picture. But once paths are symlinks, a stock CNI DaemonSet is precisely
+what the test should exercise: flannel writes `/etc/cni/net.d` and `/opt/cni/bin` through
+the links, and its plugin delegates to the extension's `bridge` and `host-local` through
+CRI-O's `plugin_dirs`. That deletes `pod_network` and the masquerade table from the demo
+*(verify: flannel's nftables mode against `k8s.config`, and that its image comes from
+ghcr.io rather than Docker Hub's rate limits)*.
 
 ## Getting an extension into a VM
 
-`systemd-sysext` merges what it finds in `/etc/extensions`, `/run/extensions`,
-`/var/lib/extensions` and `/usr/lib/extensions` *(verify: the list in 262)*. In this image:
+`systemd-sysext` looks in `/etc/extensions`, `/run/extensions` and `/var/lib/extensions`,
+and `systemd-confext` in `/run/confexts`, `/var/lib/confexts`, `/usr/local/lib/confexts`
+and `/usr/lib/confexts` (`src/shared/discover-image.c` in 262; sysexts are deliberately
+not searched under `/usr`, and `/etc/extensions` is for symlinks only, which here means
+not at all).
 
-- **`/var/lib/extensions` on the `/var` disk** is the natural home, since a node needs that
-  disk anyway. The VMM or an operator puts `kubernetes-1.xx.y-amd64.raw` there, and an
-  update is a new file and a reboot, the same model as the base.
-- **Boot ordering is the thing to verify first.** `/var` is a mount `systemd-sysext.service`
-  has to come after, and kubelet's unit has to be loaded after the merge. systemd handles
-  this for `/var/lib/extensions` *(verify: by ordering or by a re-exec after the merge)*,
-  but this image's `/var` arrives through `systemd.mount-extra=`, which is exactly the
-  kind of difference that turns into a unit that silently doesn't exist.
-- **A read-only virtio disk** with the extension on it is the alternative for a disk-less
-  VM, and the closer match to how the base is attached (`readonly=on`, one file shared by
-  many guests). It needs a symlink from a known device into `/run/extensions` before the
-  merge *(verify: whether sysext takes a block device directly)*.
+**The pair goes in `/var/lib/extensions` and `/var/lib/confexts` on the `/var` disk**,
+which a node needs anyway. An update is a new pair of files and a reboot, the same model
+as the base. The ordering concern this section used to raise is settled by the unit
+files: `systemd-sysext.service` and `systemd-confext.service` are `After=local-fs.target`,
+and the `var.mount` that `systemd.mount-extra=` generates is part of `local-fs.target`. So
+the disk is mounted before either merge looks at it. Both are `Before=sysinit.target`, so
+the merge is finished before any ordinary unit starts. PID 1 bind-mounts
+`/etc/machine-id` before the confext merge, and the merge does not hide that mount: it
+carries the hierarchy's submounts over onto the merged overlay (`move_submounts` in
+`sysext.c`).
+
+The demo puts the files there **before the first boot**, rather than copying them in and
+running `systemd-sysext refresh`, so that what it tests is the boot path a real node
+takes. It builds each node's `/var` image with `mkfs.ext4 -d` from a seed tree holding
+`lib/extensions/` and `lib/confexts/`. `x-systemd.makefs` only formats a blank device, so
+a disk that already has a filesystem is used as it is, and `x-systemd.growfs` still grows
+it. That also replaces the payload tarball, the units in `/run/systemd/system` and the
+whole of `setup-node.sh`.
+
+**A shared read-only disk** is the later alternative, and the closer match to how the
+base is attached: one file, `readonly=on`, any number of guests. sysext accepts block
+devices as images directly (`IMAGE_BLOCK` in `discover-image.c`). What is missing is the
+symlink in `/run/extensions` that has to exist before the merge. Nothing in the base would
+create it early enough: tmpfiles runs after the merge, and `/etc` cannot carry it. That is
+a base feature to design, for example a udev rule keyed on the disk's serial, and not
+something to improvise in the extension.
 
 ### Trust
 
@@ -286,28 +404,31 @@ mechanism, and worth an `examples/` entry once the base supports sysext at all.
   is the test that keeps the mechanism working for everything after it.
 - **`test/k8s.sh`** exists already, ahead of the extension: it runs `tools/k8s-demo.sh`
   — three nodes, a Service answered from more than one — in CI's `k8s`
-  job, on KVM, per push, gating nothing. Once the extension exists it should boot that
-  instead of copying binaries in, and lose the demo's `/etc` overlay.
+  job, on KVM, per push, gating nothing. Once the extension exists it boots that, seeded on
+  each node's `/var` disk, instead of copying binaries in; it loses the `/etc` overlay,
+  and with the router VM and flannel it checks a node configured by nothing but its MAC,
+  hostname and disk.
 - **The base without the extension is unchanged**: `test/systemd.sh` still passes, and
   `test/rootfs-size.sh` shows the cost of enabling sysext and nothing more.
 
 ## Order of work
 
-1. **`-Dsysext=true`, `SYSEXT_LEVEL=1`, `test/sysext.sh`** with a toy extension. This is
-   independently useful (debugging tools such as `strace` and `tcpdump` as an extension,
-   rather than in every image) and settles the boot-ordering question before anything
-   depends on it.
-2. **`k8s.config`**: the kernel symbols above. They cost little and are needed whatever
-   the delivery mechanism.
-3. **Per-instance hostname** via the kernel command line, and `qemu-lib.sh` passing it.
+1. **The demo's network**: the router VM, one NIC per node, no `--node-ip`. Independent
+   of everything else here and possible today.
+2. **`-Dsysext=true`, `SYSEXT_LEVEL=1` and `CONFEXT_LEVEL=1`, `test/sysext.sh`** with a
+   toy extension pair. This is independently useful (debugging tools such as `strace` and
+   `tcpdump` as an extension, rather than in every image) and is where the `Upholds=`
+   question gets answered by a boot, before anything depends on it.
+3. ~~`k8s.config`~~ and ~~per-instance hostname~~: done.
 4. **The packages**: CRI-O (against the base's crun, conmon and containers config),
-   kubelet and kubeadm, the CNI plugins.
-5. **The extension and confext**, the writable-`/etc` answer, and `test/k8s.sh`.
+   kubelet, kubeadm and kubectl, the CNI plugins.
+5. **The extension pair**, built by `image/build-rootfs.sh` as a flavour of its own, and
+   the demo booting it seeded on `/var`, with flannel. `setup-node.sh`, the `/etc`
+   overlay and the payload copy are deleted with it.
 6. **Signing**, together with signed base releases.
 
 ## Open questions
 
-- **Mutable confext vs bind mounts** for `/etc/kubernetes`: settled by trying the first.
 - **One extension or two.** CRI-O on its own is useful without kubelet (a CRI for other
   orchestrators), but two extensions means two compatibility promises to keep in step.
 - **Where the extension is published.** As an OCI artifact on ghcr next to `flfs`, the way
