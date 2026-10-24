@@ -1,814 +1,229 @@
 # glowing-octo-robot
 
-A **pragmatic, automated Linux From Scratch**, targeting virtual machines: source
-tarballs in, a bootable disk image and a container image out, rebuilt and version-checked
-by CI rather than by hand.
+A **pragmatic, automated Linux From Scratch** for virtual machines: source tarballs in, an
+immutable, verified disk image and a container image out, rebuilt and version-checked by
+CI rather than by hand. On top of it, two system extensions: **podman**, and a
+**Kubernetes node**.
 
 ## What this is
 
-A **minimal but genuinely useful general-purpose Linux stack**, built from source and kept
-current. Minimal is the means, not the point — the image is small because nothing
-unnecessary was added, not because something useful was taken away.
+A minimal but genuinely useful general-purpose Linux, built from source and kept current.
+The image is small because nothing unnecessary was added, not because something useful was
+taken away.
 
-*Pragmatic* is what separates it from LFS proper:
-
-* **No self-hosted toolchain.** Real LFS bootstraps gcc and binutils through several
-  passes to escape the host. That is a step further than this needs to go. The Debian
-  builder image *is* the toolchain — deliberately and permanently, not as a stepping
-  stone. The single exception is glibc, which is built here and compiled against, because
-  a version skew there silently produces binaries that cannot start.
+* **systemd, glibc, GNU coreutils and bash** are fixed choices. `bash` is the only
+  interpreter in the image.
+* **No self-hosted toolchain.** The Debian builder image is the compiler, deliberately and
+  permanently. glibc is the one exception, built here and compiled against, because a skew
+  there produces binaries that cannot start.
 * **Modern and established, both.** Every choice should be one a competent engineer would
-  defend today: not the crusty option a decade of inertia settled on, and not whatever
-  turned up on GitHub last month. This is neither a re-creation of Debian oldstable nor a
-  showcase for new things.
-* **Opinionated where it matters.** systemd, glibc, GNU coreutils and bash are fixed.
-  `bash` is the only interpreter the image contains and is meant to stay that way.
-  Everything is DFSG-free and says which license it is under.
+  defend today: neither the inertia option nor last month's GitHub project.
+* **Everything is DFSG-free**, and each package declares its license (`LICENSE=` in
+  `env.sh`, checked by `test/check-licenses.sh`).
+* **Virtual machines only**: qemu, Firecracker and Apple's Virtualization.framework. Real
+  hardware is a non-goal.
 
-Running as a node in a Kubernetes cluster is an eventual target — *an* aim rather than
-*the* aim. It should be a reasonable general-purpose Linux first.
+`CLAUDE.md` has the reasons behind each decision, `docs/how-it-works.md` the mechanics, and
+`docs/sysext.md` the extension design.
 
-Non-goals, so they do not have to be re-argued: real hardware (virtual machines only —
-qemu today, rust-vmm/Firecracker-style VMMs next), a self-hosted toolchain, and any
-substitute for the four components above.
+## What you get
 
-## Layout
+| artifact | what it is | size (amd64) |
+| --- | --- | --- |
+| `rootfs.erofs` + `rootfs.cmdline` | the disk image: EROFS behind dm-verity, and the kernel arguments carrying its root hash | 39 MiB |
+| `flfs-oci.tar` | the same userspace as an OCI image, without kernel and systemd; published as `ghcr.io/fwilhe2/glowing-octo-robot/flfs` | 19 MiB |
+| `extensions/podman.raw` | podman, Quadlet, netavark, aardvark-dns, pasta, newuidmap | 23 MiB |
+| `extensions/kubernetes.raw` + `confexts/kubernetes.raw` | kubelet, kubeadm, kubectl, CRI-O, crictl, CNI plugins, and the `/etc` that goes with them | 86 MiB + 4 KiB |
 
+The base is the **container runtime** (the kernel's namespaces, cgroup v2, overlayfs and
+nftables, plus `crun` and `conmon`). The **engine** is whichever extension a machine
+boots with: podman, the Kubernetes node, or neither.
+
+## Quick start
+
+```sh
+./tools/fetch-image.sh               # the latest green CI build into output/boot-image/
+./tools/boot-qemu.sh                 # boot it; Ctrl-a x to quit
+./tools/ssh.sh                       # in a second terminal: a shell as `user` (--root for root)
+
+SYSEXTS=podman ./tools/boot-qemu.sh  # the same machine, with podman
+./tools/k8s-demo.sh up               # a three-node Kubernetes cluster (see below)
 ```
-build.sh          the only build entry point — ./build.sh <package>
-packages/<pkg>/   env.sh + build.sh per package, and the tree its tarball unpacks into
-builder/          how a package is compiled: the one builder image, deps.txt (its
-                  entire contents), and the entrypoint that sets up the sysroot
-image/            how the staging tree becomes an image — a bootable disk or an OCI
-                  image: Containerfile, build-rootfs.sh, and files/ — the /etc it ships
-test/             everything CI runs to verify a build
-tools/            local conveniences and maintenance, not part of a build
-docs/             design notes for work not done yet, plus how-it-works.md:
-                  the mechanics and pitfalls of the system as it is
-examples/         images built FROM the published flfs image — templates, not
-                  part of a build (examples/nginx: compiling C software for it)
-downloads/        source tarballs (gitignored)
-rootfs/           shared staging tree every package installs into (gitignored)
-output/           built images, fetched CI artifacts, test console logs (gitignored)
-```
 
-Scripts under `test/` and `tools/` `cd` to the repository root themselves, so they run
-correctly from any directory.
+`./tools/boot-firecracker.sh` and `./tools/boot-vz.sh` (macOS, through vfkit) boot the same
+image in the other two VMMs. The OCI image needs no VM:
+`podman run --rm -it ghcr.io/fwilhe2/glowing-octo-robot/flfs:latest`.
 
 ## Building
 
-Each package is built in a throwaway podman container and installed into the shared
-`rootfs/` staging tree:
-
 ```sh
-./build.sh glibc
-./build.sh coreutils
+./tools/build-image.sh               # glibc, kernel, every package, then all images and extensions
+./build.sh <package>                 # or one package into the rootfs/ staging tree
+./tools/build-image.sh --image-only  # re-assemble images and extensions from what is staged
 ```
 
-glibc comes first because everything else is compiled against it: `rootfs/` is
-bind-mounted into the builder read-only and handed to gcc as `--sysroot`, so the
-binaries we ship require the symbol versions *our* glibc defines rather than whatever
-the Debian builder image happens to have installed. `SYSROOT_DIR` points that mount at
-another tree — CI stages a glibc-only one, which keeps each package's artifact to its
-own files. Packages that have no libc to build against (`glibc`, `kernel`) set
-`NO_SYSROOT=1` in their `env.sh`.
-
-The container also *runs* on our glibc: every file its own `libc6` owns is bind-mounted
-over with ours. Builds run what they just compiled — `help2man` asks a fresh `ptx` for
-its `--help`, ncurses runs its own `tic` — and sid's older loader can't start a binary
-linked against a newer glibc. glibc stays backwards compatible, so the image's Debian
-binaries keep working on ours.
-
-Everything else a package links against still comes from the builder image, so this is
-not the staged LFS toolchain — it is the one library where a version skew silently
-produces binaries that can't start.
-
-`image/Containerfile` / `image/build-rootfs.sh` then turn `rootfs/` into `output/rootfs.erofs`
-(see the `rootfs` job in `.github/workflows/ci.yml`), which `./tools/boot-qemu.sh` boots.
-
-The disk image is **immutable**. The root filesystem is EROFS, which is read-only by
-construction and compressed, and qemu attaches it with `readonly=on` too. It is also
-**verified**: a dm-verity hash tree is appended to the image, and the kernel checks
-every block it reads against the root hash in `output/rootfs.cmdline`, the kernel
-arguments written next to the image. A modified image does not boot. `rootfs.cmdline` is
-part of the image: without it the kernel cannot mount the root, so keep the two together. Everything the
-running machine writes lives in RAM: `/var`, `/home` and `/root` are tmpfs mounts
-(`image/files/etc/fstab`), and so are `/tmp` and `/run`. Every boot starts from the same
-bytes, and to update a machine you boot it from a newer image.
-
-A VM can keep its state across reboots by being given a second disk for `/var`, with
-`systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs` on its kernel
-command line. systemd formats a blank disk on the first boot and grows the filesystem if
-the disk grows. The image itself doesn't change; without the argument `/var` is RAM. For
-qemu, `VAR_DISK=output/var.img ./tools/boot-qemu.sh` does all of it, and gives the disk
-a machine ID of its own so the VM keeps one identity. Container images, the journal and
-sshd's host keys then survive a reboot. `/home` and `/root` stay in RAM. The work a first boot
-would normally do in `/etc` (system accounts, tmpfiles, unit presets) is done when the
-image is assembled, because nothing can do it afterwards.
-The same script also writes `output/flfs-oci.tar`, the same userspace as a container image
-— see [The OCI image](#the-oci-image).
-
-To get the disk space back, `./tools/clean.sh` deletes everything a rebuild recreates
-without the network: `rootfs/`, the unpacked source trees under `packages/` (the
-kernel's alone is several GB), `output/` and fetched artifacts. `--downloads` adds the
-tarballs, `--images` this repository's podman images that no longer match the current
-tags (every `builder/deps.txt` change leaves a gigabyte-sized builder behind), `--all`
-everything including the current images, and `-n` lists what would go and its size
-without deleting anything. `extra/` and anything git tracks are never touched.
-
-## Adding a package
-
-Packaging is the easy part; choosing is where the mistakes are. Before writing any of the
-below, answer these in the pull request, where they can be argued with:
-
-* **Is it maintained, or just old?** A last release in 2011 is a red flag, not a sign of
-  stability. Check what distributions ship today.
-* **Is it established?** Something Debian, Fedora and Alpine all carry has had more
-  scrutiny than this project can apply. Forty GitHub stars and one contributor has not.
-* **Is there a more modern option that is equally established?** Both halves matter — the
-  answer to "what does everyone use" is sometimes a decade stale, and the answer to "what
-  is newest" almost always wrong.
-* **What does it drag in?** A dependency is a decision about the image; see
-  [Checking runtime dependencies](#checking-runtime-dependencies) for what happens when it
-  goes unasked, and `test/size-budget.txt` for what it costs.
-* **Does it need an interpreter at runtime?** `bash` is the only one the image has. A
-  package that would add perl, python or a JavaScript runtime needs a case that it is
-  unavoidable. What the *builder* needs is unconstrained — perl is already in
-  `builder/deps.txt` — so the thing to check is what `make install` leaves in `DESTDIR`.
-* **Is it DFSG-free?** Every package declares `LICENSE=` and CI rejects anything not on
-  the list; see [Licensing](#licensing).
-
-Then create a directory under `packages/` named after the package with two files in it.
-CI picks it up from there — the `build` matrix is generated from `packages/`:
-
-* `env.sh` — the source tarball, plus optional knobs:
-
-  | variable | meaning |
-  | --- | --- |
-  | `VERSION` | upstream version |
-  | `PACKAGE` | directory the tarball unpacks into |
-  | `TARBALL` | tarball file name |
-  | `URL` | where to download it (may use `$PKG`, the package directory name) |
-  | `SHA256` | checksum of the tarball; nothing is ever used without matching it |
-  | `LICENSE` | SPDX expression for what the tarball ships; must be DFSG-free — see [Licensing](#licensing) |
-  | `MIRRORS` | optional extra URLs, tried in order when `URL` is unreachable |
-  | `NO_SYSROOT` | set to `1` for packages that aren't compiled against our glibc |
-  | `LOCAL_SOURCE` | set to `1` when the source is in this repository rather than upstream — see below |
-  | `UPSTREAM_*` | where to look for new releases, when the directory `URL` points into isn't it — see `tools/upstream.sh` |
-
-  `PACKAGE`, `TARBALL` and `URL` are all derived from `VERSION`. `SHA256` is not — it is
-  a hash of bytes only upstream has — so an update is those two lines, and
-  `./tools/bump-version.sh <package> <version>` writes both: it rewrites `VERSION`,
-  fetches the new tarball from `URL` and pins what it actually got. That is what the
-  update workflow below uses.
-
-* `build.sh` — only the configure/compile/install commands. It is sourced inside the
-  container by `builder/build-package.sh` with the unpacked source tree as the working
-  directory; install with `DESTDIR=$ROOTFS`. That script also provides `meson_install`,
-  `drop_installed` and `assert_not_linked` — see CLAUDE.md.
-
-A package says nothing about its build dependencies. There is one builder image for all of
-them and `builder/deps.txt` is the whole list of what it contains, one apt package per
-line. If a build wants something that isn't in there, prefer configuring the dependency
-out — the bottom of `deps.txt` says what is deliberately absent and why, and
-`test/known-missing-libs.txt` is what the opposite habit already cost.
-
-Everything else — the builder image (`builder/Containerfile`), prep (`tools/prep.sh`),
-the fetch/extract/run dance (`build.sh`) and the merged-`/usr` staging
-(`builder/build-package.sh`) — is shared.
-
-### ...whose source is ours
-
-A package does not have to come from a tarball. `LOCAL_SOURCE=1` in `env.sh` means the
-source is tracked in this repository at `packages/<pkg>/src/`, so there is no `TARBALL`,
-`URL` or `SHA256`, nothing to download or vendor, and no upstream to check for releases.
-`packages/flfsfetch/` — a small neofetch-alike in one C file — is the worked example.
-
-Everything after the source is identical: the same builder image, the same sysroot flags,
-the same `DESTDIR`, the same CI matrix entry and artifact. The one constraint is that
-`packages/<pkg>/src` is mounted **read-only**, because it is a tracked working tree rather
-than a gitignored unpacked tarball — so `build.sh` compiles straight to `DESTDIR` instead
-of leaving object files behind.
-
-## Licensing
-
-Every package declares what it is under, as an SPDX expression in its `env.sh`:
-
-```sh
-LICENSE="BSD-3-Clause OR GPL-2.0-only"              # upstream offers a choice
-LICENSE="LGPL-2.1-or-later AND GPL-2.0-or-later"    # library and tools differ
-```
-
-```sh
-./test/check-licenses.sh
-```
-
-checks that every package declares one and that every identifier is on
-`test/dfsg-licenses.txt`. It runs in its own workflow rather than inside the build,
-because it needs nothing compiled — an unacceptable license should be answered in seconds
-on the branch that adds it, not after forty minutes of building.
-
-**The bar is the Debian Free Software Guidelines**, because Debian has already argued
-every one of these to a conclusion. A license Debian ships in `main` can be added to the
-list; one that exists only in `non-free` means the package does not belong here. That
-rules out the non-commercial, field-of-use-restricted and "shall be used for Good, not
-Evil" varieties without further discussion.
-
-What the check proves is that a declaration exists and is free. It does **not** prove the
-declaration is true — nothing opens the tarball. Reading the license off `COPYING` is a
-packaging step, done once, and worth redoing when a version bump crosses a relicensing.
-
-## Checking runtime dependencies
-
-Packages compile inside a Debian builder image, so `configure` will happily link
-against an optional library that exists only in that container. The build succeeds,
-the library is never staged, and nothing notices until the binary is exec'd in qemu —
-which is how `bash` ended up needing `libtinfo.so.6` with no `ncurses` package.
-
-```sh
-./test/check-rootfs-deps.sh rootfs
-```
-
-reports every `NEEDED` entry the tree can't resolve, and runs in the `rootfs` CI job.
-Libraries listed in `test/known-missing-libs.txt` are reported but don't fail the run, so
-new regressions stand out from the existing backlog; that file explains what wants
-each one and how to resolve it.
-
-When a package pulls in something unwanted, prefer configuring it out (e.g.
-`--without-selinux`) over adding a package to satisfy the reference.
-
-A library that *is* present can still be the wrong one — a binary compiled against a
-newer glibc than the image ships links fine in the builder and then dies at exec time
-with ``version `GLIBC_2.44' not found``. So:
-
-```sh
-./test/check-symbol-versions.sh rootfs
-```
-
-compares every versioned symbol the tree's binaries ask for against what the tree's own
-libraries define, and also runs in the `rootfs` CI job. It is what keeps the sysroot
-above honest: a package whose build system quietly drops the exported `CFLAGS`/`LDFLAGS`
-shows up here.
-
-## Booting
-
-The kernel is a package like any other (`packages/kernel/`), built with `defconfig` plus
-`kvm_guest.config`, a `container.config` fragment that adds what containers need (see
-[Containers](#containers)), a `k8s.config` for what a Kubernetes node needs on top, a
-`guest.config` for the virtual hardware of the VMMs it targets — qemu, Firecracker and
-Apple's Virtualization.framework — and a `vm.config` fragment that takes away what a
-virtual machine does not have (see [What the image leaves out](#what-the-image-leaves-out)),
-and staged at `rootfs/boot/bzImage`, so a CI run produces an image that can boot on its own.
-Firecracker on x86 wants the uncompressed kernel inside it, which `test/vmm.sh` shows how
-to extract, and boots it through PVH.
-The `boot` job does exactly that:
-
-```sh
-./test/boot.sh output/rootfs.erofs rootfs/boot/bzImage
-```
-
-boots the image in qemu with nobody at the console, types a command at PID 1 over the
-serial port and waits for the output to come back — proof that the kernel mounted the
-root filesystem, exec'd userspace and that the dynamic loader resolved a real binary's
-libraries. It runs `/bin/bash` as PID 1 rather than systemd, which keeps that failure
-apart from anything systemd does on top; the tests below are the ones that boot systemd
-for real. `./tools/boot-qemu.sh` is still the way to poke at an image interactively, and
-`./tools/ssh.sh` logs into the guest it started without a password — see [SSH](#ssh).
-
-The same image, unchanged, boots on the two other VMMs the kernel is built for, each with
-its own launcher and the same `./tools/ssh.sh` afterwards:
-
-```sh
-./tools/boot-firecracker.sh   # Linux + KVM; FIRECRACKER= names the binary
-./tools/boot-vz.sh            # macOS on Apple silicon, through vfkit (brew install vfkit)
-```
-
-Neither has a user-mode network to forward ssh through, so both reach the guest's sshd
-over vsock instead, which systemd's ssh generator sets up on its own when the machine has a
-vsock device. Firecracker on amd64 boots an uncompressed vmlinux through PVH, so the
-script extracts it from the bzImage each time; its network is opt-in (`TAP=`), since a tap
-device needs root, and the script's header has the host side. Virtualization.framework
-gets a NAT network with DHCP, and `SHARE=<dir>` a virtiofs mount. The Firecracker script
-has booted on Firecracker 1.17; the vfkit one has not been run on a Mac, and
-`test/vmm.sh` is what CI checks instead — the same devices on qemu.
-
-```sh
-./test/systemd.sh output/rootfs.erofs rootfs/boot/bzImage
-```
-
-is the next layer up, and it also runs in the `boot` job. It boots systemd, logs in at
-the serial getty and asserts that `systemctl is-system-running` reports `running` —
-which it does if and only if no unit failed. That catches the class of problem nothing
-else here looks for: a package installing a unit it cannot actually run, which costs
-nothing at build time and leaves every boot `degraded`. When it fails it prints
-`systemctl --failed` and the boot's error-priority journal, so the failing unit and its
-reason land in the CI log. It also asserts systemd's `Tainted` property is
-empty, which catches image-assembly mistakes no unit ever fails over — an unmerged
-`/usr/sbin`, a `/var/run` that is a real directory.
-
-## The OCI image
-
-The same staging tree also comes out as a container image. Every commit on `main` that
-gets through the boot tests is published to ghcr.io, for both architectures under one
-name:
-
-```sh
-podman run --rm -it ghcr.io/fwilhe2/glowing-octo-robot/flfs:latest
-```
-
-`latest` is a manifest list, so that pulls the amd64 or arm64 image to match the machine
-it runs on. Every commit also keeps a tag of its own — `flfs:<commit>`, and
-`flfs:<commit>-amd64` / `flfs:<commit>-arm64` to ask for one architecture on purpose.
-
-To build it instead of pulling it, `output/flfs-oci.tar`:
-
-```sh
-podman run --volume "$PWD"/rootfs:/usr/local/src --volume "$PWD"/output:/usr/local/output \
-    rootfs-builder /usr/local/bin/build-rootfs.sh oci
-podman load -i output/flfs-oci.tar
-podman run --rm -it localhost/flfs:latest
-```
-
-The `rootfs` CI job also uploads it as `oci-image-<arch>` next to `rootfs.erofs-<arch>`,
-which is what the `publish-oci` job pushes: it waits for `boot`, because the two images
-are the same userspace and a disk that will not boot is not a container worth publishing.
-`tools/publish-oci.sh` is the whole of it, and runs by hand against any registry —
-`REGISTRY=` to point it elsewhere, `TAG=` to name it something other than the commit.
-
-It is the disk image minus the two things a container gets from somewhere else: the
-kernel, which is the host's, and systemd, which the runtime replaces. `/bin/bash` is the
-entrypoint, so `podman run -it` is a shell and anything after the image name is passed to
-it (`podman run flfs -c 'flfsfetch'`). Everything else is the same userspace, assembled by
-the same script from the same tree — `image/build-rootfs.sh` takes `erofs` or `oci` and
-expresses the container as *subtractions*, so the two cannot drift apart the way two
-scripts would. Dropping systemd means its unit tree, udev, its drop-in directories and its
-PAM and NSS modules, plus every binary linking the private `libsystemd-shared` (found by
-reading their `NEEDED` entries rather than by keeping a list); `libsystemd.so.0` and
-`libudev.so.1` stay, because they are the client libraries other packages link against.
-Also gone is the `/etc` only a booted machine reads: `fstab`, `shadow`, the networkd
-configuration, `resolv.conf`. A runtime provides hostname, hosts and resolv.conf itself.
-
-Nothing new is needed to write it. An OCI archive is a tar of five files — a layer, a
-config and a manifest, each named after its own sha256, plus an `index.json` and a version
-marker — so `build-rootfs.sh` writes them with `tar`, `gzip` and `sha256sum` rather than
-pulling buildah or skopeo into the build container.
-
-```sh
-./test/oci.sh output/flfs-oci.tar
-```
-
-loads it and runs it, which is the cheapest verification in this repo — no qemu, no boot.
-That is also its limit: a container runs on the *host's* kernel, so this says nothing
-about `packages/kernel` and does not replace the boot tests. It is a check on the image
-we produce; [Containers](#containers) below is the unrelated question of the runtime the
-*disk* image ships.
-
-There is no package manager to add software to it with. To build an image on top that
-needs C software flfs does not package, compile it in Debian stable and copy the result
-in: [`examples/nginx`](examples/nginx/README.md) is a template that does that, and fails
-the build if the result would not run on flfs.
-
-## What the image leaves out
-
-The staging tree and the disk image are not the same thing. `rootfs/` is what the
-package builds produce *and* the sysroot the next package compiles against, so it keeps
-its headers, static libraries and `.pc` files; `image/build-rootfs.sh` copies it and
-assembles the disk from the copy, dropping everything a booted system cannot reach:
-
-* **debug symbols** — nothing is stripped at install time, so roughly half the tree is
-  DWARF for a debugger the image does not ship (`libc.so.6` alone is 11 MB unstripped
-  and 2 MB stripped)
-* **link-time-only files** — `*.a`, `*.la`, the `crt*.o` startup objects, `usr/include`
-  and pkg-config metadata: there is no compiler here
-* **documentation** — `share/man`, `share/info`, `share/doc`, with no reader for any of it
-* **locale data** — `share/locale` message catalogues and the `share/i18n` source
-  definitions. The image runs in the C locale: no locale archive is built and nothing
-  sets `LANG`
-* **terminfo** — 2500 terminal descriptions cut down to the dozen `TERM` values that can
-  appear on a serial console
-* **shell completions and polkit rules** — for shells and a `polkitd` that are not here
-
-That is the mechanical half. The other half is not building things in the first place:
-`packages/systemd/build.sh` turns off some fifty components (the EFI/bootloader half of
-the tree, `machined`/`nspawn`/`importd`, `portabled`, `repart`, `homed`, `oomd`,
-`coredump`, the remote journal transports, backlight/rfkill/hibernate/quotas, the 22 MB
-hardware database) and `packages/kernel/build.sh` extends its `vm.config` fragment to
-subtract the hardware `x86_64_defconfig` assumes — the DRM stack, sound, USB, HID, SATA
-and PATA, every ethernet vendor driver, IOMMU, PCMCIA, RAID/device-mapper, NFS, FAT and
-ISO9660, SELinux, audit, and the loadable-module machinery itself, since every symbol
-here is built in and `make modules_install` is never run.
-
-Both halves follow the same rule, which is worth keeping when adding to them: something
-is removed because *nothing in the image can reach it*, never because it seems unlikely
-to be used. A VM's devices are virtio and the console is a serial line — that is what
-makes the driver list above dead code rather than a bet.
-
-Rebuilding only the image after changing one of the build-time options is not enough
-locally: `rootfs/` is cumulative and nothing removes stale files from it, so a component
-that is no longer built stays staged until the tree is deleted and rebuilt.
-
-## The shell, and `/bin/sh`
-
-`bash` is the only interpreter in the image and `/usr/bin/sh` is a symlink to it, made by
-`packages/bash/build.sh` because upstream installs no such name — which shell answers to
-it is the distribution's decision. This one had not made it, so for a long time there was
-no `/bin/sh` here at all, which is a stranger position than it sounds: every `#!/bin/sh`
-script in the world is then a file the image cannot start. That is not hypothetical. It
-is `crun spec`'s default `"args": ["sh"]`, a container entrypoint, a systemd unit that
-shells out, and the wrapper scripts several of these packages install.
-
-Invoked under that name bash follows sh's startup-file behaviour on its own. It is not
-full POSIX mode, which needs `--posix` or `POSIXLY_CORRECT`, so nothing that relies on a
-bashism breaks and nothing that does not is any the wiser. Fedora and Arch point
-`/usr/bin/sh` at bash the same way. The cost is one symlink.
-
-What this does *not* change is the no-new-interpreters rule. The image gained no
-interpreter — bash was already here — and perl, python and the rest are as unwelcome as
-they were. What it changes is which deletions in a `build.sh` are about the shebang,
-which is now none of them.
-
-## The system bus
-
-The image ships the reference `dbus-daemon` (the `dbus` package, which needs `expat`).
-It is not optional furniture: systemd-logind connects to the system bus at startup, and
-without one it exits with *Failed to connect to system bus* and is restarted until it
-hits its start limit. dbus enables itself — the `.target.wants` symlinks live in its own
-unit directory — and creates its `messagebus` user through the `sysusers.d` snippet it
-installs, so nothing in `image/files` has to enable or provision it.
-
-Logging in registers a session with logind because systemd is built `-Dpam=enabled` and
-`image/files/etc/pam.d/login` calls `pam_systemd.so`; `loginctl list-sessions` shows the
-serial console session.
-
-## Networking
-
-The guest gets one virtio-net NIC on qemu's user-mode network, and everything above it
-is systemd: `image/files/etc/systemd/network/20-wired.network` puts systemd-networkd on
-DHCP for anything named `en*` or `eth*`, networkd hands the lease's DNS servers to
-systemd-resolved, and `/etc/resolv.conf` is a symlink to resolved's stub. Nothing else
-is involved — there is no DHCP client, no resolver library and no init script of our
-own to go wrong.
-
-Interfaces a container runtime creates (`veth*`, `docker0`, `cni*`, `podman*`) do not
-match that file on purpose: whatever brings them up configures them.
-
-Configuring the network is one thing; being able to look at it from inside the guest is
-another, and for a long time the image could not. `iproute2` is what fixed that —
-`ip addr`, `ip route`, `ip link`, plus `ss`, `bridge` and `tc` — because `networkctl`
-only reports what networkd was asked to do and cannot read a route out of the kernel or
-create a link. The alternative is net-tools, and it is not a close call: `ifconfig`
-predates most of what rtnetlink can express and cannot see multiple addresses on an
-interface, policy routing or namespaces. `iputils` supplies `ping`, `arping` and
-`tracepath`, and `image/files/etc/sysctl.d/50-ping-group-range.conf` opens the datagram
-ICMP socket to unprivileged users so `ping` works for the `user` account without being
-setuid.
-
-```sh
-./test/network.sh output/rootfs.erofs rootfs/boot/bzImage
-```
-
-is the check, and it runs in the `boot` CI job. It boots the image with systemd as PID
-1 — networkd and resolved are the things under test, so a raw shell would prove nothing
-— logs in at the serial getty and asserts two rounds of checks.
-
-The first round asks whether the *system* has a network: the link is `routable` (DHCP
-answered), `getent hosts example.com` resolves (the resolved stub answers), and a TCP
-connection to it is accepted (routing and the VMM's NAT work). The second asks whether
-someone logged in could use it: `ip` shows a global address and a default route, `ping`
-opens an ICMP socket, and `curl https://example.com` verifies a certificate chain and
-makes a request. Splitting them keeps "the network is broken" and "the tools are broken"
-apart. Everything past the first check needs the machine running the test to have
-internet access.
-
-The first round uses bash builtins, `networkctl` and `getent` only. That began as a
-constraint and is now a choice: `grep`, `sed` and `awk` are in the image, but a serial
-console handshake is better off not depending on a package it is not testing. The second
-round is where that rule is deliberately broken, since those tools are the thing under
-test — it still parses their output with `[[ ]]`.
-
-## SSH
-
-`openssh` is the first thing the image listens on. It links only what is already here —
-libcrypto, libz, libpam, libcrypt — and installs its own unit, `sysusers.d` entry for the
-privilege-separation account, `sshd_config` and `/etc/pam.d/sshd` from
-`packages/openssh/build.sh` rather than from `image/files`, so the apparatus goes wherever
-the binary goes. Host keys are generated on the machine at every boot by
-`sshd-keygen.service`, into `/var/lib/sshd` (a tmpfs, like the rest of `/var`), never in
-the image: a key baked into an image
-built from a public repository is the same key on every machine that boots it. No
-account has a password (`image/files/etc/shadow` is all `*`, and the build fails on a
-hash), so ssh is by key only, for everyone.
-
-Passwordless login from the host works the way Vagrant and Lima do it, with nothing
-written into the image:
-
-```sh
-./tools/boot-qemu.sh            # terminal one: the serial console
-./tools/ssh.sh                  # terminal two: a shell as `user` over ssh
-./tools/ssh.sh uname -a         # or one command
-./tools/ssh.sh --root           # or as root
-scp -F output/ssh/config file flfs:/tmp/
-```
-
-The key is generated on the host, by `tools/boot-qemu.sh`, every time it starts a guest:
-a fresh ed25519 pair in `output/ssh/`, deleted when qemu exits. It is not the guest's
-host key — `sshd-keygen.service` generates those inside the guest at every boot, and
-they are gone when it stops. The public half of the boot key goes to the guest as the systemd
-credential `ssh.authorized_keys.root` on the kernel command line, and qemu forwards a
-free host port from 2222 up to the guest's 22, bound to `127.0.0.1`. `output/ssh/config`
-ties those together, so `tools/ssh.sh` is just `ssh -F output/ssh/config flfs`. sshd
-reads the key straight from `/run/credentials/@system`, where PID 1 put it, rather than
-from the copy systemd's `provision.conf` writes into `/root/.ssh` — that copy is only
-written when no file exists yet, so a disk booted once keeps its first key forever and
-would refuse every later boot's. `SSH=0 ./tools/boot-qemu.sh` boots without any of it.
-
-Because nothing is baked in, a CI-built image works exactly the same way — as long as it
-was built from a commit that has openssh:
-
-```sh
-./tools/fetch-image.sh          # rootfs.erofs + bzImage into output/boot-image
-./tools/boot-qemu.sh
-./tools/ssh.sh                  # in another terminal
-```
-
-Booting it with a qemu command of your own instead, supply the two pieces yourself — the
-port forward and the credential (on arm64 the console is `ttyAMA0`):
-
-```sh
-ssh-keygen -t ed25519 -N '' -f key
-qemu-system-x86_64 ... \
-  -nic user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:2222-:22 \
-  -append "root=/dev/vda rw console=ttyS0 systemd.set_credential_binary=ssh.authorized_keys.root:$(base64 -w0 key.pub)"
-ssh -i key -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1
-```
-
-Without the credential there is no way in over ssh. The serial console takes a username
-and no password when the kernel command line carries `systemd.set_credential=login.noauth:yes`,
-which `test/qemu-lib.sh` passes and util-linux's `login` reads; without it, nothing logs
-in there either. Whoever writes the command line owns the VM anyway, so a credential
-there costs nothing a password would have protected.
-
-The container image keeps the client and drops the server: `sshd`, its two PAM-linked
-helpers, `sftp-server`, `sshd_config` and `/usr/share/empty.sshd` are all subtracted in
-`image/build-rootfs.sh` along with PAM itself.
-
-```sh
-./test/ssh.sh output/rootfs.erofs rootfs/boot/bzImage
-```
-
-is the check, in the `boot` job, and it runs three rounds: the daemon is up and
-listening (systemctl and bash's `/dev/tcp`), the guest can log into itself with a key and
-logind registers the session (`$XDG_SESSION_ID`), and the runner can log in through
-`tools/ssh.sh --root` with the boot's ephemeral key. The last one runs after the second has
-replaced `/root/.ssh/authorized_keys`, so it can only pass through the credential. A
-plain `tools/ssh.sh` then has to land as `user` with `/run/user/1000` as its runtime
-directory — its own session, which is what rootless podman needs.
-
-## TLS and the trust store
-
-`curl` is the HTTP client, `openssl` is what it speaks TLS with, and `ca-certificates` is
-the list of roots it verifies against. All three arrived together, because none of them
-is useful alone.
-
-The TLS backend was an open question — `docs/container-runtime.md` preferred mbedTLS on
-size, at roughly 1.5 MB against OpenSSL's 5. It is settled on OpenSSL, on the *modern and
-established* test at the top of this file. mbedTLS is established in embedded firmware;
-OpenSSL is what a general-purpose Linux has, and the next thing here to want TLS will
-look for `libcrypto` and expect to find it. Carrying two TLS libraries is the outcome
-worth avoiding, so the one to carry is the one that scales. Its `Configure` being perl was
-never a disqualification: a build-time interpreter is fine, and what the rule forbids is
-an interpreter *in the image* — which is why `packages/openssl/build.sh` deletes
-`c_rehash`, `CA.pl` and `tsget` from `DESTDIR`, all three being perl with no perl here to
-run them. `packages/curl/build.sh` deletes `curl-config` alongside them for a different
-reason: it is a shell script, and shell scripts run here, but what it describes is where
-libcurl's headers live and the trim has removed them.
-
-The roots come from Debian's `ca-certificates`, which is a snapshot of Mozilla's
-`certdata.txt` plus the python that turns it into PEM — the same source Buildroot,
-OpenWrt, Void and Gentoo build their bundles from. The python runs in the builder and
-what ships is a text file: `/etc/ssl/certs/ca-certificates.crt`, one concatenated bundle
-rather than a hashed `CApath` directory, since building that directory is what `c_rehash`
-was for. `/etc/ssl/cert.pem` is a symlink to it, so OpenSSL's own default finds it too.
-
-`openssl` is pinned to the 3.5 LTS branch and `packages/openssl/env.sh` says why at
-length. The short version: curl is compiled against the builder image's OpenSSL headers,
-so it asks for `libcrypto.so.3` at runtime and ours has to be the library that answers —
-which makes a major-version bump something to do deliberately rather than automatically.
-
-## Archives
-
-`tar` and `gzip` are GNU tar and GNU gzip. The image had `xz` and `zstd` — and `zlib`,
-which is a library with no command-line tool on top of it — so it could read the two
-formats almost nothing arrives in and neither of the two it does. `tar+gzip` is what an
-OCI layer is, and it is what everything else that ships a tarball is too.
-
-tar is built with ACL and extended-attribute support on, which is the half that matters
-for `docs/container-runtime.md`: an image layer carries file capabilities as
-`security.capability` xattrs, and `tar --xattrs --acls` is what carries them through an
-unpack. Both are autodetected, and neither `--with-posix-acls` nor `--with-xattrs` fails
-a configure that cannot have them — they check for the headers and quietly turn
-themselves back off — so `packages/tar/build.sh` asserts on `config.h` instead. `readelf`
-would not do: the ACL half links `libacl`, but the xattr calls are glibc's, so a tar with
-no xattr support has exactly the same `NEEDED` as one with it and differs only in
-unpacking layers wrong. What is *not* built is `rmt`, the remote-tape server tar reaches
-for over rsh, there being no rsh and no tape drive here — openssh is packaged, but `rmt`
-over ssh is a tape-backup protocol with no tape on either end.
-
-gzip installs a dozen wrapper scripts around the binary, and none of them ship. Most wrap
-a tool that is not here: `zdiff` and `zcmp` want diffutils, `znew` wants `compress`,
-`zless` wants `less`. That leaves `zgrep` and a couple of others, and shipping four of
-twelve because those four happen to work is a worse story than shipping none.
-
-`gunzip` and `zcat` are the exception, being names too much of the world calls to simply
-not have — and they are better as symlinks than as wrappers regardless, a symlink costing
-neither a fork nor a shell. gzip's `main()` has always been able to answer to them by
-looking at `argv[0]`; that code sits behind `#if !GNU_STANDARD`, whose default is why
-upstream ships wrappers at all, so `packages/gzip/build.sh` compiles with
-`-DGNU_STANDARD=0` and symlinks both names at the binary. It then compresses a string and
-reads it back through the installed `zcat`, because the failure mode is silent and
-backwards: a `gunzip` that did not get the macro compresses.
+Each package is two files, `packages/<pkg>/env.sh` (version, URL, SHA256, license) and
+`build.sh` (configure, compile, install), built in one builder image with `--network=none`
+against our own glibc. Packages whose `env.sh` says `EXTENSION=<name>` install into
+`extensions/<name>/` instead of `rootfs/`, and become that extension. Builds are
+reproducible to the byte, and CI checks it. `./tools/clean.sh` gives the disk space back.
+
+## The disk image
+
+* **Immutable and verified.** The root is EROFS, attached read-only, and a dm-verity hash
+  tree appended to it is checked against the root hash in `rootfs.cmdline` on every read.
+  A changed byte is an I/O error and a tampered image does not boot. Keep the image and its
+  `.cmdline` together.
+* **State is RAM by default.** `/var`, `/home`, `/root`, `/tmp` and `/run` are tmpfs, so
+  every boot starts from the same bytes. To update a machine, boot it from a newer image.
+* **Or a disk for `/var`.** `systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs`
+  on the kernel command line makes systemd format a blank disk on the first boot and keep
+  it from then on. `VAR_DISK=output/var.img ./tools/boot-qemu.sh` does this for qemu.
+* **No passwords anywhere.** `root` and `user` have none, ssh takes keys only, and
+  `tools/boot-qemu.sh` hands the guest an ephemeral key as a systemd credential, so
+  `tools/ssh.sh` logs in with nothing baked into the image.
+* **Networking** is systemd-networkd and systemd-resolved, with `ip`, `ping` and `curl`
+  (OpenSSL, Mozilla's roots) in the image for using and debugging it.
+
+## System extensions
+
+Software is added to a machine without changing its image: an extension is an EROFS
+image that systemd-sysext (for `/usr`) or systemd-confext (for `/etc`) overlays at boot.
+Extensions match the base by `SYSEXT_LEVEL` in os-release, not by version, so a base update
+does not orphan them. A machine gets them in one of two ways:
+
+* **Attached by the VMM**, the way the root is: a read-only disk per image, verified by
+  dm-verity from a table on the kernel command line and mounted where systemd-sysext
+  looks. One file serves any number of VMs. `SYSEXTS=podman` or `SYSEXTS=kubernetes`
+  does this in `test/qemu-lib.sh`, and with it `tools/boot-qemu.sh`.
+* **Installed on the `/var` disk**, in `/var/lib/extensions` and `/var/lib/confexts`.
+  This way is not verified yet: it would need libcryptsetup (#191).
+
+`./tools/build-extension.sh sysext|confext <name> <dir>` makes one of your own from a
+directory tree.
 
 ## Containers
 
-The base image is the container *runtime* — the kernel's namespaces, cgroups and
-nftables, `crun` and `conmon` — and the *engine* is a system extension you load on
-demand: **podman**, or the Kubernetes node (`docs/sysext.md`). `crun run` works on the
-base alone. Boot with podman attached as a read-only disk, the way the root is:
-
-```sh
-SYSEXTS=podman ./tools/boot-qemu.sh
-```
-
-or put `extensions/podman.raw` into a machine's `/var/lib/extensions` on its `/var`
-disk. Either way systemd-sysext merges it at boot, and podman runs containers the way
-you'd expect:
+With the podman extension, containers work as you would expect, rootless included (for
+`user`, through pasta and newuidmap/newgidmap, which hold file capabilities rather than
+being setuid):
 
 ```sh
 podman run --rm -it docker.io/library/alpine sh
 podman run -d -p 8080:80 docker.io/library/nginx
 ```
 
-Root's image storage is `/var/lib/containers`, which lives in RAM like the rest of `/var`
-unless the VM has a `/var` disk. Without one, pulled images are gone after a reboot.
+To have a container start at boot, describe it as a Quadlet `.container` file. Give it
+`UpheldBy=multi-user.target` next to `WantedBy=`: the extension is merged during early
+boot, and a unit generated then misses the boot transaction with `WantedBy=` alone.
+`systemctl enable --runtime --now podman.socket` serves the Docker-compatible API.
 
-Rootless works too: log in as `user` and the same commands run in that user's own
-namespace, with the 65536 subordinate IDs from `/etc/subuid` and networking through
-`pasta`. The two programs that write those ID maps, `newuidmap` and `newgidmap`, are the
-only privileged binaries anywhere here, and they come with the podman extension. They
-hold `cap_setuid` and `cap_setgid` as file capabilities rather than being setuid root, as
-on Fedora. `/home` is RAM, so a rootless
-user's images go at reboot either way.
+The base alone runs containers too, with `crun` on a bundle from `crun spec`.
 
-To have a container started at boot, describe it as a **Quadlet** file. systemd turns
-it into a unit every time it starts, which suits an image you update by booting a new
-one: a `.container` file under `/usr/share/containers/systemd` — in an extension of your
-own, or the image through `extra/` — comes up with the machine. At runtime
-`/run/containers/systemd` works too, for the current boot only:
+## Kubernetes
 
-```ini
-# /usr/share/containers/systemd/web.container
-[Container]
-Image=docker.io/library/nginx
-PublishPort=8080:80
+A Kubernetes node is the base image plus the `kubernetes` extension pair. Nothing else is
+installed, and nothing is configured on the node itself.
 
-[Install]
-WantedBy=multi-user.target
-UpheldBy=multi-user.target
-```
+**What the extension is.** kubelet, kubeadm and kubectl 1.37, CRI-O 1.37 with pinns,
+crictl, and the bridge, host-local, loopback and portmap CNI plugins, all built from
+source here (`packages/kubernetes`, `cri-o`, `cri-tools`, `cni-plugins`). CRI-O runs on the
+base's crun and conmon and reads the base's `/etc/containers`. Its minor version follows
+Kubernetes'. CRI-O and kubelet start through `Upholds=`, which works for units merged
+during early boot.
 
-`UpheldBy=` is what makes it start at boot. podman's Quadlet generator only exists once
-the extension is merged, during early boot, and a unit it generates then is too late for
-`WantedBy=` alone (`test/sysext.sh` shows the difference); `UpheldBy=` is evaluated
-continuously and starts it.
+**How it copes with a read-only root.** Nothing is made writable. Each path the stack
+writes is a link into `/var` or `/run`, shipped in the confext:
 
-For Docker clients (the `docker` CLI, compose), `systemctl enable --runtime --now
-podman.socket` serves the Docker-compatible API at `/run/podman/podman.sock`. That
-works despite the read-only `/etc`, because `--runtime` writes to `/run`.
-
-Under podman:
-
-| | |
+| path | becomes |
 | --- | --- |
-| `crun` | the OCI runtime, with seccomp enforced through `libseccomp` |
-| `conmon` | the small per-container monitor that lets podman exit while the container runs |
-| `netavark`, `aardvark-dns` | networking (bridge, veth, NAT, published ports) and container-name DNS |
-| `nftables` | what netavark's firewall rules are written with (`nft -j`); there is no iptables driver |
+| `/etc/kubernetes` | `/var/lib/kubernetes` (kubeadm's PKI, kubeconfigs and static pod manifests) |
+| `/etc/cni/net.d` | `/var/lib/cni/net.d` |
+| `/opt/cni/bin` | `/var/lib/cni/bin` (in the sysext) |
+| `/etc/crio/auth` | `/run/crio/auth` (short-lived registry credentials) |
 
-The image's configuration is podman's compiled-in defaults plus two files in
-`/etc/containers`: `policy.json` (accept unsigned images, as every distribution does)
-and `registries.conf` (short names like `alpine` mean `docker.io`).
+So stock manifests work unmodified. kubeadm detects systemd-resolved and the cgroup
+driver by itself, so a node needs no kubelet configuration of its own. A node does need a
+disk for `/var`, because its identity lives there, and kubelet refuses to start on a
+tmpfs.
 
-The OCI *container* image (`flfs-oci.tar`) has no engine either, and no conmon; a
-container engine inside a container is a niche.
+The kernel carries what a node needs, built in: kube-proxy's nftables mode, VXLAN, the
+`xt_*` matches kubeadm's preflight insists on, and `/usr/lib/modules/<release>/config`
+for that preflight to read.
+
+**The demo** forms a cluster from the image and the extension:
 
 ```sh
-./test/podman.sh output/rootfs.erofs rootfs/boot/bzImage
+./tools/k8s-demo.sh up          # router + 3 nodes, kubeadm init/join, flannel, a demo Service
+./tools/k8s-demo.sh kubectl get pods -A
+./tools/k8s-demo.sh ssh 2       # root on k8s-2
+./tools/k8s-demo.sh ps          # the VMs, their memory, and the nodes' status
+./tools/k8s-demo.sh down
 ```
 
-is the check, with `output/extensions/podman.raw` attached. It confirms podman reports crun, netavark, seccomp and overlay storage,
-that a container runs in its own PID namespace with a seccomp filter applied, that DNS
-and TCP work from inside one, and that a Quadlet file becomes a running unit. It
-imports its test image from files already in the guest instead of pulling one, so it
-never depends on a registry being up or under its rate limit.
+* **The VMs.** Every VM boots the unmodified image. The extension is attached to each
+  node as one shared, verified read-only file, and each node gets a `/var` disk of its own.
+* **The network.** The nodes share one segment behind a fourth, small VM, booted from the
+  same image, that acts as switch, DHCP server and NAT. It is configured entirely by
+  systemd credentials on its kernel command line. Each node has one NIC and gets its
+  address by static lease, so kubelet needs no `--node-ip`.
+* **The pod network** is flannel's stock manifest (VXLAN, nftables backend), pinned by
+  checksum.
+* **The demo itself** deploys four replicas behind a Service and checks that answers come
+  from pods on more than one node.
+* **kubectl** runs on the control plane over ssh. `output/k8s/kubeconfig` points a kubectl
+  of your own at the API server's forward on `127.0.0.1:6443`.
+* **What it needs:** KVM, about 8 GB of RAM, and access to registry.k8s.io and ghcr.io for
+  the images.
 
-### crun
+`test/k8s.sh` runs the demo in CI on amd64. arm64 runners have no KVM, so it skips there.
 
-The OCI runtime is `crun`. It's podman's default and comes from the same project, and
-it's the smallest and fastest to start of the three runtimes (runc and youki are the
-others). It brings `json-c` for `config.json`. It's built without CRIU (see
-`crun/build.sh`). eBPF stays enabled even though it reads like an optional feature: on
-cgroup v2 the device controller *is* a BPF program, and a crun built `--disable-bpf`
-fails outright on any bundle with device rules, which is every bundle `crun spec`
-writes.
+**Current limits:**
+* kubeadm is the only way a node joins.
+* The control plane runs as static pods from registry.k8s.io, as kubeadm deploys it.
+* Upgrading a node means a new extension file and a reboot.
+* Extensions installed on `/var` rather than attached are not verified yet (#191).
 
-`x86_64_defconfig` enables almost none of what a container needs — it has `CGROUPS`, the
-pid/net/ipc/uts namespaces and `SECCOMP_FILTER`, and stops there. `kernel/build.sh`
-writes out a `container.config` fragment and merges it with `make container.config`:
-`USER_NS` and `MEMCG`, `OVERLAY_FS` for image layers, `VETH`/`BRIDGE`/`TUN` for
-container networking, `BPF_SYSCALL`/`CGROUP_BPF` for the cgroup v2 device controller,
-and nftables, which is hidden behind `NETFILTER_ADVANCED` that defconfig leaves off. The
-fragment is a heredoc rather than a file next to `build.sh` because only `build.sh` is
-bind-mounted into the builder.
+## Tests
 
-crun can also be driven directly, without podman: `crun spec` writes a valid
-`config.json` from nothing, so a directory plus that file is enough to start a
-container by hand.
+There is no unit-test suite. The checks below plus a real boot are the verification, and
+CI runs all of them but the last:
 
-```sh
-./test/container.sh output/rootfs.erofs rootfs/boot/bzImage
-```
-
-is the check, and it runs in the `boot` CI job alongside the network test. It boots
-systemd for real — crun asks systemd over sd-bus for the cgroup v2 scope, so PID 1 is
-part of what is under test — logs in at the serial getty and then asserts three layers:
-`cgroup.controllers` lists `memory`, `pids` and `cpu` (the fragment's `MEMCG` and
-friends actually took), `crun spec` plus a bind mount produces a bundle, and `crun run`
-starts a container whose `$$` is 1 and whose `$HOSTNAME` is the one the spec set — pid
-and uts namespaces that are demonstrably not the host's.
-
-The bundle is assembled with bash parameter expansion. The image ships no `jq`, and a
-JSON edit is not a job for `sed` either. Two traps are worth knowing if you edit those
-checks: the
-command spliced into `config.json` can contain no quotes of any kind, and `&` in the
-replacement half of `${var/pat/repl}` is a backreference to the whole match, so an `&&`
-chain silently corrupts the JSON.
-
-## systemd's BPF sandboxing
-
-Separate from crun's use of BPF above. crun talks to the cgroup v2 device controller
-through raw `bpf(2)` calls and needs no library; systemd loads its own programs —
-`IPAddressAllow=`/`Deny=`, `RestrictNetworkInterfaces=`, `SocketBind*=`,
-`RestrictFileSystems=` — through **libbpf**. systemd is built with `-Dbpf-framework`
-enabled, so those programs are compiled by clang inside the builder image and embedded
-as skeletons; it then `dlopen`s `libbpf.so.1` at runtime to load them. Not shipping the
-library disabled all of it with a single line in the journal, which is why `libbpf` and
-`elfutils` (for `libelf.so.1`, which libbpf parses ELF objects with) are packages.
-
-The LSM-based one, `RestrictFileSystems=`, needs the kernel side too, and the
-`container.config` fragment carries all four symbols:
-
-| symbol | why |
+| check | what it asks |
 | --- | --- |
-| `BPF_JIT` | `BPF_LSM` depends on it; defconfig leaves it off |
-| `BPF_LSM` | the hook type itself. `CONFIG_LSM` already lists `bpf` |
-| `SECURITYFS` | systemd decides bpf-lsm is available by reading `/sys/kernel/security/lsm`, so without securityfs the answer is no however the kernel is built |
-| `DEBUG_INFO_BTF` | an LSM program names the kernel function it hooks, and resolving that name needs `/sys/kernel/btf/vmlinux` |
+| `test/check-rootfs-deps.sh`, `check-symbol-versions.sh` | every library a binary needs is shipped, in a version it defines |
+| `test/kernel-caps.sh` | the kernel config has what containers and Kubernetes need |
+| `test/boot.sh`, `systemd.sh`, `verity.sh` | it boots, no unit fails, a tampered image is refused |
+| `test/network.sh`, `ssh.sh` | DHCP, DNS, TLS; sshd, from the guest and from the host |
+| `test/container.sh`, `podman.sh`, `rootless.sh` | crun on the base; podman with seccomp, networking and Quadlet; rootless |
+| `test/sysext.sh` | extensions merge from both places, a wrong level and a tampered image are refused |
+| `test/persistent-var.sh`, `vmm.sh`, `k8s.sh` | state survives on a `/var` disk; Firecracker- and VZ-shaped boots; a cluster |
+| `test/oci.sh`, `rootfs-size.sh`, `vs-debian-slim.sh` | the OCI image runs; its size against the budget and against debian-slim |
+| `test/reproducible.sh <pkg>` | a package builds to the same bytes twice (CI checks the images that way itself) |
 
-`DEBUG_INFO_BTF` is the one with a real price: it compiles the kernel with debug info
-and runs pahole over `vmlinux`, so the kernel job gets noticeably slower. `dwarves` is
-already in `builder/deps.txt`.
+Each takes the image and kernel as arguments, e.g.
+`./test/podman.sh output/rootfs.erofs rootfs/boot/bzImage`.
+
+## Adding a package
+
+Packaging is the easy part. Choosing is where the mistakes are, so answer these in the
+pull request:
+
+* Is it maintained or just old?
+* Is it established (Debian, Fedora and Alpine ship it)?
+* Is there an equally established, more modern option?
+* What does it drag in?
+* Does it need an interpreter at runtime?
+
+Then add `packages/<pkg>/env.sh` and `build.sh`. CI's build matrix picks the directory
+up, and `./tools/bump-version.sh <pkg> <version>` keeps `VERSION` and `SHA256` in step.
+Prefer configuring an optional dependency out over adding it to `builder/deps.txt`.
+CLAUDE.md lists the traps that break silently.
 
 ## Keeping packages up to date
 
-```sh
-./tools/check-updates.sh              # every package
-./tools/check-updates.sh bash glibc   # only these
-```
-
-reports what each package is pinned to and what upstream has released since. Where to
-look is declared per package in `env.sh` (see `tools/upstream.sh` for the knobs); nothing
-needs declaring when the download URL points into a directory that holds every release,
-which covers the GNU mirrors, savannah and kernel.org. Projects that publish on GitHub
-set `UPSTREAM_GITHUB="owner/repo"`. Only plain numeric versions are considered, so
-release candidates are never proposed, and a candidate is reported only once its
-tarball has been confirmed to exist at the URL `env.sh` would fetch it from.
-
-`.github/workflows/update-packages.yml` runs that check every Monday and opens one pull
-request per outdated package, each bumping a single `VERSION` line. CI then builds the
-package, checks the assembled rootfs for unresolved libraries and boots the image, so
-an update that breaks something says so before it reaches `main`. Closing a pull
-request unmerged stops that version from being proposed again; the next release still
-gets its own.
-
-No secret to set up, but one repository setting: *Settings → Actions → General → Workflow
-permissions* → **Allow GitHub Actions to create and approve pull requests**. Without it
-the workflow pushes its branch and then dies on `gh pr create` with *GitHub Actions is
-not permitted to create or approve pull requests*.
-
-One more wrinkle worth knowing about: GitHub deliberately starts no
-workflow run for a push made with the built-in `GITHUB_TOKEN`, so the pull request would
-otherwise sit there with no CI. `workflow_dispatch` is the one event that token *is*
-allowed to trigger, so the workflow asks for the run itself with `gh workflow run ci.yml
---ref <branch>`. That run belongs to the branch rather than to the pull request, so it
-is not listed under the pull request's checks — the workflow posts a comment linking to
-it instead.
+`./tools/check-updates.sh` reports what upstream has released since each pin.
+`.github/workflows/update-packages.yml` runs it weekly and opens one pull request per
+package, which CI builds and boots before it can merge. It needs the repository setting
+*Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and
+approve pull requests*.
