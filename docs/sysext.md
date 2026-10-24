@@ -285,7 +285,7 @@ mechanism, and worth an `examples/` entry once the base supports sysext at all.
   extension with a wrong `SYSEXT_LEVEL` is refused. It's cheap, needs no Kubernetes, and
   is the test that keeps the mechanism working for everything after it.
 - **`test/k8s.sh`** exists already, ahead of the extension: it runs `tools/k8s-demo.sh`
-  with `STRICT=1` — three nodes, a Service answered from more than one — in CI's `k8s`
+  — three nodes, a Service answered from more than one — in CI's `k8s`
   job, on KVM, per push, gating nothing. Once the extension exists it should boot that
   instead of copying binaries in, and lose the demo's `/etc` overlay.
 - **The base without the extension is unchanged**: `test/systemd.sh` still passes, and

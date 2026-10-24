@@ -6,11 +6,10 @@
 # tools/k8s-demo.sh does all of it — three guests, kubeadm init and join, a pod network,
 # and four replicas behind a Service that a pod then queries by DNS name — and fails on
 # its own if any step does: a node that never turns Ready, CoreDNS or kube-proxy that
-# never rolls out, or a Service whose answers do not come from more than one node. This
-# runs it with STRICT=1, which turns the demo's workarounds for older images into
-# failures, so what is checked is the image as built: that kubeadm's preflight accepts
-# the kernel (/usr/lib/modules/<release>/config and the k8s.config symbols) and that
-# kube-proxy starts with its hostPath /lib/modules.
+# never rolls out, or a Service whose answers do not come from more than one node. The
+# demo has no fallback for the kernel, so what is checked is the image as built: that
+# kubeadm's preflight accepts the kernel (/usr/lib/modules/<release>/config and the
+# k8s.config symbols) and that kube-proxy starts with its hostPath /lib/modules.
 #
 # Not checked here, because the demo provides it rather than the image: the binaries
 # (upstream releases, downloaded), a writable /etc (an overlay, docs/sysext.md has the
@@ -43,6 +42,6 @@ keep_logs() {
 }
 trap keep_logs EXIT
 
-STRICT=1 ./tools/k8s-demo.sh up
+./tools/k8s-demo.sh up
 ./tools/k8s-demo.sh ps
 echo ">> k8s OK"

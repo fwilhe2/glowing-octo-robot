@@ -22,8 +22,6 @@
 #     /etc/kubernetes. So each node lays an overlayfs over /etc whose upper half is on
 #     /var — the biggest demo-only liberty here. Everything the cluster wrote into /etc
 #     is in /var/lib/flfs-k8s/etc-upper on that node, and nowhere else.
-#   - The kernel has no module support, so there is no /lib/modules, and kube-proxy's
-#     DaemonSet bind-mounts it; the volume is patched to an emptyDir after init.
 #   - /usr is read-only too, so the binaries live in /var/lib/flfs-k8s/bin and the units
 #     in /run/systemd/system; kubelet's and the controller manager's FlexVolume
 #     directory (/usr/libexec/kubernetes by default, created at start) is moved under
@@ -61,8 +59,6 @@
 #                  it was assembled from in rootfs/boot — and otherwise the one
 #                  tools/fetch-image.sh downloaded from CI (OUT, ARCH as for
 #                  tools/boot-qemu.sh)
-#   STRICT         1 to fail rather than work around an image that predates the fixes
-#                  this demo found (below); what test/k8s.sh runs it with
 #
 # State lives in output/k8s/: console logs, the /var disks, the ssh key and config, the
 # kubeconfig and a host kubectl. `down` removes it; `up` starts from nothing every time.
@@ -342,31 +338,6 @@ provision_node() {
 
 # --- the cluster -------------------------------------------------------------------------
 
-# Two workarounds for images built before the kernel package installed
-# /usr/lib/modules/<release>/config (packages/kernel/build.sh), decided per run by
-# looking for that file on the first node — so the demo works on any image, and does
-# nothing behind a newer image's back:
-#
-#   - kubeadm reads the kernel config from a list of conventional paths, and an older
-#     image has it only as /boot/config, which is not on the list; the check fails the
-#     node for want of a file, so it is skipped. test/kernel-caps.sh holds the kernel to
-#     what a container host needs at build time either way.
-#   - kube-proxy's DaemonSet bind-mounts the host's /lib/modules, which an older image
-#     does not have and whose read-only root CRI-O cannot create it on, so every
-#     kube-proxy pod fails with "mkdir /lib/modules: read-only file system". nftables
-#     mode never loads a module, so the volume is patched to an empty directory.
-image_workarounds() {
-    if node_ssh 1 'test -e /usr/lib/modules/$(uname -r)/config'; then
-        PREFLIGHT= OLD_IMAGE=0
-    elif [ "${STRICT:-0}" = 1 ]; then
-        echo "error: $ROOTFS has no /usr/lib/modules/<release>/config, which packages/kernel installs" >&2
-        return 1
-    else
-        echo "   this image predates /usr/lib/modules/<release>: skipping kubeadm's kernel check, patching kube-proxy"
-        PREFLIGHT=--ignore-preflight-errors=SystemVerification OLD_IMAGE=1
-    fi
-}
-
 init_control_plane() {
     local hex
     hex=$(od -An -tx1 -N11 /dev/urandom | tr -d ' \n')
@@ -410,16 +381,13 @@ apiVersion: kubeproxy.config.k8s.io/v1alpha1
 kind: KubeProxyConfiguration
 mode: nftables
 EOF
-    node_ssh 1 "kubeadm init --config $GUEST_DIR/kubeadm.yaml $PREFLIGHT"
+    node_ssh 1 "kubeadm init --config $GUEST_DIR/kubeadm.yaml"
 
     # The admin kubeconfig, pointed at the host's forward rather than the cluster segment
     # the host cannot reach.
     node_ssh 1 cat /etc/kubernetes/admin.conf |
         sed "s#server: https://.*#server: https://127.0.0.1:$API_PORT#" > "$STATE/kubeconfig"
     chmod 600 "$STATE/kubeconfig"
-
-    [ "$OLD_IMAGE" = 0 ] || k -n kube-system patch daemonset kube-proxy \
-        -p '{"spec":{"template":{"spec":{"volumes":[{"name":"lib-modules","hostPath":null,"emptyDir":{}}]}}}}'
 
     CA_HASH="sha256:$(node_ssh 1 "openssl x509 -pubkey -noout -in /etc/kubernetes/pki/ca.crt |
         openssl pkey -pubin -outform der | sha256sum" | cut -d' ' -f1)"
@@ -442,7 +410,7 @@ nodeRegistration:
     - name: node-ip
       value: $(node_ip "$n")
 EOF
-    node_ssh "$n" "kubeadm join --config $GUEST_DIR/kubeadm.yaml $PREFLIGHT"
+    node_ssh "$n" "kubeadm join --config $GUEST_DIR/kubeadm.yaml"
 }
 
 k() { "$STATE/kubectl" --kubeconfig "$STATE/kubeconfig" "$@"; }
@@ -635,7 +603,6 @@ up() {
     on_nodes 1 provision_node
 
     say "kubeadm init on $(node_name 1)"
-    image_workarounds
     init_control_plane
 
     say "kubeadm join on the workers"
