@@ -12,11 +12,13 @@
 # Kubernetes comes as the image's kubernetes system extension (docs/sysext.md): kubelet,
 # kubeadm, kubectl, CRI-O and the CNI plugins built from source by packages/ with
 # EXTENSION=kubernetes, assembled into a sysext and a confext by tools/build-image.sh. The
-# image itself is unchanged. Both extension images are put on each node's /var disk
-# before its first boot, where systemd-sysext and systemd-confext merge them, CRI-O and
-# kubelet start through the Upholds= the extension ships, and the paths kubeadm writes
-# are links into /var. So nothing is copied into a guest and nothing on it is set up by
-# hand: what this script does after boot is kubeadm and the pod network.
+# image itself is unchanged. Both extension images are attached to every node the way the
+# root is — read-only disks, one file shared by all of them, verified by dm-verity from a
+# table on the kernel command line (SYSEXTS in test/qemu-lib.sh) — and systemd-sysext and
+# systemd-confext merge them at boot, CRI-O and kubelet start through the Upholds= the
+# extension ships, and the paths kubeadm writes are links into /var. So nothing is copied
+# into a guest and nothing on it is set up by hand: what this script does after boot is
+# kubeadm and the pod network.
 #
 # Every node gets a /var disk of its own (VAR_DISK in test/qemu-lib.sh). A node needs
 # one in any case — its PKI and identity are there — and the extension refuses a tmpfs.
@@ -109,23 +111,6 @@ retry() { # seconds command...
     done
 }
 
-# --- the extension -----------------------------------------------------------------------
-
-# Each node's /var disk, made before its first boot with the extension pair where
-# systemd looks for it: /var/lib/extensions and /var/lib/confexts. x-systemd.makefs only
-# formats a blank disk, so this filesystem is what the node finds, and the merge at boot
-# is the path a real node takes. The disk is sparse; growfs makes the filesystem fill it.
-seed_var_disks() {
-    local n seed="$STATE/seed"
-    mkdir -p "$seed/lib/extensions" "$seed/lib/confexts"
-    cp "$EXTENSIONS/extensions/kubernetes.raw" "$seed/lib/extensions/"
-    cp "$EXTENSIONS/confexts/kubernetes.raw" "$seed/lib/confexts/"
-    for n in $(seq 1 "$NODES"); do
-        qemu_seed_var_disk "$STATE/$(node_name "$n")-var.img" "$VAR_SIZE" "$seed"
-    done
-    rm -rf "$seed"
-}
-
 # --- the guests --------------------------------------------------------------------------
 
 b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
@@ -205,11 +190,12 @@ ExecStart=/usr/lib/systemd/systemd-socket-proxyd $(node_ip 1):6443
     for n in $(seq 1 "$NODES"); do retry 10 test -S "$STATE/$(node_name "$n").sock"; done
 }
 
-# One node: the same machine tools/boot-qemu.sh boots (qemu_argv), plus a /var disk and a
-# hostname, with its one NIC on the router's segment instead of a NAT of its own. Nothing
-# about the network is configured on the node: the image's own 20-wired.network asks for
-# DHCP, and the router's static lease answers. In the background, with its console in
-# output/k8s/k8s-N.console.log and its pid in output/k8s/k8s-N.pid.
+# One node: the same machine tools/boot-qemu.sh boots (qemu_argv), plus a /var disk, a
+# hostname and the kubernetes extension, with its one NIC on the router's segment instead
+# of a NAT of its own. Nothing about the network is configured on the node: the image's
+# own 20-wired.network asks for DHCP, and the router's static lease answers. In the
+# background, with its console in output/k8s/k8s-N.console.log and its pid in
+# output/k8s/k8s-N.pid.
 boot_node() {
     local n="$1" name ip
     name=$(node_name "$n") ip=$(node_ip "$n")
@@ -222,7 +208,7 @@ boot_node() {
 
     VAR_DISK="$STATE/$name-var.img"
     if [ "$n" = 1 ]; then MEM="$CP_MEM"; else MEM="$WORKER_MEM"; fi
-    qemu_argv
+    SYSEXTS=kubernetes qemu_argv
 
     "$QEMU" "${QEMU_ARGV[@]}" \
         -pidfile "$STATE/$name.pid" \
@@ -478,7 +464,6 @@ up() {
     trap 'echo; echo ">> failed — consoles are in $STATE/*.console.log; ./tools/k8s-demo.sh down when done" >&2' ERR
 
     say "Booting $NODES nodes from $ROOTFS with $KERNEL, and the kubernetes extension from $EXTENSIONS"
-    seed_var_disks
     boot_router
     local n
     for n in $(seq 1 "$NODES"); do boot_node "$n"; done
