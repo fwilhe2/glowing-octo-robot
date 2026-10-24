@@ -7,8 +7,9 @@ systemd-sysext and systemd-confext merge extensions at boot, the image declares
 `extensions/kubernetes/` (#188), `tools/build-image.sh` assembles that into a sysext and
 a confext, and `tools/k8s-demo.sh` forms its cluster on them with nothing copied into a
 guest (#189). podman is an extension too (#192), so the base is the container runtime
-and the engine is a choice, and the demo's pod network is a stock flannel (#190). Still
-open: verity on extensions (#191). This is the design for
+and the engine is a choice, and the demo's pod network is a stock flannel (#190).
+Attached extensions are verified by dm-verity like the root; extensions loaded from
+`/var/lib/extensions` are not yet (#191). This is the design for
 adding software to the immutable disk image *without changing it*, with a Kubernetes node
 as the case that justifies the mechanism.
 
@@ -159,7 +160,7 @@ as separate classes. Both are named `kubernetes.raw`, because an image's file na
 be the name in its `extension-release.<name>`:
 
 ```
-extensions/kubernetes.raw      sysext: EROFS, like rootfs.erofs (verity: #191)
+extensions/kubernetes.raw      sysext: EROFS + verity, like rootfs.erofs
 ├── usr/
 │   ├── bin/kubelet, kubeadm, kubectl, crio, pinns, crictl
 │   ├── libexec/cni/bridge, host-local, loopback, portmap
@@ -391,28 +392,48 @@ the merge is finished before any ordinary unit starts. PID 1 bind-mounts
 carries the hierarchy's submounts over onto the merged overlay (`move_submounts` in
 `sysext.c`).
 
-The demo puts the files there **before the first boot**, rather than copying them in and
-running `systemd-sysext refresh`, so that what it tests is the boot path a real node
-takes. It builds each node's `/var` image with `mkfs.ext4 -d` from a seed tree holding
+`test/sysext.sh` puts files there **before the first boot**, rather than copying them in
+and running `systemd-sysext refresh`, so that what it tests is the boot path a real node
+takes. It builds the `/var` image with `mkfs.ext4 -d` from a seed tree holding
 `lib/extensions/` and `lib/confexts/` (`qemu_seed_var_disk` in `test/qemu-lib.sh`), under
 `podman unshare` so that every file is owned by root: made as an ordinary user, `/var/lib`
 belonged to uid 1000, and systemd-tmpfiles refused to create anything below it, with
-*unsafe path transition*. `x-systemd.makefs` only formats a blank device, so
-a disk that already has a filesystem is used as it is, and `x-systemd.growfs` still grows
-it. That also replaces the payload tarball, the units in `/run/systemd/system` and the
-whole of `setup-node.sh`.
+*unsafe path transition*. `x-systemd.makefs` only formats a blank device, so a disk that
+already has a filesystem is used as it is, and `x-systemd.growfs` still grows it.
 
 **A shared read-only disk** is the other way, and the closer match to how the base is
-attached: one file, `readonly=on`, any number of guests. It needed no base feature after
-all. `systemd.mount-extra=` mounts the disk at `/run/extensions/<name>` before the merge,
-and sysext merges a directory there like an image (#192, `SYSEXTS=` in
-`test/qemu-lib.sh`, `test/sysext.sh` checks both ways in one boot).
+attached: one file, `readonly=on`, any number of guests. It needed no base feature for
+the merge: `systemd.mount-extra=` mounts the disk at `/run/extensions/<name>` before
+systemd-sysext looks, and sysext merges a directory there like an image (#192, `SYSEXTS=`
+in `test/qemu-lib.sh`). It is what `tools/k8s-demo.sh` uses — one kubernetes image for
+every node, where the `/var` way copied 86 MB onto each — and what the podman, rootless
+and persistent-`/var` tests use for podman.
+
+**And it is verified, by the same mechanism as the root** (#191). Every extension image
+is sealed by `image/build-extension.sh` the way `rootfs.erofs` is: a dm-verity hash tree
+appended to the file, and its table written beside it as `<name>.dm-verity`. A VMM that
+attaches the image puts that table into the root's `dm-mod.create=`, so the kernel builds
+`/dev/mapper/ext-<name>` before userspace starts and that is what gets mounted. A changed
+byte is an I/O error, with no libcryptsetup and no initrd involved; `test/sysext.sh`
+attaches a tampered image and expects device-mapper's corruption report, as
+`test/verity.sh` does for the root. Two details made it work: dm-init runs before udev,
+so a table names its disk by position (`/dev/vdc` after the root and the `/var` disk),
+and nothing named the devices it makes — lvm2's udev rules would, via dmsetup, and
+without a `DM_NAME` systemd's `99-systemd.rules` keeps a dm device not-ready forever — so
+`image/files/etc/udev/rules.d/10-dm-init.rules` takes the name from sysfs.
+
+What is not verified is the `/var` way: a file in `/var/lib/extensions` is loop-mounted
+by systemd-sysext, and checking it is systemd's userspace verity, which is libcryptsetup
+and lvm2's libdevmapper under it. That is the part of #191 left open, and it is a choice
+about the image rather than a missing step: the attached way already covers the VMs this
+image targets.
 
 ### Trust
 
 An extension's verity root hash protects it against corruption, but not against
-replacement: whoever can write `/var/lib/extensions` can put any extension there. For a
-first version that is the same trust boundary as root on the machine. Signed extensions
+replacement. For an attached one the hash comes from the VMM, which already owns the
+guest, so that is the boundary it should be; for a file in `/var/lib/extensions` it is
+whoever can write there, which is root on the machine. Signed extensions
 need `DM_VERITY_VERIFY_ROOTHASH_SIG` (off today) and a key in the kernel's keyring, and
 systemd's image policy can then require a signature. That belongs with the signed-releases
 item in `docs/container-host.md`, and should be designed together with it, not twice.

@@ -31,8 +31,8 @@
 #                                exist as soon as it is merged — at boot that is during
 #                                sysinit, and an Upholds= drop-in is what starts them.
 #
-# Not verity-protected: systemd sets that up through libcryptsetup, which the image does
-# not have yet (#191).
+# Sealed with dm-verity like the root, with the table beside the image as <name>.dm-verity
+# (see the end of assemble()).
 set -euo pipefail
 
 usage="usage: build-extension.sh sysext|confext|staged <name>"
@@ -93,7 +93,32 @@ assemble() { # class tree
     mkfs.erofs --quiet -zzstd,15 -C131072 -Eztailpacking,fragments --tar=f "${erofs_repro[@]}" \
         "/usr/local/output/$out/$name.raw" /tmp/extension.tar
     rm -rf "$tree" /tmp/extension.tar
-    echo "$out/$name.raw: $class, $key=$level, $(du -h "/usr/local/output/$out/$name.raw" | cut -f1)"
+
+    # dm-verity, as for the root (build-rootfs.sh has the reasoning): the hash tree is
+    # appended to the same file, and the table that checks it is written beside the image
+    # as <name>.dm-verity, with @DEV@ where the block device goes. A VMM that attaches the
+    # image as a disk passes the table on the kernel command line with dm-mod.create=,
+    # next to the root's, so the kernel verifies the extension with no userspace involved
+    # (qemu_sysexts in test/qemu-lib.sh). One merged from a file in /var/lib/extensions is
+    # read without it: that needs systemd's userspace verity, and so libcryptsetup (#191).
+    local image="/usr/local/output/$out/$name.raw" size blocks verity hash salt salt_arg=()
+    size=$(stat -c %s "$image")
+    [ $(( size % 4096 )) -eq 0 ] || { echo "error: $image is not a whole number of 4 KiB blocks" >&2; exit 1; }
+    blocks=$(( size / 4096 ))
+    if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+        salt_arg=(--salt="$(printf '%s %s %s' "$SOURCE_DATE_EPOCH" "$class" "$name" | sha256sum | cut -c1-64)")
+    fi
+    verity=$(veritysetup format --no-superblock --hash=sha256 \
+        --data-block-size=4096 --hash-block-size=4096 \
+        --data-blocks="$blocks" --hash-offset="$size" \
+        "${salt_arg[@]}" "$image" "$image")
+    hash=$(sed -n 's/^Root hash:[[:space:]]*//p' <<< "$verity")
+    salt=$(sed -n 's/^Salt:[[:space:]]*//p' <<< "$verity")
+    [ -n "$hash" ] && [ -n "$salt" ] || { echo "error: no root hash and salt from veritysetup for $image" >&2; exit 1; }
+    printf '0 %s verity 1 @DEV@ @DEV@ 4096 4096 %s %s sha256 %s %s\n' \
+        $(( size / 512 )) "$blocks" "$blocks" "$hash" "$salt" > "/usr/local/output/$out/$name.dm-verity"
+
+    echo "$out/$name.raw: $class, $key=$level, $(du -h "$image" | cut -f1), verity $hash"
 }
 
 case "$mode" in

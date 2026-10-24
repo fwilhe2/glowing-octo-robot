@@ -1,0 +1,9 @@
+# Device-mapper devices the kernel made itself, from dm-mod.create= on the command line:
+# the root's dm-verity device and those of the system extensions a VMM attaches
+# (docs/sysext.md). lvm2's udev rules would name a dm device by asking dmsetup, and this
+# image has neither — nothing in it creates dm devices from userspace. Without a DM_NAME,
+# systemd's 99-systemd.rules sets SYSTEMD_READY=0 on every dm "add" and a mount of one
+# waits until it times out, so this takes the name from where the kernel already put it,
+# sysfs, and gives the /dev/mapper link with it. That is all lvm2's rules would do for
+# these devices; anything a userspace tool creates is not touched.
+SUBSYSTEM=="block", KERNEL=="dm-*", ENV{DM_NAME}!="?*", ATTR{dm/name}=="?*", ENV{DM_NAME}="$attr{dm/name}", SYMLINK+="mapper/$env{DM_NAME}"

@@ -549,7 +549,12 @@ the whole `CONFIG_MD` menu that device-mapper lives in. `fstab` names `/dev/dm-0
 than `LABEL=root` because the label is visible twice — on the verity device and, unverified,
 on the raw disk under it. `test/verity.sh` flips one byte EROFS never reads in a copy of
 the image and expects the boot to fail with verity's corruption report: `test/boot.sh`
-shows verity accepts the right image, this one shows it refuses any other. Everything a running machine writes is RAM:
+shows verity accepts the right image, this one shows it refuses any other. System
+extensions a VMM attaches are verified the same way: `image/build-extension.sh` seals each
+image and writes its table as `<name>.dm-verity`, `qemu_sysexts` in `test/qemu-lib.sh`
+adds it to the root's `dm-mod.create=`, and `image/files/etc/udev/rules.d/10-dm-init.rules`
+names the devices dm-init makes, which nothing else here would — without a `DM_NAME`,
+systemd keeps a dm device not-ready and a mount of it waits forever. Everything a running machine writes is RAM:
 `image/files/etc/fstab` mounts tmpfs on `/var`, `/home` and `/root`, systemd's own
 `tmp.mount` covers `/tmp`, and `/run` is PID 1's. The image ships those mount points
 *empty* — `build-rootfs.sh` deletes whatever was staged under them, because it would be

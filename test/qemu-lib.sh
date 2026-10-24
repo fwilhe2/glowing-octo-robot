@@ -232,13 +232,20 @@ qemu_argv() {
     root_args=$(cat "$(root_cmdline_file)")
     qemu_var_disk
     qemu_sysexts
+    # The extensions' verity tables go into the root's dm-mod.create= — the kernel takes
+    # one, with devices separated by ';' — and their disks into what it waits for.
+    if [ -n "$QEMU_DM_TABLES" ]; then
+        root_args=$(printf '%s' "$root_args" | sed -e "s|\"\$|$QEMU_DM_TABLES\"|" \
+            -e "s|dm-mod.waitfor=\([^ ]*\)|dm-mod.waitfor=\1$QEMU_DM_WAITFOR|")
+    fi
     case "$PROFILE" in
         pc)
             nic=(-nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}")
             [ -z "${QEMU_NIC_ARGS:-}" ] || nic=("${QEMU_NIC_ARGS[@]}")
             # Every disk an explicit -device, in this order: the root first, because the
             # verity table on the command line names it /dev/vda; the /var disk second,
-            # which its mount-extra= names /dev/vdb; extensions after, found by serial.
+            # which its mount-extra= names /dev/vdb; extensions after, whose tables
+            # qemu_sysexts wrote for exactly these positions.
             # qemu creates if=virtio disks after all explicit devices, so mixing the two
             # forms would put the extensions first.
             devices=(
@@ -328,19 +335,27 @@ qemu_seed_var_disk() { # disk size tree
 
 # System extensions attached the way the root is (docs/sysext.md): SYSEXTS names them,
 # and each <name> becomes a read-only virtio disk of EXTENSIONS/extensions/<name>.raw —
-# and of EXTENSIONS/confexts/<name>.raw too, when there is one — with
-# systemd.mount-extra= mounting it at /run/extensions/<name> (/run/confexts/<name>).
-# Those mounts are ordered before local-fs.target and systemd-sysext.service after it, so
-# the merge finds a directory extension there, on a machine whose /var is RAM as much as
-# on one with a disk. One file serves any number of guests, like the root.
+# and of EXTENSIONS/confexts/<name>.raw too, when there is one — mounted at
+# /run/extensions/<name> (/run/confexts/<name>) by systemd.mount-extra=. Those mounts are
+# ordered before local-fs.target and systemd-sysext.service after it, so the merge finds
+# a directory extension there, on a machine whose /var is RAM as much as on one with a
+# disk. One file serves any number of guests, like the root.
+#
+# And verified like the root: each image's dm-verity table (<name>.dm-verity beside it,
+# from image/build-extension.sh) joins the root's in dm-mod.create=, so the kernel sets up
+# /dev/mapper/ext-<name> (conf-<name>) before userspace starts, and that is what is
+# mounted; image/files/etc/udev/rules.d/10-dm-init.rules is what names it, there being no
+# lvm2 here to do it. dm-init runs before udev, so a table names its disk by position — after
+# the root and the /var disk, in the order qemu_argv attaches them.
 #
 # EXTENSIONS defaults to the directory the image is in, where tools/build-image.sh and
-# tools/fetch-image.sh both put them. The disks are found by serial, not by position,
-# because a VAR_DISK may or may not come first.
+# tools/fetch-image.sh both put them.
 qemu_sysexts() {
-    QEMU_SYSEXT_DRIVES=() QEMU_SYSEXT_APPEND=
+    QEMU_SYSEXT_DRIVES=() QEMU_SYSEXT_APPEND= QEMU_DM_TABLES= QEMU_DM_WAITFOR=
     [ -n "${SYSEXTS:-}" ] || return 0
-    local name class dir file serial ext_dir="${EXTENSIONS:-$(dirname "$ROOTFS")}"
+    local name class dir file id table dev letters=bcdefghijklmnopqrstuvwxyz
+    local ext_dir="${EXTENSIONS:-$(dirname "$ROOTFS")}" next=0
+    [ -z "${VAR_DISK:-}" ] || next=1
     for name in $SYSEXTS; do
         [ -f "$ext_dir/extensions/$name.raw" ] || {
             echo "error: SYSEXTS names $name, but there is no $ext_dir/extensions/$name.raw" >&2
@@ -351,12 +366,16 @@ qemu_sysexts() {
             dir=extensions; [ "$class" = ext ] || dir=confexts
             file="$ext_dir/$dir/$name.raw"
             [ -f "$file" ] || continue
-            # A virtio-blk serial is at most 20 bytes, and udev names the disk by it.
-            serial="$class-$name"
-            [ "${#serial}" -le 20 ] || { echo "error: extension name $name is too long for a disk serial" >&2; exit 1; }
-            QEMU_SYSEXT_DRIVES+=(-drive "file=$file,format=raw,if=none,readonly=on,id=$serial"
-                                 -device "virtio-blk-pci,drive=$serial,serial=$serial")
-            QEMU_SYSEXT_APPEND+=" systemd.mount-extra=/dev/disk/by-id/virtio-$serial:/run/$dir/$name:erofs:ro"
+            [ -f "${file%.raw}.dm-verity" ] || { echo "error: $file has no ${file%.raw}.dm-verity beside it" >&2; exit 1; }
+            id="$class-$name"
+            dev="/dev/vd${letters:$next:1}"
+            next=$((next + 1))
+            table=$(sed "s|@DEV@|$dev|g" "${file%.raw}.dm-verity")
+            QEMU_SYSEXT_DRIVES+=(-drive "file=$file,format=raw,if=none,readonly=on,id=$id"
+                                 -device "virtio-blk-pci,drive=$id")
+            QEMU_DM_TABLES+=";$id,,,ro,$table"
+            QEMU_DM_WAITFOR+=",$dev"
+            QEMU_SYSEXT_APPEND+=" systemd.mount-extra=/dev/mapper/$id:/run/$dir/$name:erofs:ro"
         done
     done
 }
