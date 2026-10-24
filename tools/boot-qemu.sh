@@ -16,7 +16,8 @@
 #   VAR_DISK a file to keep this VM's /var on, created if missing; without it /var is RAM
 #            and every boot starts empty. VAR_SIZE sizes a new one (default 4G). See
 #            qemu_var_disk in test/qemu-lib.sh. e.g. VAR_DISK=output/var.img
-#   SYSEXTS  system extensions to attach as read-only disks, e.g. SYSEXTS=kubernetes:
+#   SYSEXTS  system extensions to attach as read-only disks, a space-separated list, e.g.
+#            SYSEXTS=kubernetes or SYSEXTS="podman debug":
 #            EXTENSIONS/extensions/<name>.raw (and confexts/<name>.raw), merged at boot.
 #            EXTENSIONS defaults to the image's directory; qemu_sysexts in test/qemu-lib.sh
 #   QEMU_PROFILE  pc (default), microvm (Firecracker's devices; on amd64 KERNEL has to be
