@@ -91,7 +91,11 @@
 # first CI run's numbers.
 #
 # flavour  arch   MiB
-erofs      amd64  155
+# Lowered for #192, which made podman a system extension: the disk tree went from 144.0
+# to 83.4 MiB on amd64, measured locally, and the ceiling to that plus about 8%. arm64
+# stays where it was until a CI build has measured it. The OCI rows are untouched: the
+# container flavour never had podman.
+erofs      amd64  90
 erofs      arm64  183
 oci        amd64  51
 oci        arm64  66

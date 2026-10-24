@@ -6,8 +6,8 @@ systemd-sysext and systemd-confext merge extensions at boot, the image declares
 `packages/kubernetes`, `cri-o`, `cri-tools` and `cni-plugins` build into
 `extensions/kubernetes/` (#188), `tools/build-image.sh` assembles that into a sysext and
 a confext, and `tools/k8s-demo.sh` forms its cluster on them with nothing copied into a
-guest (#189). Still open: flannel (#190), verity (#191), and podman becoming an extension
-too (#192). This is the design for
+guest (#189). podman is an extension too (#192), so the base is the container runtime
+and the engine is a choice. Still open: flannel (#190), verity (#191). This is the design for
 adding software to the immutable disk image *without changing it*, with a Kubernetes node
 as the case that justifies the mechanism.
 
@@ -65,6 +65,27 @@ That fits this image unusually well:
   sysext-bakery's current shape)*.
 - **Non-Kubernetes users pay nothing.** The base gains `systemd-sysext` and its units,
   and nothing else.
+
+## The engines, too
+
+Once the mechanism existed, keeping podman in the base was the same mistake as putting
+Kubernetes there, made earlier. **The base is the container runtime; an engine is an
+extension.** What every engine here runs on stays: the kernel's container features,
+`crun`, `conmon` (in `/usr/bin`, where podman and CRI-O both find it), glib and pcre2 for
+conmon, nftables, libseccomp, and `/etc/containers` with the containers/image policy and
+registries both engines read. That keeps constraint 3 true of the base by itself — `crun
+run` on a bundle needs nothing else, and `test/container.sh` boots no extension. What an
+engine adds is an extension: `podman` is podman, Quadlet and rootlessport, netavark and
+aardvark-dns, passt, and shadow's newuidmap/newgidmap with the file capabilities they
+declare; `kubernetes` is kubelet, kubeadm, kubectl, CRI-O, crictl and the CNI plugins. A
+machine boots with one, the other, or neither.
+
+How each reaches a machine is the VMM's business. A node with a `/var` disk can carry its
+extensions in `/var/lib/extensions`; any VM can be handed them as read-only disks, the
+way it is handed the root (`SYSEXTS=` in `test/qemu-lib.sh`): each image is a virtio disk
+with a serial, mounted by `systemd.mount-extra=` at `/run/extensions/<name>` before
+`systemd-sysext.service` looks, and merged as a directory extension. One file serves any
+number of guests, and the base needed nothing new for it.
 
 ## What goes where
 
@@ -379,13 +400,11 @@ a disk that already has a filesystem is used as it is, and `x-systemd.growfs` st
 it. That also replaces the payload tarball, the units in `/run/systemd/system` and the
 whole of `setup-node.sh`.
 
-**A shared read-only disk** is the later alternative, and the closer match to how the
-base is attached: one file, `readonly=on`, any number of guests. sysext accepts block
-devices as images directly (`IMAGE_BLOCK` in `discover-image.c`). What is missing is the
-symlink in `/run/extensions` that has to exist before the merge. Nothing in the base would
-create it early enough: tmpfiles runs after the merge, and `/etc` cannot carry it. That is
-a base feature to design, for example a udev rule keyed on the disk's serial, and not
-something to improvise in the extension.
+**A shared read-only disk** is the other way, and the closer match to how the base is
+attached: one file, `readonly=on`, any number of guests. It needed no base feature after
+all. `systemd.mount-extra=` mounts the disk at `/run/extensions/<name>` before the merge,
+and sysext merges a directory there like an image (#192, `SYSEXTS=` in
+`test/qemu-lib.sh`, `test/sysext.sh` checks both ways in one boot).
 
 ### Trust
 

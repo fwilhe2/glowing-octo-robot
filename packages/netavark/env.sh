@@ -14,5 +14,9 @@ VENDOR_TARBALL="netavark-v${VERSION}-vendor.tar.gz"
 VENDOR_URL="https://github.com/containers/netavark/releases/download/v${VERSION}/${VENDOR_TARBALL}"
 VENDOR_SHA256="532779573b7f4c2606e43f8471132bb9072417feed9ee06a4e309cf3fa066ab8"
 LICENSE="Apache-2.0"
+# In the podman system extension, not the image (EXTENSION, see build.sh): the base keeps
+# the container runtime — the kernel, crun, conmon — and an engine is loaded on demand
+# (docs/sysext.md, #192).
+EXTENSION=podman
 UPSTREAM_GITHUB="containers/netavark"
 UPSTREAM_SED='s/^v//'

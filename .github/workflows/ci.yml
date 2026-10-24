@@ -529,6 +529,13 @@ jobs:
           name: rootfs.erofs-${{ matrix.arch }}
           path: artifacts
 
+      # Next to the image, where test/qemu-lib.sh looks for SYSEXTS: podman is an
+      # extension, and the podman, rootless and persistent-/var tests attach it.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: extensions-${{ matrix.arch }}
+          path: artifacts
+
       # Just the kernel package, not the whole assembled rootfs artifact: the image is
       # already in artifacts/rootfs.erofs and qemu only needs the bzImage next to it.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

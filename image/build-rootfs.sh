@@ -276,19 +276,13 @@ if [ "$flavour" = oci ]; then
            usr/libexec/sftp-server etc/ssh/sshd_config
     rm -rf usr/share/empty.sshd
 
-    # The container engine, which in a container is a niche (podman-in-podman) rather
-    # than the point, and 40-odd MB of Go: podman, quadlet and the helpers in
-    # usr/libexec/podman — netavark, aardvark-dns — plus conmon and the containers/image
-    # configuration. Its units and generators went with usr/lib/systemd above. crun
-    # stays: it is a few hundred KB, it is what test/container.sh-style bundles run on,
-    # and it was in this image before podman was.
-    rm -rf usr/bin/podman usr/libexec/podman usr/bin/conmon etc/containers
-
-    # And rootless containers, which are a guest's feature: the ID-map helpers with their
-    # file capabilities (which an OCI layer tar would not carry anyway), pasta, and the
-    # subordinate ID ranges that only those read.
-    rm -f usr/bin/newuidmap usr/bin/newgidmap usr/bin/passt usr/bin/pasta \
-          etc/subuid etc/subgid
+    # What is left of the container stack in the base once the engines are extensions
+    # (podman, kubernetes; docs/sysext.md): conmon and the containers/image configuration,
+    # which in a container are a niche (podman-in-podman) rather than the point, and the
+    # subordinate ID ranges only the podman extension's newuidmap reads. crun stays: it
+    # is a few hundred KB, it is what test/container.sh-style bundles run on, and it was in
+    # this image before podman was.
+    rm -rf usr/bin/conmon etc/containers etc/subuid etc/subgid
 
     # ...and the two libraries only conmon linked. Checked the same way libudev is below,
     # and for the same reason: a package that started linking glib would look complete in

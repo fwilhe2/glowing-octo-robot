@@ -9,6 +9,10 @@ TARBALL="$PACKAGE.tar.xz"
 URL="https://github.com/shadow-maint/shadow/releases/download/${VERSION}/${TARBALL}"
 SHA256="623be9429f64fa2165bfc5957c6a642ec309c5cf23c0d53855c99f7591922297"
 LICENSE="BSD-3-Clause"
+# In the podman system extension, not the image (EXTENSION, see build.sh): the base keeps
+# the container runtime — the kernel, crun, conmon — and an engine is loaded on demand
+# (docs/sysext.md, #192).
+EXTENSION=podman
 UPSTREAM_GITHUB="shadow-maint/shadow"
 # Tags from before the 4.x numbering are dates (20001016); they are not releases.
 UPSTREAM_IGNORE='^[0-9]{8}$'

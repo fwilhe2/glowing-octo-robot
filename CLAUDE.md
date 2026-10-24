@@ -812,8 +812,20 @@ is what makes `SystemCallFilter=` in its own units more than a comment.
 that come from this image rather than from podman: it is crun's own ecosystem, it has no
 daemon to keep resident in a RAM-backed machine, and Quadlet turns a `.container` file
 into a systemd unit at boot — which is "update by booting a new image" applied to
-workloads. Kubernetes, when it comes, pairs naturally with CRI-O, which shares podman's
-image and storage libraries, configuration and crun.
+workloads. Kubernetes pairs naturally with CRI-O, which shares podman's image and
+storage libraries, configuration, conmon and crun.
+
+**The engines are system extensions, the runtime is the base** (`docs/sysext.md`, #192).
+podman, netavark, aardvark-dns, passt and shadow have `EXTENSION=podman` in their
+`env.sh` and build into `extensions/podman/`; CRI-O and kubelet are the `kubernetes`
+extension. The base keeps what every engine runs on — the kernel's container features,
+`crun`, `conmon` with glib and pcre2, nftables, libseccomp and `/etc/containers` — so
+`crun run` works on the base alone, which is constraint 3, and an engine is one attached
+disk away: `SYSEXTS=podman ./tools/boot-qemu.sh`. The podman, rootless and
+persistent-/var tests attach it by default. Note what that means for Quadlet: units it
+generates from an extension appear when the merge reloads PID 1, during sysinit, so a
+`.container` with only `WantedBy=` misses the boot transaction the way a `.wants` link
+does (`test/sysext.sh`); one that should start at boot wants `UpheldBy=` too.
 
 What it takes, each a package with its reasons in its own files:
 
@@ -837,16 +849,20 @@ tmpfs `/var` unless the VM was given a disk for it.
 library off), `packages/passt` for `pasta`, podman's rootless network, and `rootlessport`
 from podman for published ports; plus `/etc/subuid` and `/etc/subgid` giving `user`
 100000–165535. **The two helpers are the image's only privileged binaries, and they are
-file capabilities, not setuid** — `cap_setuid=ep` and `cap_setgid=ep`, set by `setcap` in
-`build-rootfs.sh`, as Fedora ships them. That is only possible because the disk image is
-made from a tar stream (`mkfs.erofs --tar=f`) carrying `--xattrs-include=security.capability`
-and nothing else: from a directory, mkfs.erofs would record every xattr it can read,
-including the host's SELinux labels, which cannot be stripped because the kernel reports
-one on every file. The package build cannot set the capability itself — CI's package tars
-carry no xattrs — so a new privileged binary goes in that same `setcap` block, never
-setuid. `test/rootless.sh` logs in as `user` and checks the capabilities on the mounted
-image, a container's two-line `uid_map`, and DNS, TCP and a published port through pasta.
-The OCI flavour drops all of it.
+file capabilities, not setuid** — `cap_setuid=ep` and `cap_setgid=ep`, as Fedora ships
+them. The package build cannot set a capability itself, because CI's package tars carry no
+xattrs, so it *declares* them: `packages/shadow` writes
+`usr/share/flfs/capabilities/shadow`, one `<path> <capabilities>` per line, and whichever
+assembly takes the files applies them — `build-rootfs.sh` for the image,
+`build-extension.sh` for an extension, which is where these two now live. A new privileged
+binary gets a record like it, never setuid. That is only possible because both images are
+made from a tar stream (`mkfs.erofs --tar=f`) carrying
+`--xattrs-include=security.capability` and nothing else: from a directory, mkfs.erofs
+would record every xattr it can read, including the host's SELinux labels, which cannot be
+stripped because the kernel reports one on every file. `test/rootless.sh` attaches the
+podman extension, logs in as `user` and checks the capabilities on the merged `/usr`, a
+container's two-line `uid_map`, and DNS, TCP and a published port through pasta. The OCI
+flavour has none of it, and drops `/etc/subuid` and `/etc/subgid` too.
 
 **glib is coupled to the builder like OpenSSL is, and worse**, because its symbols are
 unversioned: conmon compiles against sid's `libglib2.0-dev` headers, and a header newer
@@ -881,8 +897,9 @@ find the next one is to boot with `tools/boot-qemu.sh` and feed `nft` netavark's
 shapes one at a time over `tools/ssh.sh` — the error names nothing, the rule that fails
 does.
 
-The OCI flavour subtracts podman, its helpers and configuration, and glib and pcre2 with
-them, under the same consumer guard as libudev. `test/podman.sh` is the check: podman's
+The OCI flavour subtracts what is left of the stack in the base — conmon, glib and pcre2
+with it, under the same consumer guard as libudev, and `/etc/containers`. `test/podman.sh`
+is the check, with the extension attached: podman's
 own report (crun, netavark, seccomp, overlay), a container with seccomp in filter mode,
 DNS and TCP from inside one, and a Quadlet unit running — on an image imported in the
 guest, so it never depends on a registry's rate limits.

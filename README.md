@@ -630,7 +630,18 @@ backwards: a `gunzip` that did not get the macro compresses.
 
 ## Containers
 
-The image ships **podman**, so it runs containers the way you'd expect:
+The base image is the container *runtime* — the kernel's namespaces, cgroups and
+nftables, `crun` and `conmon` — and the *engine* is a system extension you load on
+demand: **podman**, or the Kubernetes node (`docs/sysext.md`). `crun run` works on the
+base alone. Boot with podman attached as a read-only disk, the way the root is:
+
+```sh
+SYSEXTS=podman ./tools/boot-qemu.sh
+```
+
+or put `extensions/podman.raw` into a machine's `/var/lib/extensions` on its `/var`
+disk. Either way systemd-sysext merges it at boot, and podman runs containers the way
+you'd expect:
 
 ```sh
 podman run --rm -it docker.io/library/alpine sh
@@ -643,15 +654,16 @@ unless the VM has a `/var` disk. Without one, pulled images are gone after a reb
 Rootless works too: log in as `user` and the same commands run in that user's own
 namespace, with the 65536 subordinate IDs from `/etc/subuid` and networking through
 `pasta`. The two programs that write those ID maps, `newuidmap` and `newgidmap`, are the
-only privileged binaries in the image. They hold `cap_setuid` and `cap_setgid` as file
-capabilities rather than being setuid root, as on Fedora. `/home` is RAM, so a rootless
+only privileged binaries anywhere here, and they come with the podman extension. They
+hold `cap_setuid` and `cap_setgid` as file capabilities rather than being setuid root, as
+on Fedora. `/home` is RAM, so a rootless
 user's images go at reboot either way.
 
 To have a container started at boot, describe it as a **Quadlet** file. systemd turns
 it into a unit every time it starts, which suits an image you update by booting a new
-one: a `.container` file under `/usr/share/containers/systemd` (put it there with
-`extra/` or a package) is part of the image, and that container comes up with it. At
-runtime `/run/containers/systemd` works too, for the current boot only:
+one: a `.container` file under `/usr/share/containers/systemd` — in an extension of your
+own, or the image through `extra/` — comes up with the machine. At runtime
+`/run/containers/systemd` works too, for the current boot only:
 
 ```ini
 # /usr/share/containers/systemd/web.container
@@ -661,7 +673,13 @@ PublishPort=8080:80
 
 [Install]
 WantedBy=multi-user.target
+UpheldBy=multi-user.target
 ```
+
+`UpheldBy=` is what makes it start at boot. podman's Quadlet generator only exists once
+the extension is merged, during early boot, and a unit it generates then is too late for
+`WantedBy=` alone (`test/sysext.sh` shows the difference); `UpheldBy=` is evaluated
+continuously and starts it.
 
 For Docker clients (the `docker` CLI, compose), `systemctl enable --runtime --now
 podman.socket` serves the Docker-compatible API at `/run/podman/podman.sock`. That
@@ -680,14 +698,14 @@ The image's configuration is podman's compiled-in defaults plus two files in
 `/etc/containers`: `policy.json` (accept unsigned images, as every distribution does)
 and `registries.conf` (short names like `alpine` mean `docker.io`).
 
-The OCI *container* image (`flfs-oci.tar`) leaves podman out; a container engine
-inside a container is a niche, and it would cost 60 MB.
+The OCI *container* image (`flfs-oci.tar`) has no engine either, and no conmon; a
+container engine inside a container is a niche.
 
 ```sh
 ./test/podman.sh output/rootfs.erofs rootfs/boot/bzImage
 ```
 
-is the check. It confirms podman reports crun, netavark, seccomp and overlay storage,
+is the check, with `output/extensions/podman.raw` attached. It confirms podman reports crun, netavark, seccomp and overlay storage,
 that a container runs in its own PID namespace with a seccomp filter applied, that DNS
 and TCP work from inside one, and that a Quadlet file becomes a running unit. It
 imports its test image from files already in the guest instead of pulling one, so it
