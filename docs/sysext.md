@@ -15,12 +15,11 @@ as the case that justifies the mechanism.
 
 Unverified claims are marked *(verify)*.
 
-`tools/k8s-demo.sh` is the prototype for the stack this note describes, without the
-mechanism: it copies the upstream release binaries (kubeadm, kubelet, kubectl, CRI-O's
-static bundle) into each guest's `/var` over ssh, starts them from units in
-`/run/systemd/system`, and forms a three-node kubeadm cluster on the unmodified image.
-Everything it has to work around is a requirement on the extension, and the findings
-below marked *(demo)* come from it.
+`tools/k8s-demo.sh` forms a three-node kubeadm cluster on the unmodified image with the
+kubernetes extension attached, and `test/k8s.sh` runs it in CI. It began as the prototype
+for this note, copying upstream release binaries into each guest's `/var` and working
+around the read-only root by hand; everything it had to work around became a requirement
+on the extension, and the findings below marked *(demo)* come from it.
 
 ## The problem
 
