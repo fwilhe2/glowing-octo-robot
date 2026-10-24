@@ -264,7 +264,7 @@ What CRI-O needs is one drop-in in the confext: `monitor_path` for conmon, which
 "/opt/cni/bin"]`, the extension's plugins first. crun is CRI-O's default runtime and is in
 `/usr/bin`, and pinns is in the sysext's `/usr/bin`, so neither needs naming.
 
-**`--node-ip` goes away with the second NIC** (see "The demo's network" below). kubelet
+**`--node-ip` went away with the second NIC** (see "The demo's network" below). kubelet
 picks the address of the interface that carries the default route. That address is right
 when a node has one NIC, and on a real multi-homed node `--node-ip` is the operator's
 decision, not the image's.
@@ -278,20 +278,21 @@ silently forgets who it is.
 
 ## The demo's network
 
-The demo gives every guest two NICs: qemu's user-mode NAT, which is private to each guest
-and where every guest is 10.0.2.15, plus a multicast segment with static addresses for
-the cluster. That is where `--node-ip` comes from, and the hand-written `.network`
-credential per node. **The proper shape is one NIC per node on one segment, with a
-router.** That is what a real network looks like, and it is the shape in which nothing
-about the network is node configuration.
+The demo used to give every guest two NICs: qemu's user-mode NAT, which is private to
+each guest and where every guest is 10.0.2.15, plus a multicast segment with static
+addresses for the cluster. That is where `--node-ip` came from, and the hand-written
+`.network` credential per node. **Now it is one NIC per node on one segment, with a
+router** (#186). That is what a real network looks like, and it is the shape in which
+nothing about the network is node configuration: kubelet finds the right InternalIP on
+every node with no flag.
 
-**The router is a fourth VM, booted from the same image, and configured entirely on its
-kernel command line.** Prototyped by hand with three nodes, and everything below worked:
+**The router is one more VM, booted from the same image, and configured entirely on its
+kernel command line** (`boot_router` in `tools/k8s-demo.sh`):
 
 - Its qemu holds a hub (`-netdev hubport`) joined to one `-netdev stream` unix socket per
   node, so it is the segment's switch. Each node's qemu connects its single NIC to its
-  socket (`server=off,reconnect-ms=1000`), so start order does not matter. No multicast,
-  no ports to pick, no root.
+  socket (`server=off`) once the router is listening, so no `reconnect` option is needed,
+  which older qemu spells differently. No multicast, no ports to pick, no root.
 - Its second NIC is the user-mode one, with the only port forwards in the demo.
 - systemd-networkd does the rest, from one `network.network.10-lan` credential:
   `Address=10.0.0.1/24`, `DHCPServer=yes` with a `[DHCPServerStaticLease]` per node MAC,
@@ -304,9 +305,9 @@ kernel command line.** Prototyped by hand with three nodes, and everything below
   The only per-node inputs left are the MAC, `systemd.hostname=` and the `/var` disk.
 - The host reaches nodes with `ProxyJump` through the router, one forward in total.
 
-Measured in the prototype: a lease and a default route on every node, 40/40 node-to-node
+Measured in the hand-built prototype that came first: a lease and a default route on every node, 40/40 node-to-node
 TCP connections, 200 MB streamed between nodes, about 8 MB/s out to dl.k8s.io, and no
-duplicated frames. The router runs in 384 MB.
+duplicated frames. The router is given 384 MB and uses about 240 of it.
 
 Two cheaper versions were tried first and fail in ways worth recording:
 
@@ -413,8 +414,8 @@ mechanism, and worth an `examples/` entry once the base supports sysext at all.
 
 ## Order of work
 
-1. **The demo's network**: the router VM, one NIC per node, no `--node-ip`. Independent
-   of everything else here and possible today.
+1. ~~**The demo's network**~~: done (#186), the router VM, one NIC per node, no
+   `--node-ip`.
 2. **`-Dsysext=true`, `SYSEXT_LEVEL=1` and `CONFEXT_LEVEL=1`, `test/sysext.sh`** with a
    toy extension pair. This is independently useful (debugging tools such as `strace` and
    `tcpdump` as an extension, rather than in every image) and is where the `Upholds=`

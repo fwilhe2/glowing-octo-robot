@@ -222,16 +222,22 @@ EOF
 # at once and nothing a guest does can reach it. Everything writable is a tmpfs
 # (image/files/etc/fstab) unless VAR_DISK gives /var a disk (qemu_var_disk below). The
 # root= and dm-mod.* arguments come from the image's own rootfs.cmdline.
+#
+# QEMU_NIC_ARGS, when set, replaces pc's user-mode NIC with whatever -netdev/-device pair
+# it holds: tools/k8s-demo.sh puts its nodes on a segment of their own that way, with no
+# NAT of their own to be confused by.
 qemu_argv() {
-    local root_args devices=() display=(-nographic)
+    local root_args devices=() display=(-nographic) nic
     root_args=$(cat "$(root_cmdline_file)")
     qemu_var_disk
     case "$PROFILE" in
         pc)
+            nic=(-nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}")
+            [ -z "${QEMU_NIC_ARGS:-}" ] || nic=("${QEMU_NIC_ARGS[@]}")
             devices=(
                 -drive file="$ROOTFS",format=raw,if=virtio,readonly=on
                 "${QEMU_VAR_DRIVE[@]}"
-                -nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}"
+                "${nic[@]}"
             ) ;;
         microvm)
             # Every device on the MMIO transport, which is all Firecracker has. On x86 the

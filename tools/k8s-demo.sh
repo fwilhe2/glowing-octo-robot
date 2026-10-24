@@ -26,16 +26,16 @@
 #     in /run/systemd/system; kubelet's and the controller manager's FlexVolume
 #     directory (/usr/libexec/kubernetes by default, created at start) is moved under
 #     /var/lib/kubelet.
-#   - Every guest gets a /var disk of its own (VAR_DISK in test/qemu-lib.sh), because
+#   - Every node gets a /var disk of its own (VAR_DISK in test/qemu-lib.sh), because
 #     the control plane's images and etcd do not fit comfortably in a RAM /var.
 #
-# Networking. qemu's user-mode NIC, which every guest gets from test/qemu-lib.sh, is a
-# private NAT per guest: outbound works, guests cannot see each other, and all of them are
-# 10.0.2.15. So each guest gets a second NIC on a shared L2 segment — qemu's multicast
-# socket backend, which needs no root and no bridge on the host — with a static address
-# 10.0.0.1N, handed to systemd-networkd as a network.network.* credential at boot. The
-# cluster runs on that segment (kubelet's --node-ip, the API server's advertise address);
-# image pulls go out through the user-mode NIC as before.
+# Networking is one segment with a router on it, the shape of a real network. The router
+# is one more guest from the same image, configured by nothing but credentials on its
+# command line (boot_router): it is the segment's switch, DHCP server and NAT, and the
+# only guest the host reaches directly — ssh to the nodes jumps through it. Each node has
+# exactly one NIC, on that segment, and boots the image as it is: its own DHCP asks, the
+# router's static lease answers with 10.0.0.1N, and kubelet picks that address because it
+# is the only one there is. Nothing about the network is node configuration.
 #
 # Pod networking is deliberately the dullest thing that works, so that the demo is about
 # the image rather than a CNI: the bridge and host-local plugins from CRI-O's bundle, one
@@ -53,7 +53,7 @@
 #   K8S_VERSION    kubeadm/kubelet/kubectl release                     (default below)
 #   CRIO_VERSION   CRI-O release; its minor has to match Kubernetes'   (default below)
 #   API_PORT       host port forwarded to the API server               (default 6443)
-#   MCAST          multicast group:port of the cluster segment         (default 230.0.0.1:12345)
+#   ROUTER_MEM     RAM of the router in MB                             (default 384)
 #   ROOTFS, KERNEL the image to boot. By default this checkout's own build when there is
 #                  one — output/rootfs.erofs from tools/build-image.sh, with the kernel
 #                  it was assembled from in rootfs/boot — and otherwise the one
@@ -74,7 +74,7 @@ CP_MEM="${CP_MEM:-3072}"
 WORKER_MEM="${WORKER_MEM:-2048}"
 VAR_SIZE="${VAR_SIZE:-10G}"
 API_PORT="${API_PORT:-6443}"
-MCAST="${MCAST:-230.0.0.1:12345}"
+ROUTER_MEM="${ROUTER_MEM:-384}"
 
 STATE=output/k8s
 DL=downloads/k8s
@@ -85,7 +85,9 @@ GUEST_DIR=/var/lib/flfs-k8s
 
 node_name() { echo "k8s-$1"; }
 node_ip()   { echo "10.0.0.$((10 + $1))"; }
-node_mac()  { printf '52:54:00:6b:38:%02x' "$1"; }
+node_mac()  { printf '52:54:00:6b:38:%02x' "$1"; }   # 0 is the router's
+ROUTER=k8s-router
+ROUTER_IP=10.0.0.1
 
 say() { printf '\n\033[1m>> %s\033[0m\n' "$*"; }
 
@@ -171,54 +173,106 @@ fetch_binaries() {
 
 # --- the guests --------------------------------------------------------------------------
 
-# SSH_PORT: the first port from 2222 nothing listens on and no earlier node was given.
-# Not in a subshell, so that the ports taken so far are remembered: the guests are all
-# launched before any of them has bound its forward.
-pick_ssh_port() {
-    SSH_PORT=2222
-    while (exec 9<>"/dev/tcp/127.0.0.1/$SSH_PORT") 2>/dev/null || [[ " ${TAKEN_PORTS:-} " == *" $SSH_PORT "* ]]; do
-        SSH_PORT=$((SSH_PORT + 1))
-    done
-    TAKEN_PORTS="${TAKEN_PORTS:-} $SSH_PORT"
-}
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
 
-# One guest: the same machine tools/boot-qemu.sh boots (qemu_argv), plus a /var disk, a
-# hostname, the cluster NIC and its static address. In the background, with its console
-# in output/k8s/k8s-N.console.log and its pid in output/k8s/k8s-N.pid.
-boot_node() {
-    local n="$1" name ip mac network
-    name=$(node_name "$n") ip=$(node_ip "$n") mac=$(node_mac "$n")
+# The router: the same image again, and the only guest the host can reach directly. Its
+# qemu holds the cluster segment — a hub with one unix stream socket per node, so it is
+# the segment's switch — and its user-mode NIC is the way out, with the demo's only two
+# port forwards (ssh to the router, the API server). Everything it does as a router is
+# systemd-networkd and systemd-socket-proxyd, handed in as credentials:
+#
+#   - 10.0.0.1 on the segment, a DHCP server whose static leases give node N the address
+#     node_ip N by its MAC, and a masquerade out through the user-mode NIC. DNS is qemu's
+#     resolver, which the nodes reach through that masquerade.
+#   - The API server forward: a socket unit on 6443 relaying to node 1.
+#
+# slirp itself cannot be on the segment — a hub floods, slirp sees the SYNs between nodes,
+# tries the same connections on the host's network and resets them — which is why the
+# router is a guest and not qemu's NAT (docs/sysext.md, "The demo's network").
+boot_router() {
+    local n lan socket service segment=()
 
-    SSH_DIR="$STATE/ssh/$name"
-    pick_ssh_port
+    SSH_DIR="$STATE/ssh"
     qemu_ssh_setup
-    sed "s/^Host flfs$/Host $name/" "$SSH_DIR/config" >> "$STATE/ssh_config"
-    [ "$n" != 1 ] || QEMU_NIC_EXTRA+=",hostfwd=tcp:127.0.0.1:$API_PORT-:6443"
+    sed "s/^Host flfs$/Host $ROUTER/" "$SSH_DIR/config" > "$STATE/ssh_config"
+    # The authorized key, for the nodes, which get the same one.
+    KEY_CREDENTIAL="$QEMU_APPEND_EXTRA"
+    QEMU_NIC_EXTRA+=",hostfwd=tcp:127.0.0.1:$API_PORT-:6443"
 
-    # The address on the cluster segment, as a .network file systemd-network-generator
-    # puts into /run/systemd/network at boot. 10- sorts before the image's 20-wired, so
-    # this NIC is not also asked to DHCP on a segment that has no server.
-    network="[Match]
-MACAddress=$mac
+    lan="[Match]
+MACAddress=$(node_mac 0)
 
 [Network]
-Address=$ip/24
+Address=$ROUTER_IP/24
+DHCPServer=yes
+IPMasquerade=ipv4
 LinkLocalAddressing=no
 IPv6AcceptRA=no
+
+[DHCPServer]
+PoolOffset=100
+EmitDNS=yes
+DNS=10.0.2.3
 "
-    QEMU_APPEND_EXTRA+=" systemd.hostname=$name"
-    QEMU_APPEND_EXTRA+=" systemd.set_credential_binary=network.network.10-k8s-cluster:$(printf '%s' "$network" | base64 | tr -d '\n')"
+    for n in $(seq 1 "$NODES"); do
+        lan+="
+[DHCPServerStaticLease]
+MACAddress=$(node_mac "$n")
+Address=$(node_ip "$n")
+"
+    done
+    socket="[Socket]
+ListenStream=6443
+"
+    service="[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd $(node_ip 1):6443
+"
+    QEMU_APPEND_EXTRA+=" systemd.hostname=$ROUTER"
+    QEMU_APPEND_EXTRA+=" systemd.set_credential_binary=network.network.10-k8s-lan:$(b64 "$lan")"
+    QEMU_APPEND_EXTRA+=" systemd.set_credential_binary=systemd.extra-unit.k8s-api.socket:$(b64 "$socket")"
+    QEMU_APPEND_EXTRA+=" systemd.set_credential_binary=systemd.extra-unit.k8s-api.service:$(b64 "$service")"
+    QEMU_APPEND_EXTRA+=" systemd.wants=k8s-api.socket"
+
+    for n in $(seq 1 "$NODES"); do
+        segment+=(-netdev "stream,id=node$n,server=on,addr.type=unix,addr.path=$STATE/$(node_name "$n").sock"
+                  -netdev "hubport,id=port$n,hubid=0,netdev=node$n")
+    done
+    segment+=(-netdev hubport,id=lan,hubid=0 -device "virtio-net-pci,netdev=lan,mac=$(node_mac 0)")
+
+    VAR_DISK= MEM="$ROUTER_MEM" CPUS=1 qemu_argv
+    "$QEMU" "${QEMU_ARGV[@]}" "${segment[@]}" \
+        -pidfile "$STATE/$ROUTER.pid" \
+        < /dev/null > "$STATE/$ROUTER.console.log" 2>&1 &
+    echo "   $ROUTER  $ROUTER_IP  ${ROUTER_MEM} MB  ssh on 127.0.0.1:$SSH_PORT, API server on 127.0.0.1:$API_PORT"
+
+    # A node's NIC connects to its socket once, at start, so the router has to be
+    # listening first.
+    for n in $(seq 1 "$NODES"); do retry 10 test -S "$STATE/$(node_name "$n").sock"; done
+}
+
+# One node: the same machine tools/boot-qemu.sh boots (qemu_argv), plus a /var disk and a
+# hostname, with its one NIC on the router's segment instead of a NAT of its own. Nothing
+# about the network is configured on the node: the image's own 20-wired.network asks for
+# DHCP, and the router's static lease answers. In the background, with its console in
+# output/k8s/k8s-N.console.log and its pid in output/k8s/k8s-N.pid.
+boot_node() {
+    local n="$1" name ip
+    name=$(node_name "$n") ip=$(node_ip "$n")
+
+    sed -e "s/^Host flfs$/Host $name/" -e "s/^    HostName 127.0.0.1$/    HostName $ip\n    ProxyJump $ROUTER/" \
+        -e '/^    Port /d' "$STATE/ssh/config" >> "$STATE/ssh_config"
+    QEMU_APPEND_EXTRA="$KEY_CREDENTIAL systemd.hostname=$name"
+    QEMU_NIC_ARGS=(-netdev "stream,id=net0,server=off,addr.type=unix,addr.path=$STATE/$name.sock"
+                   -device "virtio-net-pci,netdev=net0,mac=$(node_mac "$n")")
 
     VAR_DISK="$STATE/$name-var.img"
     if [ "$n" = 1 ]; then MEM="$CP_MEM"; else MEM="$WORKER_MEM"; fi
     qemu_argv
 
     "$QEMU" "${QEMU_ARGV[@]}" \
-        -netdev "socket,id=cluster,mcast=$MCAST,localaddr=127.0.0.1" \
-        -device "virtio-net-pci,netdev=cluster,mac=$mac" \
         -pidfile "$STATE/$name.pid" \
         < /dev/null > "$STATE/$name.console.log" 2>&1 &
-    echo "   $name  $ip  ${MEM} MB  ssh on 127.0.0.1:$SSH_PORT$([ "$n" != 1 ] || echo ", API server on 127.0.0.1:$API_PORT")"
+    echo "   $name  $ip  ${MEM} MB"
 }
 
 # The script each guest runs, as root, once its payload is in $GUEST_DIR. Takes the
@@ -353,9 +407,6 @@ localAPIEndpoint:
 nodeRegistration:
   name: $(node_name 1)
   criSocket: unix:///run/crio/crio.sock
-  kubeletExtraArgs:
-    - name: node-ip
-      value: $(node_ip 1)
 ---
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
@@ -404,9 +455,6 @@ discovery:
 nodeRegistration:
   name: $(node_name "$n")
   criSocket: unix:///run/crio/crio.sock
-  kubeletExtraArgs:
-    - name: node-ip
-      value: $(node_ip "$n")
 EOF
     node_ssh "$n" "kubeadm join --config $GUEST_DIR/kubeadm.yaml"
 }
@@ -533,12 +581,12 @@ EOF
 # column is asked of the API server with a short timeout, so a cluster that is down or
 # still forming shows "-" rather than hanging the command.
 ps_nodes() {
-    local pidfile name pid state up rss mem port role ready nodes=""
+    local pidfile name pid state up rss mem address ssh role ready nodes=""
     [ -n "$(ls "$STATE"/*.pid 2>/dev/null)" ] || { echo "no guests (./tools/k8s-demo.sh up)"; return 0; }
     if [ -x "$STATE/kubectl" ]; then
         nodes=$(k get nodes --request-timeout=5s --no-headers 2>/dev/null || true)
     fi
-    printf '%-7s %-8s %-8s %-11s %-10s %-11s %-16s %-14s %s\n' \
+    printf '%-10s %-8s %-8s %-11s %-10s %-11s %-16s %-14s %s\n' \
         NODE PID STATE UP ADDRESS RSS/RAM SSH ROLE STATUS
     for pidfile in "$STATE"/k8s-*.pid; do
         name=$(basename "$pidfile" .pid)
@@ -550,12 +598,17 @@ ps_nodes() {
             rss="$(( $(ps -o rss= -p "$pid") / 1024 ))M"
         fi
         mem=$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | sed -n '/^-m$/{n;p;q}')
-        port=$(awk -v h="$name" '$1 == "Host" {on = ($2 == h)} on && $1 == "Port" {print $2; exit}' "$STATE/ssh_config")
-        role=$(awk -v n="$name" '$1 == n {print ($3 == "<none>" ? "worker" : $3)}' <<< "$nodes")
+        if [ "$name" = "$ROUTER" ]; then
+            address=$ROUTER_IP role=router
+            ssh="127.0.0.1:$(awk -v h="$name" '$1 == "Host" {on = ($2 == h)} on && $1 == "Port" {print $2; exit}' "$STATE/ssh_config")"
+        else
+            address=$(node_ip "${name#k8s-}") ssh="via $ROUTER"
+            role=$(awk -v n="$name" '$1 == n {print ($3 == "<none>" ? "worker" : $3)}' <<< "$nodes")
+        fi
         ready=$(awk -v n="$name" '$1 == n {print $2}' <<< "$nodes")
-        printf '%-7s %-8s %-8s %-11s %-10s %-11s %-16s %-14s %s\n' \
-            "$name" "$pid" "$state" "$up" "$(node_ip "${name#k8s-}")" "$rss/${mem:--}M" \
-            "127.0.0.1:${port:--}" "${role:--}" "${ready:--}"
+        printf '%-10s %-8s %-8s %-11s %-10s %-11s %-16s %-14s %s\n' \
+            "$name" "$pid" "$state" "$up" "$address" "$rss/${mem:--}M" \
+            "$ssh" "${role:--}" "${ready:--}"
     done
 }
 
@@ -592,7 +645,7 @@ up() {
     fetch_binaries
 
     say "Booting $NODES guests from $ROOTFS with $KERNEL"
-    : > "$STATE/ssh_config"
+    boot_router
     local n
     for n in $(seq 1 "$NODES"); do boot_node "$n"; done
     for n in $(seq 1 "$NODES"); do retry "$TIMEOUT" node_ssh "$n" true; done
