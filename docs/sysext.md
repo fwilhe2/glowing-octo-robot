@@ -1,7 +1,9 @@
 # System extensions: a Kubernetes node without forking the image
 
-**Status: nothing here is implemented.** systemd is built `-Dsysext=false`
-(`packages/systemd/build.sh`), and no extension image exists. This is the design for
+**Status: the mechanism is in the base; the Kubernetes extension is not built yet.**
+systemd-sysext and systemd-confext merge extensions at boot, the image declares
+`SYSEXT_LEVEL=1` and `CONFEXT_LEVEL=1`, `tools/build-extension.sh` makes an extension
+image from a directory tree, and `test/sysext.sh` boots one (#187). This is the design for
 adding software to the immutable disk image *without changing it*, with a Kubernetes node
 as the case that justifies the mechanism.
 
@@ -166,7 +168,8 @@ kubernetes-<k8s version>-<arch>.confext.raw    confext: the same, for /etc
   dbus use in the base arrive too late from an extension: `systemd-sysext.service` merges
   during `sysinit.target`, after PID 1 has already computed the boot transaction, so a
   `.wants` link that appears then is visible after the reload but starts nothing until
-  the next boot *(verify; Flatcar's sysext-bakery uses `Upholds=` for this reason)*.
+  the next boot. `test/sysext.sh` ships one unit of each kind and reports it: the
+  `Upholds=` unit runs, the `.wants` one does not.
   `Upholds=` is re-evaluated continuously, so it also starts the units when an extension
   is merged at runtime with `systemd-sysext refresh`. `EXTENSION_RELOAD_MANAGER=1` in the
   extension-release file is what makes the merge reload PID 1 (`get_extension_release_metadata`
@@ -395,14 +398,16 @@ Software that isn't in this repository can produce an extension the same way
 `examples/nginx` produces a container image. Compile in Debian stable against libraries
 no newer than the base's, then add one stage that runs `mkfs.erofs` and `veritysetup`
 over `/out` and writes the release file. That's the user-facing half of the same
-mechanism, and worth an `examples/` entry once the base supports sysext at all.
+mechanism, and worth an `examples/` entry now that the base supports sysext.
 
 ## Tests
 
-- **`test/sysext.sh`**: boot with a trivial extension (one binary, one unit), and check
-  that `systemd-sysext status` lists it, the unit ran, the boot is `running`, and an
-  extension with a wrong `SYSEXT_LEVEL` is refused. It's cheap, needs no Kubernetes, and
-  is the test that keeps the mechanism working for everything after it.
+- **`test/sysext.sh`** (#187): a toy sysext and confext pair, and a sysext built for
+  `SYSEXT_LEVEL=0`, seeded on the `/var` disk before boot. It checks that both of the
+  pair are merged and the third is not, that the sysext's `Upholds=` unit ran and read
+  the confext's file, that `/etc/machine-id` is still PID 1's bind mount under the
+  confext overlay, and that the boot is `running`. It needs no Kubernetes, and it keeps
+  the mechanism working for everything after it.
 - **`test/k8s.sh`** exists already, ahead of the extension: it runs `tools/k8s-demo.sh`
   — three nodes, a Service answered from more than one — in CI's `k8s`
   job, on KVM, per push, gating nothing. Once the extension exists it boots that, seeded on
@@ -416,10 +421,8 @@ mechanism, and worth an `examples/` entry once the base supports sysext at all.
 
 1. ~~**The demo's network**~~: done (#186), the router VM, one NIC per node, no
    `--node-ip`.
-2. **`-Dsysext=true`, `SYSEXT_LEVEL=1` and `CONFEXT_LEVEL=1`, `test/sysext.sh`** with a
-   toy extension pair. This is independently useful (debugging tools such as `strace` and
-   `tcpdump` as an extension, rather than in every image) and is where the `Upholds=`
-   question gets answered by a boot, before anything depends on it.
+2. ~~**`-Dsysext=true`, `SYSEXT_LEVEL=1` and `CONFEXT_LEVEL=1`, `test/sysext.sh`**~~: done
+   (#187). Plain EROFS only; verity on extensions needs libcryptsetup (#191).
 3. ~~`k8s.config`~~ and ~~per-instance hostname~~: done.
 4. **The packages**: CRI-O (against the base's crun, conmon and containers config),
    kubelet, kubeadm and kubectl, the CNI plugins.

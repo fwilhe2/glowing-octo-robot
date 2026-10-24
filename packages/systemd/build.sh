@@ -61,8 +61,13 @@ systemd_opts=(
     # without root, for nspawn, vmspawn and systemd-dissect. podman allocates its own
     # ranges from /etc/subuid through newuidmap, and mounts through crun.
     -Dmachined=false -Dnspawn=disabled -Dvmspawn=disabled -Dimportd=disabled
-    -Dnss-mymachines=disabled -Dportabled=false -Dsysext=false
+    -Dnss-mymachines=disabled -Dportabled=false
     -Dmountfsd=false -Dnsresourced=false
+
+    # systemd-sysext and systemd-confext stay: they are how software is added to this
+    # immutable image without changing it (docs/sysext.md). Without libcryptsetup they
+    # merge plain images only, not verity-protected ones; see the Trust section there.
+    -Dsysext=true
 
     # Deployment and provisioning: repartitioning the disk, A/B image updates, cloud
     # instance metadata, home-directory management, exporting block devices over NVMe.

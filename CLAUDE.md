@@ -100,7 +100,8 @@ packages/<pkg>/   env.sh + build.sh per package, and the tree its tarball unpack
 builder/          how a package is compiled: the one builder image, deps.txt (its
                   entire contents), and the entrypoint that sets up the sysroot
 image/            how the staging tree becomes an image, disk or OCI: Containerfile,
-                  build-rootfs.sh, and files/ — the /etc the image ships
+                  build-rootfs.sh, and files/ — the /etc the image ships; and
+                  build-extension.sh, how a tree becomes a system extension for it
 test/             everything CI runs to verify a build, plus known-missing-libs.txt
                   and size-budget.txt; qemu-lib.sh is the boot harness the qemu
                   tests and tools/boot-qemu.sh all source
@@ -143,6 +144,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/podman.sh output/rootfs.erofs rootfs/boot/bzImage     # podman: seccomp, networking, Quadlet
 ./test/rootless.sh output/rootfs.erofs rootfs/boot/bzImage   # podman as `user`: ID maps, pasta
 ./test/persistent-var.sh output/rootfs.erofs rootfs/boot/bzImage  # two boots, one /var disk: state survives
+./test/sysext.sh output/rootfs.erofs rootfs/boot/bzImage   # extensions on the /var disk are merged at boot, a wrong level refused
 ./test/verity.sh output/rootfs.erofs rootfs/boot/bzImage   # a tampered copy of the image is refused
 ./test/vmm.sh output/rootfs.erofs rootfs/boot/bzImage      # Firecracker- and Virtualization.framework-shaped boots
 ./test/k8s.sh output/rootfs.erofs rootfs/boot/bzImage      # 3-node kubeadm cluster via tools/k8s-demo.sh (KVM; skips without)
@@ -159,6 +161,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./tools/ssh.sh [--root] [cmd...]  # passwordless ssh into the guest any of those started, as `user` or root
 ./tools/k8s-demo.sh up|ps|kubectl|ssh|down  # a 3-node kubeadm cluster from upstream binaries, on this checkout's build if there is one (docs/sysext.md)
 ./tools/clean.sh [-n] [--downloads|--images|--all]  # delete build state, tarballs, stale images
+./tools/build-extension.sh sysext|confext <name> <dir>  # a directory tree → output/extensions|confexts/<name>.raw
 ```
 
 `vs-debian-slim.sh` is the other half of `rootfs-size.sh`: the budget is a number we chose,

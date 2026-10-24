@@ -19,3 +19,12 @@ ANSI_COLOR="0;36"
 # field the paragraph above says everything displays. A build with neither — a local
 # `podman run`, or a PR — produces this file unchanged, which is the honest answer for
 # something that is not a release of anything.
+#
+# What a system or configuration extension built for this image may rely on
+# (docs/sysext.md). systemd-sysext merges an extension only if its extension-release
+# names ID=flfs and the same level, so this number is a promise about the ABI underneath
+# an extension — glibc, OpenSSL's major, libseccomp's soname, crun's interface — and
+# moves only when that promise breaks. Not VERSION_ID: every release would orphan every
+# extension. image/build-extension.sh writes the matching line into what it builds.
+SYSEXT_LEVEL=1
+CONFEXT_LEVEL=1

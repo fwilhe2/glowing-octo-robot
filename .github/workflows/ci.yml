@@ -591,6 +591,14 @@ jobs:
       - name: Check a persistent /var
         run: ./test/persistent-var.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
+      # Software added without changing the image: a system and a configuration extension
+      # on the /var disk, merged at boot, the unit one ships started and the file the other
+      # ships read; and one built for another SYSEXT_LEVEL, which has to be refused. The
+      # images are made in the image-assembly container (tools/build-extension.sh), so
+      # this builds that from image/Containerfile first.
+      - name: Check system extensions
+        run: ./test/sysext.sh artifacts/rootfs.erofs rootfs/boot/bzImage
+
       # The shapes of machine the kernel is built for besides qemu's own, which every boot
       # above uses. Firecracker's: no PCI, virtio over MMIO announced on the command line,
       # and on amd64 the bzImage's own vmlinux booted through PVH. Virtualization.framework's:
