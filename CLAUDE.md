@@ -108,7 +108,8 @@ test/             everything CI runs to verify a build, plus known-missing-libs.
 tools/            local conveniences and maintenance, not part of a build — except
                   lib.sh, the helpers build.sh, tools/ and test/ all source
 docs/             design notes for work not done yet — proposals, not descriptions —
-                  except how-it-works.md, the mechanics and pitfalls of the system as it is
+                  except how-it-works.md, the mechanics and pitfalls of the system as it is,
+                  and debugging.md, the debug extension's tools and how to use them here
 examples/         images built FROM the published flfs image, each with its own README;
                   templates for users, not part of a build or of CI
 downloads/        source tarballs (gitignored)
@@ -146,6 +147,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/rootless.sh output/rootfs.erofs rootfs/boot/bzImage   # podman as `user`: ID maps, pasta
 ./test/persistent-var.sh output/rootfs.erofs rootfs/boot/bzImage  # two boots, one /var disk: state survives
 ./test/sysext.sh output/rootfs.erofs rootfs/boot/bzImage   # extensions on the /var disk are merged at boot, a wrong level refused
+./test/debug.sh output/rootfs.erofs rootfs/boot/bzImage    # the debug extension: strace, tcpdump, gdbserver, socat, jq, bpftool, perf
 ./test/verity.sh output/rootfs.erofs rootfs/boot/bzImage   # a tampered copy of the image is refused
 ./test/vmm.sh output/rootfs.erofs rootfs/boot/bzImage      # Firecracker- and Virtualization.framework-shaped boots
 ./test/k8s.sh output/rootfs.erofs rootfs/boot/bzImage      # 3-node kubeadm cluster via tools/k8s-demo.sh (KVM; skips without)
@@ -901,6 +903,37 @@ not supported*). Both are in `container.config` and `test/kernel-caps.sh` now. T
 find the next one is to boot with `tools/boot-qemu.sh` and feed `nft` netavark's rule
 shapes one at a time over `tools/ssh.sh` — the error names nothing, the rule that fails
 does.
+
+### The debug extension
+
+`EXTENSION=debug` is the other extension that is not an engine: strace, perf, bpftool,
+tcpdump, gdbserver, socat and jq, attached with `SYSEXTS=debug` when a machine needs
+looking into (`docs/debugging.md` is the user-facing half, `test/debug.sh` the check).
+Three things about it generalise:
+
+- **An extension's packages cannot link against each other.** Each compiles against the
+  base's `rootfs/`, never against another package's `extensions/<name>/`. A library with
+  one consumer is that consumer's `VENDOR_TARBALL`, built static under `/tmp` and linked
+  in — libpcap for tcpdump, libtraceevent for perf — with `assert_not_linked` after, so
+  a library that would otherwise have to join the base for every machine stays in the
+  extension. The vendor tarball carries its own `*_VERSION` in `env.sh`, which
+  `check-updates.sh` does not watch.
+- **`FOLLOWS=<pkg>` is a package built from another one's tarball.** `linux-tools`
+  sources `packages/kernel/env.sh` for `VERSION`, `TARBALL` and `SHA256` (and unsets
+  its `NO_SYSROOT`), so a kernel bump moves perf and bpftool with it and the CI cache key
+  changes through `$PACKAGE`. `check-updates.sh` skips it and `bump-version.sh` refuses
+  it with the name of the package to bump instead.
+- **What a tool attaches to has to be in the kernel already**, since with modules off an
+  extension adds programs and never kernel features. `trace.config` in
+  `packages/kernel/build.sh` names it — kprobes, uprobes, the syscall tracepoints `perf
+  trace` needs — and `test/kernel-caps.sh` holds it there. `FUNCTION_TRACER` is
+  deliberately not in it yet: it costs every machine size, and only fentry/fexit (that
+  is, a future bpftrace) would use it.
+
+kbuild's tools Makefiles start `CFLAGS` from scratch, so the sysroot reaches perf and
+bpftool as `EXTRA_CFLAGS`/`EXTRA_LDFLAGS`. bpftool is built without its BPF skeletons:
+they compile against a `vmlinux.h` from whatever BTF the build host has, which is a
+different binary on every machine; perf's use its own minimal `vmlinux.h` and stay on.
 
 The OCI flavour subtracts what is left of the stack in the base — conmon, glib and pcre2
 with it, under the same consumer guard as libudev, and `/etc/containers`. `test/podman.sh`

@@ -49,12 +49,21 @@ for PKG in "${PACKAGES[@]}"; do
         continue
     fi
 
-    { read -r current; read -r local_source; } < <(env_get "$PKG" VERSION LOCAL_SOURCE)
+    { read -r current; read -r local_source; read -r follows; } < <(env_get "$PKG" VERSION LOCAL_SOURCE FOLLOWS)
 
     # A package whose source is in this repository has no upstream to compare against —
     # its VERSION is ours, and nothing announces releases of it.
     if [ -n "$local_source" ]; then
         $JSON || printf '%-12s %-10s local source, no upstream\n' "$PKG" "$current"
+        continue
+    fi
+
+    # A package built from another one's tarball (linux-tools from the kernel's) takes
+    # its VERSION from that package's env.sh, so the update is that package's to
+    # propose. Asking here too would open the same bump twice, and the second pull
+    # request would have no VERSION line to rewrite.
+    if [ -n "$follows" ]; then
+        $JSON || printf '%-12s %-10s follows %s\n' "$PKG" "$current" "$follows"
         continue
     fi
 
