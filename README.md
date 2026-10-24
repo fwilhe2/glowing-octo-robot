@@ -52,7 +52,9 @@ SYSEXTS=podman ./tools/boot-qemu.sh  # the same machine, with podman
 
 `./tools/boot-firecracker.sh` and `./tools/boot-vz.sh` (macOS, through vfkit) boot the same
 image in the other two VMMs. The OCI image needs no VM:
-`podman run --rm -it ghcr.io/fwilhe2/glowing-octo-robot/flfs:latest`.
+`podman run --rm -it ghcr.io/fwilhe2/glowing-octo-robot/flfs:latest`. It has no package
+manager; [`examples/nginx`](examples/nginx/README.md) is the template for building an
+image on top of it.
 
 ## Building
 
