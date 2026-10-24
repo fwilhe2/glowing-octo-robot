@@ -52,8 +52,10 @@ Reach for the extension when these show *that* something fails but not *why*.
 
 **Attached by the VMM**, which is what `SYSEXTS=debug` does in `test/qemu-lib.sh` and so
 in `tools/boot-qemu.sh`. The extension is a read-only virtio disk, verified by dm-verity
-the way the root is, and merged before `local-fs.target`. Combine it with any other:
-`SYSEXTS="kubernetes debug"`.
+the way the root is, and merged before `local-fs.target`. `SYSEXTS` is a space-separated
+list, so to debug the engine as well, attach both: `SYSEXTS="podman debug"` or
+`SYSEXTS="kubernetes debug"`, quoted so the shell passes them as one variable. Each is its
+own disk, and systemd-sysext stacks them all over one `/usr`.
 
 **Copied onto the `/var` disk** of a machine that has one, in which case no reboot is
 needed:

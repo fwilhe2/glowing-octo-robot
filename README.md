@@ -50,6 +50,7 @@ boots with: podman, the Kubernetes node, or neither.
 
 SYSEXTS=podman ./tools/boot-qemu.sh  # the same machine, with podman
 SYSEXTS=debug ./tools/boot-qemu.sh   # with strace, perf, bpftool, tcpdump, gdbserver
+SYSEXTS="podman debug" ./tools/boot-qemu.sh  # several at once: a space-separated list
 ./tools/k8s-demo.sh up               # a three-node Kubernetes cluster (see below)
 ```
 
@@ -106,6 +107,12 @@ does not orphan them. A machine gets them in one of two ways:
   `SYSEXTS=debug` does this in `test/qemu-lib.sh`, and with it `tools/boot-qemu.sh`.
 * **Installed on the `/var` disk**, in `/var/lib/extensions` and `/var/lib/confexts`.
   This way is not verified yet: it would need libcryptsetup (#191).
+
+A machine can have any number of extensions at once, and systemd-sysext stacks them all
+over one `/usr`. With the VMM, list them in `SYSEXTS`, separated by spaces and quoted:
+`SYSEXTS="podman debug"` or `SYSEXTS="kubernetes debug"`. On the `/var` disk, put each
+`.raw` file in `/var/lib/extensions`. `systemd-sysext status` in the guest shows what is
+merged. Two extensions must not ship the same file, and none here do.
 
 `./tools/build-extension.sh sysext|confext <name> <dir>` makes one of your own from a
 directory tree.
