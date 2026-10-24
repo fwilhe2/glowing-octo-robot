@@ -2,8 +2,8 @@
 
 A **pragmatic, automated Linux From Scratch** for virtual machines: source tarballs in, an
 immutable, verified disk image and a container image out, rebuilt and version-checked by
-CI rather than by hand. On top of it, two system extensions: **podman**, and a
-**Kubernetes node**.
+CI rather than by hand. On top of it, system extensions: **podman**, a **Kubernetes
+node**, and the **tools to debug** either.
 
 ## What this is
 
@@ -23,8 +23,9 @@ taken away.
 * **Virtual machines only**: qemu, Firecracker and Apple's Virtualization.framework. Real
   hardware is a non-goal.
 
-`CLAUDE.md` has the reasons behind each decision, `docs/how-it-works.md` the mechanics, and
-`docs/sysext.md` the extension design.
+`CLAUDE.md` has the reasons behind each decision, `docs/how-it-works.md` the mechanics,
+`docs/sysext.md` the extension design, and `docs/debugging.md` how to look inside a running
+machine.
 
 ## What you get
 
@@ -34,6 +35,7 @@ taken away.
 | `flfs-oci.tar` | the same userspace as an OCI image, without kernel and systemd; published as `ghcr.io/fwilhe2/glowing-octo-robot/flfs` | 19 MiB |
 | `extensions/podman.raw` | podman, Quadlet, netavark, aardvark-dns, pasta, newuidmap | 23 MiB |
 | `extensions/kubernetes.raw` + `confexts/kubernetes.raw` | kubelet, kubeadm, kubectl, CRI-O, crictl, CNI plugins, and the `/etc` that goes with them | 86 MiB + 4 KiB |
+| `extensions/debug.raw` | strace, perf, bpftool, tcpdump, gdbserver, socat, jq | — |
 
 The base is the **container runtime** (the kernel's namespaces, cgroup v2, overlayfs and
 nftables, plus `crun` and `conmon`). The **engine** is whichever extension a machine
@@ -47,6 +49,7 @@ boots with: podman, the Kubernetes node, or neither.
 ./tools/ssh.sh                       # in a second terminal: a shell as `user` (--root for root)
 
 SYSEXTS=podman ./tools/boot-qemu.sh  # the same machine, with podman
+SYSEXTS=debug ./tools/boot-qemu.sh   # with strace, perf, bpftool, tcpdump, gdbserver
 ./tools/k8s-demo.sh up               # a three-node Kubernetes cluster (see below)
 ```
 
@@ -99,8 +102,8 @@ does not orphan them. A machine gets them in one of two ways:
 
 * **Attached by the VMM**, the way the root is: a read-only disk per image, verified by
   dm-verity from a table on the kernel command line and mounted where systemd-sysext
-  looks. One file serves any number of VMs. `SYSEXTS=podman` or `SYSEXTS=kubernetes`
-  does this in `test/qemu-lib.sh`, and with it `tools/boot-qemu.sh`.
+  looks. One file serves any number of VMs. `SYSEXTS=podman`, `SYSEXTS=kubernetes` or
+  `SYSEXTS=debug` does this in `test/qemu-lib.sh`, and with it `tools/boot-qemu.sh`.
 * **Installed on the `/var` disk**, in `/var/lib/extensions` and `/var/lib/confexts`.
   This way is not verified yet: it would need libcryptsetup (#191).
 

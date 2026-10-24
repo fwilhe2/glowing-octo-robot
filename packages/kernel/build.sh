@@ -262,6 +262,33 @@ CONFIG_DM_VERITY=y
 EOF
 make rootfs.config
 
+# What the tracing tools in the debug system extension attach to (docs/debugging.md).
+# With modules off an extension can add programs but never kernel features, so whatever
+# perf, bpftool and the like are meant to be able to see has to be here, on every
+# machine, whether the extension is attached or not.
+#
+# KPROBES and KPROBE_EVENTS: a probe on any kernel function, which is what `perf probe`
+#   places and what a BPF kprobe program attaches to. x86_64_defconfig already has both,
+#   and nothing named them, so they were one defconfig change away from going quietly.
+# UPROBE_EVENTS: the same for a function in a program or library; container.config
+#   already relies on it for BPF_EVENTS, and this says it is wanted for itself too.
+# FTRACE_SYSCALLS: the syscalls:sys_enter_* and sys_exit_* tracepoints. `perf trace` is
+#   built on them — without them it is strace with nothing to read — and so is every
+#   BPF tool that counts system calls across the machine. A tracepoint costs a patched
+#   branch until something enables it.
+#
+# Not FUNCTION_TRACER, which BPF fentry/fexit programs need: it puts a patchable entry in
+# every kernel function, which costs size on every machine, and nothing in the extension
+# uses it yet — it comes with the first tool that does. Not IKCONFIG: the config is
+# already at /usr/lib/modules/<release>/config (below).
+cat > kernel/configs/trace.config <<'EOF'
+CONFIG_KPROBES=y
+CONFIG_KPROBE_EVENTS=y
+CONFIG_UPROBE_EVENTS=y
+CONFIG_FTRACE_SYSCALLS=y
+EOF
+make trace.config
+
 # A second fragment for the other direction: the arch's defconfig is a general-purpose
 # config and turns on hardware a VM will never have. Only ever a guest (qemu today,
 # rust-vmm-style VMMs next), so this is dead code and, in the wireless case, a boot-time
@@ -790,7 +817,8 @@ make vm.config
 # quietly does nothing is worse than one that fails, so fail.
 #
 # The two halves are not checked the same way. Everything container.config,
-# rootfs.config, k8s.config and guest.config turn on has to be there, no exceptions.
+# rootfs.config, k8s.config, guest.config and trace.config turn on has to be there, no
+# exceptions.
 # vm.config is allowed to name symbols that do not exist on this architecture — the
 # x86-only lines above are expected to vanish on arm64 — so the bar there is that nothing
 # it clears came back on...
@@ -815,14 +843,14 @@ while read -r sym; do
 done < <(sed -n -E 's/^# CONFIG_([A-Z0-9_]+) is not set$/\1/p; s/^CONFIG_([A-Z0-9_]+)=.*/\1/p' \
              kernel/configs/container.config kernel/configs/rootfs.config \
              kernel/configs/k8s.config kernel/configs/guest.config \
-             kernel/configs/vm.config | sort -u)
+             kernel/configs/trace.config kernel/configs/vm.config | sort -u)
 while read -r sym; do
     if ! grep -qx "$sym" .config; then
         unapplied="$unapplied  $sym  (asked for, not in .config)"$'\n'
     fi
 done < <(grep -hE '^CONFIG_[A-Z0-9_]+=y$' kernel/configs/container.config \
              kernel/configs/rootfs.config kernel/configs/k8s.config \
-             kernel/configs/guest.config)
+             kernel/configs/guest.config kernel/configs/trace.config)
 
 while read -r sym; do
     if grep -qx "$sym=y" .config; then

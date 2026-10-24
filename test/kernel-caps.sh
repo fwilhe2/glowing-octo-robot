@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Assert the kernel can actually run a container — and boot on the VMMs this image
-# targets, and be a Kubernetes node:
+# targets, be a Kubernetes node, and be traced by the debug extension:
 #
 #     ./test/kernel-caps.sh [rootfs]      # default rootfs/, reads rootfs/boot/config
 #
@@ -109,6 +109,10 @@ DM_VERITY           the root is a verity device; a kernel without it cannot moun
 DM_INIT             building that device from the command line, with no initrd
 EROFS_FS            the root filesystem's format
 EROFS_FS_ZIP_ZSTD   and its compression; without it every compressed file is an I/O error
+KPROBES             perf probe and BPF kprobes: a probe on any kernel function
+KPROBE_EVENTS       the same, through the tracefs and perf interfaces they use
+UPROBE_EVENTS       probes on functions in programs and libraries
+FTRACE_SYSCALLS     syscalls:sys_enter_*/sys_exit_*; perf trace reads nothing without them
 EOF
 )
 # Architecture-specific halves of the same: what boots the machine at all on each.

@@ -81,6 +81,11 @@ aardvark-dns, passt, and shadow's newuidmap/newgidmap with the file capabilities
 declare; `kubernetes` is kubelet, kubeadm, kubectl, CRI-O, crictl and the CNI plugins. A
 machine boots with one, the other, or neither.
 
+The same reasoning applies beyond engines. `debug` is strace, perf, bpftool, tcpdump,
+gdbserver, socat and jq: tools a working machine never runs, attached to one that needs
+looking into (`docs/debugging.md`). The kernel side of them (kprobes, uprobes, syscall
+tracepoints) is in the base for the reason the next section gives.
+
 How each reaches a machine is the VMM's business. A node with a `/var` disk can carry its
 extensions in `/var/lib/extensions`; any VM can be handed them as read-only disks, the
 way it is handed the root (`SYSEXTS=` in `test/qemu-lib.sh`): each image is a virtio disk

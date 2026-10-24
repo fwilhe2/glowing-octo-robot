@@ -34,6 +34,7 @@ Zlib
 0BSD                    # BSD Zero Clause, i.e. no conditions at all; liblzma
 Apache-2.0
 AFL-2.1                 # Academic Free License; one half of dbus's dual license
+ICU                     # MIT in all but wording; the decNumber library jq carries
 curl                    # MIT plus the advertising clause, i.e. X11 in all but wording;
                         # SPDX gives it its own identifier because the text differs
 SSH-OpenSSH             # Tatu Ylonen's terms for the original ssh code, which openssh

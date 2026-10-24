@@ -39,6 +39,14 @@ fi
 PKG=$(package_name "$PKG")
 env_file="packages/$PKG/env.sh"
 
+# linux-tools sources the kernel's env.sh for its VERSION, tarball and checksum, so it has
+# none of its own to rewrite — bumping the package it follows moves it too.
+follows=$(env_get "$PKG" FOLLOWS)
+if [ -n "$follows" ]; then
+    echo "error: $PKG follows $follows; bump that instead: ${0##*/} $follows $NEW" >&2
+    exit 1
+fi
+
 old_version=$(sed -n -E 's|^VERSION="?([^"]*)"?.*|\1|p' "$env_file" | head -n1)
 old_sha=$(sed -n -E 's|^SHA256="?([^"]*)"?.*|\1|p' "$env_file" | head -n1)
 
