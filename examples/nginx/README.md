@@ -13,6 +13,19 @@ curl http://localhost:8080/
 `docker build` works the same way. The final image is about 2 MB larger than the flfs
 image it is built on.
 
+This is meant for a host with a real disk. Building it inside an flfs VM works too, but
+the build stage installs a compiler into Debian, which needs more room than a default VM
+has: its container storage is RAM, capped at half of 1 GiB. Boot the VM with memory and a
+`/var` disk, and build as root, whose storage then lives on that disk:
+
+```sh
+MEM=4096 VAR_DISK=output/var.img VAR_SIZE=20G SYSEXTS=podman ./tools/boot-qemu.sh
+./tools/ssh.sh --root
+```
+
+Rootless, as `user`, the storage is under `/home`, which stays RAM whatever disk the VM
+has, and the build fails with *No space left on device*.
+
 ## Why this needs a template at all
 
 flfs has no package manager, so `apt install nginx` has no equivalent. You can't simply

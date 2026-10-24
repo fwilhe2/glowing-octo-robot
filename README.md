@@ -80,7 +80,10 @@ reproducible to the byte, and CI checks it. `./tools/clean.sh` gives the disk sp
   every boot starts from the same bytes. To update a machine, boot it from a newer image.
 * **Or a disk for `/var`.** `systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs`
   on the kernel command line makes systemd format a blank disk on the first boot and keep
-  it from then on. `VAR_DISK=output/var.img ./tools/boot-qemu.sh` does this for qemu.
+  it from then on, growing the filesystem when the disk grows. For qemu,
+  `VAR_DISK=output/var.img VAR_SIZE=20G ./tools/boot-qemu.sh` does all of it: it creates
+  the file sparse if it is missing (4G by default) and keeps the VM's machine ID beside it.
+  Delete both to start over. `/home` and `/root` stay RAM either way.
 * **No passwords anywhere.** `root` and `user` have none, ssh takes keys only, and
   `tools/boot-qemu.sh` hands the guest an ephemeral key as a systemd credential, so
   `tools/ssh.sh` logs in with nothing baked into the image.
@@ -114,6 +117,20 @@ being setuid):
 podman run --rm -it docker.io/library/alpine sh
 podman run -d -p 8080:80 docker.io/library/nginx
 ```
+
+Images and build layers live in RAM by default. Root's are in `/var/lib/containers`, and
+rootless ones in `~/.local/share/containers` on `/home`. Each of those tmpfs mounts is
+capped at half the VM's memory, and `tools/boot-qemu.sh` gives a VM 1 GiB. That is enough
+to run small images, but not to pull a distribution image and apt-install a compiler into
+it, which fails partway with *No space left on device*. To build images in the guest, give
+it memory and a `/var` disk, and build as root:
+
+```sh
+MEM=4096 VAR_DISK=output/var.img VAR_SIZE=20G SYSEXTS=podman ./tools/boot-qemu.sh
+./tools/ssh.sh --root    # then podman build, pull, run as usual
+```
+
+Root's storage is then on the disk, and it survives reboots too.
 
 To have a container start at boot, describe it as a Quadlet `.container` file. Give it
 `UpheldBy=multi-user.target` next to `WantedBy=`: the extension is merged during early
