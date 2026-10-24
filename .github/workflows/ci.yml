@@ -317,8 +317,9 @@ jobs:
           dups=$(while read -r t; do tar tf "$t" | grep -v '/$' | sed "s|\$| $(basename "$t" .tar)|"; done < tars |
                  sort | awk '{ n[$1]++; p[$1] = p[$1] " " $2 } END { for (f in n) if (n[f] > 1) print f ":" p[f] }')
           # Directory symlinks (bin -> usr/bin and friends) are the merged-/usr skeleton
-          # every package stages identically; anything else is a real collision.
-          dups=$(grep -vE '^rootfs/(bin|lib|lib64|sbin|usr/sbin):' <<< "$dups" || true)
+          # every package stages identically, in rootfs/ or in an extension's tree;
+          # anything else is a real collision.
+          dups=$(grep -vE '^(rootfs|extensions/[^/]+)/(bin|lib|lib64|sbin|usr/sbin):' <<< "$dups" || true)
           if [ -n "$dups" ]; then
               echo "error: more than one package installs these files:"
               echo "$dups"
@@ -345,6 +346,22 @@ jobs:
       # actually runs, but only after four minutes of qemu and only as "crun exited 1".
       - name: Check the kernel can run containers
         run: ./test/kernel-caps.sh rootfs
+
+      # The same two library checks for what the extensions add, against what the guest
+      # will see: the base with each extension's /usr merged over it. crio is the one that
+      # links (libseccomp, through cgo); a library the base does not ship, or a symbol
+      # version it does not define, would be a node whose runtime cannot start.
+      - name: Check the extensions' libraries against the base
+        run: |
+          for ext in extensions/*/; do
+              [ -d "$ext/usr" ] || continue
+              merged="merged-$(basename "$ext")"
+              cp -a rootfs "$merged"
+              cp -a --remove-destination "$ext/usr/." "$merged/usr/"
+              ./test/check-rootfs-deps.sh "$merged"
+              ./test/check-symbol-versions.sh "$merged"
+              rm -rf "$merged"
+          done
 
       # Both outputs of the same staging tree — the disk image, and the same userspace with
       # the kernel and systemd taken back out as an OCI image — assembled by the same

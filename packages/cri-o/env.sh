@@ -1,0 +1,17 @@
+# The container runtime kubelet talks to: CRI-O, the Kubernetes CRI from the same
+# ecosystem as podman, sharing its image and storage libraries, policy.json,
+# registries.conf, conmon and crun — all of which the image already ships. Go with cgo
+# for libseccomp, plus pinns in C; dependencies vendored in the repository.
+# In the kubernetes system extension, not the image (EXTENSION, see build.sh).
+#
+# CRI-O's minor tracks Kubernetes': 1.37 serves kubelet 1.37, and packages/kubernetes
+# has to be bumped with it.
+VERSION="1.37.2"
+PACKAGE="cri-o-${VERSION}"
+TARBALL="$PACKAGE.tar.gz"
+URL="https://github.com/cri-o/cri-o/archive/refs/tags/v${VERSION}.tar.gz"
+SHA256="21569cbd5c50cc16d78d788761588c95c2d80ad2b03d14e0c0afd347f83eb6a6"
+LICENSE="Apache-2.0"
+EXTENSION=kubernetes
+UPSTREAM_GITHUB="cri-o/cri-o"
+UPSTREAM_SED='s/^v//'

@@ -6,7 +6,7 @@
 # Everything package-specific lives in the package's own directory under packages/:
 #
 #   packages/<pkg>/env.sh     version, tarball URL, its SHA256, and optionally
-#                             NO_SYSROOT or LOCAL_SOURCE.
+#                             NO_SYSROOT, LOCAL_SOURCE or EXTENSION.
 #   packages/<pkg>/build.sh   the configure/compile/install commands, sourced inside the
 #                             container by builder/build-package.sh with the unpacked
 #                             source tree as the working directory.
@@ -26,6 +26,12 @@
 # artifact free of glibc's files. So glibc has to be built before anything else:
 #
 #     ./build.sh glibc && ./build.sh coreutils
+#
+# EXTENSION=<name> in env.sh installs the package into extensions/<name>/ instead of
+# rootfs/: software that belongs in a system extension (docs/sysext.md) rather than in the
+# image. It still compiles against rootfs/ like everything else — the sysroot is a
+# separate mount from the install target — but nothing image/build-rootfs.sh copies ever
+# contains it, so no list of subtractions has to know about it.
 set -euo pipefail
 
 source tools/lib.sh
@@ -42,6 +48,9 @@ load_env "$PKG"
 
 NO_SYSROOT="${NO_SYSROOT:-}"
 SYSROOT_DIR="${SYSROOT_DIR:-rootfs}"
+DEST_DIR=rootfs
+[ -z "${EXTENSION:-}" ] || DEST_DIR="extensions/$EXTENSION"
+mkdir -p "$DEST_DIR"
 
 # glibc itself is what fills the sysroot, and the kernel is freestanding — neither has
 # one to build against.
@@ -190,7 +199,7 @@ podman run --rm \
     --security-opt label=disable \
     "${src_mount[@]}" \
     --volume "$PWD/$PKG_DIR/build.sh":/package-build.sh:ro \
-    --volume "$PWD/rootfs":/usr/local/rootfs \
+    --volume "$PWD/$DEST_DIR":/usr/local/rootfs \
     "${sysroot_mount[@]}" \
     "${component_env[@]}" \
     "$BUILDER" /build.sh

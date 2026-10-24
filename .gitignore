@@ -7,6 +7,9 @@ rootfs
 sysroot
 glibc-package
 
+# The same, per system extension, for packages whose env.sh names one (EXTENSION=).
+extensions
+
 # Built images, fetched CI artifacts and test console logs all land here.
 output
 

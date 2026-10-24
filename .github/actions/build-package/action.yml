@@ -64,7 +64,11 @@ runs:
       id: cache-build
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: rootfs
+        # extensions/ for a package whose env.sh names one (EXTENSION=, see build.sh);
+        # every other package installs into rootfs/ and leaves it empty.
+        path: |
+          rootfs
+          extensions
         # arch has to be in the key: an amd64 and an arm64 build of the same package at
         # the same script hash produce entirely different, mutually useless binaries.
         key: ${{ inputs.arch }}-${{ steps.get_key.outputs.package }}-${{ steps.get_key.outputs.build_script_sum }}
@@ -76,7 +80,9 @@ runs:
 
     - name: Tar files to preserve permissions
       shell: bash
-      run: tar cvf ${{ inputs.package }}.tar rootfs/*
+      run: |
+        shopt -s nullglob
+        tar cvf ${{ inputs.package }}.tar rootfs/* extensions/*
 
     - name: Upload Package
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

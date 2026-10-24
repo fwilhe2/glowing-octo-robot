@@ -113,6 +113,7 @@ examples/         images built FROM the published flfs image, each with its own 
                   templates for users, not part of a build or of CI
 downloads/        source tarballs (gitignored)
 rootfs/           shared, cumulative staging tree every package installs into (gitignored)
+extensions/       the same per system extension, for packages with EXTENSION= (gitignored)
 output/           built images, fetched CI artifacts, test console logs (gitignored)
 ```
 
