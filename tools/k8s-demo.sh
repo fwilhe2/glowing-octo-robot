@@ -373,9 +373,7 @@ controllerManager:
 ---
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
-cgroupDriver: systemd
 volumePluginDir: /var/lib/kubelet/volumeplugins
-resolvConf: /run/systemd/resolve/resolv.conf
 ---
 apiVersion: kubeproxy.config.k8s.io/v1alpha1
 kind: KubeProxyConfiguration
