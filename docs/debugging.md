@@ -302,8 +302,10 @@ base like every other package, install into `extensions/debug/`, and
 `tools/build-image.sh` makes that into `output/extensions/debug.raw`. Two things are
 particular to this extension:
 
-- **An extension's packages can't link against each other.** Each compiles against the
-  base's staging tree, never against another extension package. So a library that only
+- **An extension's packages can't link against each other.** Nothing in CI compiles
+  against another package's output: the sysroot there is glibc alone, and other
+  libraries' headers are Debian's from `builder/deps.txt`, matched by SONAME at runtime
+  (`docs/extension-dependencies.md`). So a library that only
   one tool uses is that tool's second pinned tarball (`VENDOR_TARBALL`), linked
   statically: libpcap for tcpdump, libtraceevent for perf. Everything else they link
   (OpenSSL, zlib, libelf, libcap, ncurses) comes from the base.
