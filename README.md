@@ -222,6 +222,7 @@ CI runs all of them but the last:
 | --- | --- |
 | `test/check-rootfs-deps.sh`, `check-symbol-versions.sh`, `check-symbol-resolution.sh` | every library a binary needs is shipped, in a version it defines, and defines every function the binary calls |
 | `test/kernel-caps.sh` | the kernel config has what containers and Kubernetes need |
+| `test/selftest.sh` | each of the checks above fails on a tree broken in the way it exists to catch |
 | `test/boot.sh`, `systemd.sh`, `verity.sh` | it boots, no unit fails, a tampered image is refused |
 | `test/network.sh`, `ssh.sh` | DHCP, DNS, TLS; sshd, from the guest and from the host |
 | `test/container.sh`, `podman.sh`, `rootless.sh` | crun on the base; podman with seccomp, networking and Quadlet; rootless |

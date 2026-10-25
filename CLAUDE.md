@@ -141,6 +141,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/kernel-caps.sh rootfs            # kernel config vs what a container needs
 ./test/kernel-config-diff.sh <old> <new> [src]  # what a kernel build turned on or off
 ./test/check-licenses.sh                # every package declares a DFSG-free license
+./test/selftest.sh                      # the static checks above fail on broken fixture trees, and pass on a good one
 ./tools/check-updates.sh [pkg...] # what upstream has released since the pinned VERSION
 ./test/boot.sh output/rootfs.erofs rootfs/boot/bzImage   # headless boot smoke test (reads rootfs.cmdline beside the image)
 ./test/systemd.sh output/rootfs.erofs rootfs/boot/bzImage  # no failed units
@@ -191,7 +192,11 @@ written out at the telemetry step in `ci.yml`: the run page concatenates all 77 
 summaries and GitHub renders every mermaid block in its own iframe.
 
 There is no test suite and no linter — the checks above plus a real boot are the
-verification story. Builds are slow (glibc, systemd and the kernel are tens of minutes);
+verification story. The checks themselves are tested, though: `test/selftest.sh` builds
+small trees broken in one way each and requires every tree check to fail on its fixture
+*naming what is wrong*, and to pass on a correct one. A check that skips what it cannot
+judge passes vacuously, so a fixture that should fail is worth more than one that should
+pass — a new check, or a new case in one, gets a fixture that must produce a finding. Builds are slow (glibc, systemd and the kernel are tens of minutes);
 run them in the background rather than blocking on a foreground call.
 
 `build.sh` skips the download when the tarball is already in downloads/ and skips the

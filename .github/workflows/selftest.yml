@@ -1,0 +1,28 @@
+name: Self-test
+
+# The static checks in test/ can fail on what they exist to catch, and pass on a tree with
+# nothing wrong (test/selftest.sh). A check that can no longer fail looks exactly like one
+# that found nothing, so this is the only thing that tells the two apart.
+#
+# Its own workflow for the same reason as licenses.yml: it needs nothing built, and a
+# broken check should be answered in seconds rather than after the build it would have
+# been checking. Both architectures, because the fixtures are compiled natively and the
+# loader and libc they copy differ, and because the runner's awk is mawk, not gawk.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - run: ./test/selftest.sh
