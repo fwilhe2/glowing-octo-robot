@@ -23,9 +23,10 @@
 # to SOURCE_DATE_EPOCH, so a staged file's own timestamp never reaches an image, and
 # including it would fail every package for a difference nothing ships.
 #
-# Packages compile against SYSROOT_DIR (default rootfs/, which has to have glibc in it),
-# read-only, exactly as CI's build matrix does against its glibc-only sysroot. Both builds
-# see the same one, so it cannot be the difference.
+# Packages compile against SYSROOT_DIR (default sysroot/, the glibc-only tree
+# ./build.sh glibc fills), read-only, exactly as CI's build matrix does against its own.
+# Both builds see the same one, so it cannot be the difference — and it has to be
+# glibc-only for AGAINST_RUN to mean anything, since CI's has nothing else in it.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -59,7 +60,7 @@ if [ -n "${AGAINST_RUN:-}" ]; then
     ci_tree glibc "$work/ci-sysroot"
     sysroot="$work/ci-sysroot"
 else
-    sysroot=$(realpath "${SYSROOT_DIR:-rootfs}")
+    sysroot=$(realpath "${SYSROOT_DIR:-sysroot}")
 fi
 
 # Staged files belong to the build container's root, which is a subuid out here, so

@@ -491,9 +491,12 @@ host's kernel, so nothing about `packages/kernel` is exercised. `tools/publish-o
 pushes both architectures to ghcr.io as one manifest list; see the CI section.
 
 All of that happens on a *copy* at `/usr/local/image` inside the container, not on the
-bind-mounted staging tree. It has to: `rootfs/` is simultaneously the image's input and the
-sysroot the next package compiles against, so the headers, `*.a` and `*.pc` files the trim
-deletes are still needed there. Nothing in the image build may write to `/usr/local/src`.
+bind-mounted staging tree. It has to: `rootfs/` is the input to every later assembly, and
+the trim would leave it unable to produce the next image. Packages do not compile against
+it — the sysroot is `sysroot/`, glibc alone, which `./build.sh glibc` fills and copies into
+`rootfs/`, the same tree CI unpacks the glibc artifact into. Before that split a local
+build compiled against our headers for whatever was staged so far and CI's against
+Debian's; keep the two the same. Nothing in the image build may write to `/usr/local/src`.
 
 The trim is that whole middle section of `build-rootfs.sh` — `strip`, then removing what a
 booted system cannot reach: static libraries and `crt*.o`, `usr/include`, pkg-config data,

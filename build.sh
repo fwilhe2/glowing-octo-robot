@@ -21,15 +21,18 @@
 #
 # Packages compile against our own glibc, not the builder image's: a tree that already
 # has glibc staged in it is bind-mounted read-only and passed to gcc as --sysroot (see
-# builder/build-package.sh). That tree defaults to rootfs/ — where ./build.sh glibc puts it
-# — and can be pointed elsewhere with SYSROOT_DIR, which CI uses to keep each package's
-# artifact free of glibc's files. So glibc has to be built before anything else:
+# builder/build-package.sh). That tree is sysroot/, which ./build.sh glibc fills and then
+# copies into rootfs/ for the image, and it holds glibc and nothing else — the same tree
+# CI unpacks the glibc artifact into. It used to be rootfs/ itself, which made a local
+# build compile against our headers for whatever happened to be staged already, where
+# CI's compiled against Debian's. SYSROOT_DIR points it elsewhere. So glibc has to be
+# built before anything else:
 #
 #     ./build.sh glibc && ./build.sh coreutils
 #
 # EXTENSION=<name> in env.sh installs the package into extensions/<name>/ instead of
 # rootfs/: software that belongs in a system extension (docs/sysext.md) rather than in the
-# image. It still compiles against rootfs/ like everything else — the sysroot is a
+# image. It still compiles against sysroot/ like everything else — the sysroot is a
 # separate mount from the install target — but nothing image/build-rootfs.sh copies ever
 # contains it, so no list of subtractions has to know about it.
 set -euo pipefail
@@ -47,9 +50,17 @@ PKG_DIR="packages/$PKG"
 load_env "$PKG"
 
 NO_SYSROOT="${NO_SYSROOT:-}"
-SYSROOT_DIR="${SYSROOT_DIR:-rootfs}"
+SYSROOT_DIR="${SYSROOT_DIR:-sysroot}"
 DEST_DIR=rootfs
 [ -z "${EXTENSION:-}" ] || DEST_DIR="extensions/$EXTENSION"
+# glibc is what fills the sysroot: it installs into a fresh sysroot/, so that tree is
+# exactly glibc, and is copied into rootfs/ after the build. Always ./sysroot rather than
+# $SYSROOT_DIR, which names what other packages read — test/reproducible.sh points that
+# at one shared tree while each of its worktrees builds glibc into its own.
+if [ "$PKG" = glibc ]; then
+    DEST_DIR=sysroot
+    rm -rf "$DEST_DIR" 2>/dev/null || podman unshare rm -rf "$DEST_DIR"
+fi
 mkdir -p "$DEST_DIR"
 
 # glibc itself is what fills the sysroot, and the kernel is freestanding — neither has
@@ -60,11 +71,13 @@ if [ -z "$NO_SYSROOT" ]; then
         echo "error: no glibc in the sysroot ($SYSROOT_DIR/usr/lib/libc.so.6 is missing)" >&2
         echo "       packages are compiled against our own glibc, so build it first:" >&2
         echo "           ./build.sh glibc" >&2
-        echo "       (or set NO_SYSROOT=1 to compile against the builder image's glibc)" >&2
+        echo "       (a checkout from before sysroot/ existed has glibc in rootfs/ only, and" >&2
+        echo "       needs this once; or set NO_SYSROOT=1 to compile against the builder" >&2
+        echo "       image's glibc)" >&2
         exit 1
     fi
-    # Read-only: the sysroot is an input. It is usually the same tree as the DESTDIR
-    # mount below, which stays writable.
+    # Read-only: the sysroot is an input, and a separate tree from the DESTDIR mount
+    # below, which stays writable.
     sysroot_abs=$(realpath "$SYSROOT_DIR")
     sysroot_mount=(--volume "$sysroot_abs":/usr/local/sysroot:ro
                    --env SYSROOT=/usr/local/sysroot)
@@ -203,3 +216,10 @@ podman run --rm \
     "${sysroot_mount[@]}" \
     "${component_env[@]}" \
     "$BUILDER" /build.sh
+
+# The image takes glibc from rootfs/ like everything else; sysroot/ is only what the
+# other packages compile against. cp -a over the merged-/usr symlinks replaces each with
+# the same link, so this is safe on a tree that already has them.
+if [ "$PKG" = glibc ]; then
+    cp -a sysroot/. rootfs/ 2>/dev/null || podman unshare cp -a sysroot/. rootfs/
+fi

@@ -63,7 +63,7 @@ image. Without that, an old base image would install today's packages.
    | unpacked source | `/usr/local/src` | rw (ro for local source) |
    | `packages/<pkg>/build.sh` | `/package-build.sh` | ro |
    | `rootfs/` | `/usr/local/rootfs` | rw: the install target |
-   | `$SYSROOT_DIR` (default `rootfs/`) | `/usr/local/sysroot` | ro: the glibc to compile against |
+   | `$SYSROOT_DIR` (default `sysroot/`) | `/usr/local/sysroot` | ro: the glibc to compile against, and nothing else |
    | each file of Debian's `libc6`, replaced by ours | its own path | ro |
 
 5. Passes the pins as `FLFS_*` environment variables, for the SBOM.
