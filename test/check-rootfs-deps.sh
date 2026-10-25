@@ -53,7 +53,10 @@ if [ ! -s "$work/missing" ]; then
 fi
 
 if [ -f "$ALLOWLIST" ]; then
-    grep -v '^\s*\(#\|$\)' "$ALLOWLIST" | sort -u > "$work/allowed"
+    # || true: grep exits 1 when it selects nothing, which is what an allowlist of only
+    # comments gives it — the file once the backlog is cleared. Under pipefail that ended
+    # the script right here, with status 1 and not a word about which library was missing.
+    { grep -v '^\s*\(#\|$\)' "$ALLOWLIST" || true; } | sort -u > "$work/allowed"
 else
     : > "$work/allowed"
 fi
