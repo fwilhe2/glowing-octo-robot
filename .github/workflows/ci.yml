@@ -343,6 +343,13 @@ jobs:
       - name: Check for unsatisfied symbol versions
         run: ./test/check-symbol-versions.sh rootfs
 
+      # ...and the unversioned half of that question, which is the builder coupling: a
+      # package compiled against a sid header newer than the library we ship calls a
+      # function ours lacks. glib, json-c and pcre2 have no symbol versions for the
+      # check above to hold against them. See docs/linking.md.
+      - name: Check every symbol resolves
+        run: ./test/check-symbol-resolution.sh rootfs
+
       # Cheap, and it names the missing feature. test/container.sh proves a container
       # actually runs, but only after four minutes of qemu and only as "crun exited 1".
       - name: Check the kernel can run containers
@@ -361,6 +368,7 @@ jobs:
               cp -a --remove-destination "$ext/usr/." "$merged/usr/"
               ./test/check-rootfs-deps.sh "$merged"
               ./test/check-symbol-versions.sh "$merged"
+              ./test/check-symbol-resolution.sh "$merged"
               rm -rf "$merged"
           done
 
