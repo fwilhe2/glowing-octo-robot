@@ -220,7 +220,7 @@ CI runs all of them but the last:
 
 | check | what it asks |
 | --- | --- |
-| `test/check-rootfs-deps.sh`, `check-symbol-versions.sh` | every library a binary needs is shipped, in a version it defines |
+| `test/check-rootfs-deps.sh`, `check-symbol-versions.sh`, `check-symbol-resolution.sh` | every library a binary needs is shipped, in a version it defines, and defines every function the binary calls |
 | `test/kernel-caps.sh` | the kernel config has what containers and Kubernetes need |
 | `test/boot.sh`, `systemd.sh`, `verity.sh` | it boots, no unit fails, a tampered image is refused |
 | `test/network.sh`, `ssh.sh` | DHCP, DNS, TLS; sshd, from the guest and from the host |

@@ -109,7 +109,9 @@ tools/            local conveniences and maintenance, not part of a build — ex
                   lib.sh, the helpers build.sh, tools/ and test/ all source
 docs/             design notes for work not done yet — proposals, not descriptions —
                   except how-it-works.md, the mechanics and pitfalls of the system as it is,
-                  and debugging.md, the debug extension's tools and how to use them here
+                  debugging.md, the debug extension's tools and how to use them here,
+                  and linking.md, how a binary finds its libraries and why compiling
+                  against Debian's headers and running against ours works
 examples/         images built FROM the published flfs image, each with its own README;
                   templates for users, not part of a build or of CI
 downloads/        source tarballs (gitignored)
@@ -134,6 +136,8 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./build.sh <package>        # one package into the shared rootfs/ staging tree
 ./test/check-rootfs-deps.sh rootfs      # unresolved NEEDED entries
 ./test/check-symbol-versions.sh rootfs  # symbol versions no shipped library defines
+./test/check-symbol-resolution.sh rootfs  # undefined symbols nothing in a binary's NEEDED closure defines
+./tools/header-skew.sh            # builder -dev headers vs the libraries we ship (report)
 ./test/kernel-caps.sh rootfs            # kernel config vs what a container needs
 ./test/kernel-config-diff.sh <old> <new> [src]  # what a kernel build turned on or off
 ./test/check-licenses.sh                # every package declares a DFSG-free license
@@ -382,6 +386,15 @@ is only discovered when the binary is exec'd in qemu. Prefer configuring the dep
 out (`--without-selinux`, `-Dx11_autolaunch=disabled`) over adding a package to satisfy it.
 `test/check-rootfs-deps.sh` reports all of them at once; `test/known-missing-libs.txt` allowlists
 the accepted backlog so new regressions stand out. Run it before booting.
+
+**The same arrangement is how every package links every library we ship**, which is easy
+to miss: the CI sysroot is glibc alone, so curl compiles against sid's `libssl-dev` and
+runs against our `libssl.so.3`, and the `-dev` section of `builder/deps.txt` is one line
+per library of ours with a Debian stand-in. It holds while our version is at least
+sid's. A library that versions its symbols is held to that by
+`test/check-symbol-versions.sh`, one that does not by `test/check-symbol-resolution.sh`,
+and `tools/header-skew.sh` shows the two versions side by side. `docs/linking.md` is the
+long version, and `docs/extension-dependencies.md` the design for removing the coupling.
 
 **3. A package compiled with no optimization at all.** Autotools would pick `-g -O2` by
 itself, but only when `CFLAGS` is unset — and `builder/build-package.sh` exports it, with
@@ -877,8 +890,8 @@ flavour has none of it, and drops `/etc/subuid` and `/etc/subgid` too.
 **glib is coupled to the builder like OpenSSL is, and worse**, because its symbols are
 unversioned: conmon compiles against sid's `libglib2.0-dev` headers, and a header newer
 than the shipped library is a missing symbol at runtime that
-`test/check-symbol-versions.sh` cannot see. Keep `packages/glib` at or above sid's
-version. Note too that glib's stable series is the *even* minor — 2.90 is stable.
+`test/check-symbol-versions.sh` cannot see. `test/check-symbol-resolution.sh` can, and
+fails CI on it. Keep `packages/glib` at or above sid's version. Note too that glib's stable series is the *even* minor — 2.90 is stable.
 
 **Go and Rust read none of the C flags**, so `builder/build-package.sh` hands them the
 sysroot itself: `CGO_CFLAGS`/`CGO_LDFLAGS` for cgo, and one `-C link-arg=` per linker

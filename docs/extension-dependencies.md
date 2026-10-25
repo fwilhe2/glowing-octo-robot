@@ -28,7 +28,8 @@ package and the coupling is written down (`packages/openssl/env.sh`, the glib no
 `CLAUDE.md`). It does not scale to a stack. `libgtk-3-dev` pulls in roughly a hundred
 `-dev` packages, X11 among them, and every base package's `configure` would see them — the
 iproute2/libselinux trap fifty times over. Each would be coupled to sid the way glib is,
-most with unversioned symbols `test/check-symbol-versions.sh` cannot check. And the
+most with unversioned symbols that only `test/check-symbol-resolution.sh` would catch,
+and only after the fact. And the
 builder image is content-hashed, so each addition rebuilds every package.
 
 The extensions have worked around this so far by vendoring: a library with one consumer

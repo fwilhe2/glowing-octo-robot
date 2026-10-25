@@ -158,6 +158,7 @@ There is no unit test suite. The checks, cheapest first:
 | `test/check-licenses.sh` | a missing or non-DFSG `LICENSE=` |
 | `test/check-rootfs-deps.sh` | a `NEEDED` library that nothing in `rootfs/` provides |
 | `test/check-symbol-versions.sh` | a binary built against the builder's glibc rather than ours |
+| `test/check-symbol-resolution.sh` | a binary calling a function no library it loads defines — a sid header newer than our library (`docs/linking.md`) |
 | `test/kernel-caps.sh` | kernel config missing a container feature |
 | `test/oci.sh` | the OCI archive does not load or run |
 | `test/prebuilt.sh` | a binary from someone else's toolchain cannot run here: no libgcc_s, libstdc++ or zoneinfo |
