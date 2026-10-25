@@ -311,7 +311,8 @@ jobs:
       # the order of the runner's filesystem. That is a different image from the same
       # packages for no reason anybody chose — e2fsprogs and util-linux both shipped
       # /usr/bin/fsck until this check existed.
-      - name: Unpack the packages
+      - &unpack-packages
+        name: Unpack the packages
         run: |
           find artifacts -name '*.tar' | sort > tars
           dups=$(while read -r t; do tar tf "$t" | grep -v '/$' | sed "s|\$| $(basename "$t" .tar)|"; done < tars |
@@ -369,20 +370,6 @@ jobs:
       # checked-out commit, which is $GITHUB_SHA.
       - name: Create disk and OCI images
         run: ./tools/build-image.sh --image-only
-
-      # And again, to the byte. Image assembly is reproducible — every timestamp is
-      # SOURCE_DATE_EPOCH (tools/lib.sh), every tar is sorted and stripped of pax
-      # atime/ctime, the verity salt and EROFS UUID are derived — and this is what keeps it
-      # so: anything that starts embedding "now", a pid or a random value fails here
-      # rather than in somebody's attempt to verify a published digest. Right after the
-      # first assembly, so nothing in between can have touched the staging tree.
-      - name: Check the images are reproducible
-        run: |
-          outputs="output/rootfs.erofs output/rootfs.cmdline output/flfs-oci.tar output/sbom-erofs.json output/sbom-oci.json"
-          outputs+=" $(ls output/extensions/*.raw output/confexts/*.raw)"
-          sha256sum $outputs > first.sha256
-          ./tools/build-image.sh --image-only > second-build.log 2>&1 || { tail -50 second-build.log; exit 1; }
-          sha256sum --check first.sha256
 
       # Loading it proves the hand-written OCI layout is well formed, and running it is
       # the only check in this job that executes a binary we shipped. It is not a
@@ -511,6 +498,57 @@ jobs:
           path: |
             output/extensions
             output/confexts
+
+  # Rebuild the same outputs on the same architecture while boot and k8s validate the
+  # images. This stays a required gate, but no longer holds up rootfs artifact delivery.
+  reproducible:
+    runs-on: *runner
+    permissions:
+      contents: read
+      pull-requests: write
+    needs:
+      - rootfs
+    strategy: *per-arch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - *telemetry
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: package-*-${{ matrix.arch }}
+          path: artifacts
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rootfs.erofs-${{ matrix.arch }}
+          path: output
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: oci-image-${{ matrix.arch }}
+          path: output
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: extensions-${{ matrix.arch }}
+          path: output
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sbom-${{ matrix.arch }}
+          path: output
+
+      - *unpack-packages
+
+      # Compare every image output, including extension images and generated SBOMs.
+      - name: Check the images are reproducible
+        run: |
+          outputs="output/rootfs.erofs output/rootfs.cmdline output/flfs-oci.tar output/sbom-erofs.json output/sbom-oci.json"
+          outputs+=" $(ls output/extensions/*.raw output/confexts/*.raw)"
+          sha256sum $outputs > first.sha256
+          ./tools/build-image.sh --image-only > second-build.log 2>&1 || { tail -50 second-build.log; exit 1; }
+          sha256sum --check first.sha256
 
   # An image that builds and resolves all its libraries can still fail to boot, so
   # actually boot it: the kernel we build is in rootfs/boot/bzImage.
@@ -742,6 +780,7 @@ jobs:
     runs-on: ubuntu-26.04
     needs:
       - boot
+      - reproducible
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
