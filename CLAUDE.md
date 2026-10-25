@@ -115,8 +115,9 @@ docs/             design notes for work not done yet — proposals, not descript
 examples/         images built FROM the published flfs image, each with its own README;
                   templates for users, not part of a build or of CI
 downloads/        source tarballs (gitignored)
-rootfs/           shared, cumulative staging tree every package installs into (gitignored)
-extensions/       the same per system extension, for packages with EXTENSION= (gitignored)
+staging/          each package's own install tree, staging/<pkg>/{rootfs,extensions} (gitignored)
+rootfs/           merged from every staging tree by tools/merge-staging.sh, never installed into (gitignored)
+extensions/       the same merge per system extension, for packages with EXTENSION= (gitignored)
 output/           built images, fetched CI artifacts, test console logs (gitignored)
 ```
 
@@ -133,7 +134,8 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 
 ```sh
 ./build.sh glibc            # must come first — everything else compiles against it
-./build.sh <package>        # one package into the shared rootfs/ staging tree
+./build.sh <package>        # one package into staging/<package>/, then rootfs/ re-merged from all of them
+./tools/merge-staging.sh    # rootfs/ and extensions/ from staging/, failing on a file two packages install
 ./test/check-rootfs-deps.sh rootfs      # unresolved NEEDED entries
 ./test/check-symbol-versions.sh rootfs  # symbol versions no shipped library defines
 ./test/check-symbol-resolution.sh rootfs  # undefined symbols nothing in a binary's NEEDED closure defines
@@ -208,10 +210,24 @@ unpacked tree is versioned even when upstream's is not. Debian's `ca-certificate
 to a bare `ca-certificates/`, and without this a version bump would find the previous
 snapshot already sitting there and quietly skip the extraction.
 
-`rootfs/` is a *shared, cumulative* staging tree (gitignored) — every package installs
-into the same directory and nothing removes stale files, so after a version bump or a
-build that partially succeeded, delete `rootfs/` and rebuild from glibc when the tree
-stops making sense.
+**Each package installs into a tree of its own, and `rootfs/` is derived.** `build.sh`
+builds into `staging/.building-<pkg>/`, moves it to `staging/<pkg>/` only once the build
+has succeeded (so a failed build leaves the previous one staged, not an image without the
+package), and then runs `tools/merge-staging.sh`, which rebuilds `rootfs/` and
+`extensions/` from every staging tree in sorted order and fails on any path two packages
+both install. A staging tree is laid out like the package's CI artifact, `rootfs/…` or
+`extensions/<name>/…`, and CI's rootfs job unpacks the artifacts into `staging/` and calls
+the same script — the collision check used to exist only in `ci.yml`. The copies are
+`--reflink=auto`, a free clone on btrfs or XFS, about a second for the whole tree.
+
+`rootfs/` used to be the install target itself, shared and cumulative: a file a new
+version stopped installing stayed staged until somebody deleted the tree and rebuilt
+everything from glibc, nothing knew which package a file came from, and two packages
+installing one path got whichever was built last. A rebuilt package now *replaces* its
+files. Never edit `rootfs/` by hand — the next build discards it — and expect
+`merge-staging.sh` to refuse a `rootfs/` it did not make (a checkout from before this):
+it cannot be split back into packages, so `./tools/clean.sh && ./tools/build-image.sh`,
+or seed `staging/` from a CI run's `package-*` artifacts the way the rootfs job does.
 
 ## How a package build works
 
@@ -260,7 +276,7 @@ vocabulary, and a rule that is a function there is one no package has to remembe
 
 | name | what it is for |
 | --- | --- |
-| `$ROOTFS` | the staging tree, `/usr/local/rootfs` — the `DESTDIR` |
+| `$ROOTFS` | this package's staging tree, `/usr/local/rootfs` — the `DESTDIR`, empty at the start |
 | `MAKEFLAGS` | exported as `-j$(nproc)`, so a plain `make` is parallel; do not add `-j` |
 | `meson_install [opts]` | setup/compile/install with `--prefix /usr --buildtype=release -Dlibdir=lib` |
 | `drop_installed prog…` | delete from `usr/bin`, and **fail** if one was not installed |
@@ -509,12 +525,12 @@ host's kernel, so nothing about `packages/kernel` is exercised. `tools/publish-o
 pushes both architectures to ghcr.io as one manifest list; see the CI section.
 
 All of that happens on a *copy* at `/usr/local/image` inside the container, not on the
-bind-mounted staging tree. It has to: `rootfs/` is the input to every later assembly, and
-the trim would leave it unable to produce the next image. Packages do not compile against
-it — the sysroot is `sysroot/`, glibc alone, which `./build.sh glibc` fills and copies into
-`rootfs/`, the same tree CI unpacks the glibc artifact into. Before that split a local
-build compiled against our headers for whatever was staged so far and CI's against
-Debian's; keep the two the same. Nothing in the image build may write to `/usr/local/src`.
+bind-mounted, read-only, merged tree. It has to: `rootfs/` is the input to every later
+assembly, and the trim would leave it unable to produce the next image. Packages do not
+compile against it — the sysroot is `staging/glibc/rootfs`, glibc alone, which is what CI
+unpacks the glibc artifact into as `sysroot/`. Before that split a local build compiled
+against our headers for whatever was staged so far and CI's against Debian's; keep the
+two the same. Nothing in the image build may write to `/usr/local/src`.
 
 The trim is that whole middle section of `build-rootfs.sh` — `strip`, then removing what a
 booted system cannot reach: static libraries and `crt*.o`, `usr/include`, pkg-config data,
@@ -525,8 +541,8 @@ indexes the final libraries. The bar for adding to that list is that *nothing in
 can reach the file*, not that it looks unlikely to be used — and the rest of the trim
 happens at build time, in `packages/systemd/build.sh` (some fifty components off) and the
 `vm.config` fragment in `packages/kernel/build.sh` (defconfig's hardware taken back out).
-Because `rootfs/` is cumulative, a component that stops being built stays staged locally
-until the tree is deleted; only CI starts clean.
+A component that stops being built disappears from `rootfs/` at that package's next build,
+because its staging tree starts empty.
 
 **The SBOM is generated, not scanned, and the shape of that is worth knowing before
 touching it.** A scanner reads a package manager's database and there is none here —
@@ -1135,9 +1151,10 @@ keep in mind when touching image assembly:
   sets on purpose, and nothing the host put there.
 - **Two packages installing the same file make the image depend on unpack order.**
   e2fsprogs and util-linux both shipped `/usr/bin/fsck`, and CI's `find`-ordered unpack
-  picked e2fsprogs' on the runner and util-linux's locally. The `rootfs` job now unpacks
-  in sorted order and fails on any file two packages both install; fix a collision in the
-  package (`--disable-fsck`), never by ordering.
+  picked e2fsprogs' on the runner and util-linux's locally. `tools/merge-staging.sh`
+  now merges in sorted order and fails on any file two packages both install, locally
+  and in the `rootfs` job alike; fix a collision in the package (`--disable-fsck`), never
+  by ordering.
 - **An unprivileged `tar x` drops setuid and setgid bits, and `cp -a` does not.** util-linux
   installed `su`, `mount` and `umount` setuid root, so CI's image (unpacked from tars by
   the runner user) had no setuid binaries and a local one (copied from the staging tree)

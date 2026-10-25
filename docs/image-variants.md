@@ -83,8 +83,11 @@ So: **`builder/build-package.sh` writes a file manifest beside the component rec
 already runs at exactly the right moment, it already writes one file per package, and the
 staging tree is already its business.
 
-Producing the manifest is a before-and-after diff of the tree, because `rootfs/` is
-cumulative and a package cannot simply be told "everything here is yours":
+*(Since this was written, each package installs into a tree of its own,
+`staging/<pkg>/`, so the manifest is that tree's file list and the diff below is no longer
+needed. The rest of the argument stands.)* Producing the manifest was a before-and-after
+diff of the tree, because `rootfs/` was cumulative and a package could not simply be told
+"everything here is yours":
 
 ```sh
 # before `source /package-build.sh`

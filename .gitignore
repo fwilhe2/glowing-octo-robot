@@ -1,13 +1,14 @@
 # Downloaded source tarballs.
 downloads
 
-# The shared, cumulative staging tree every package installs into, and a glibc-only
-# tree to compile against when it isn't rootfs/ itself.
+# Each package's own install tree, staging/<pkg>/, and rootfs/ merged from them all by
+# tools/merge-staging.sh; plus the glibc-only sysroot CI unpacks its glibc artifact into.
+staging
 rootfs
 sysroot
 glibc-package
 
-# The same, per system extension, for packages whose env.sh names one (EXTENSION=).
+# The same merge, per system extension, for packages whose env.sh names one (EXTENSION=).
 extensions
 
 # Built images, fetched CI artifacts and test console logs all land here.

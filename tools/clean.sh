@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Delete what building, testing and fetching have left behind:
 #
-#     ./tools/clean.sh               # build state: rootfs/, unpacked sources, output/, ...
+#     ./tools/clean.sh               # build state: staging/, rootfs/, unpacked sources, output/, ...
 #     ./tools/clean.sh --downloads   # ...and the source tarballs in downloads/
 #     ./tools/clean.sh --images      # ...and this repo's podman images that are out of date
 #     ./tools/clean.sh --all         # all of the above, current images included
 #     ./tools/clean.sh -n [...]      # say what would go, and how big it is; delete nothing
 #
-# The default is everything a rebuild recreates without the network: the cumulative
-# staging tree (rootfs/, which CLAUDE.md tells you to delete after a version bump
-# anyway), the glibc-only sysroot, every unpacked source tree under packages/ (the
+# The default is everything a rebuild recreates without the network: every package's
+# staging tree (staging/) and the rootfs/ and extensions/ merged from them, the glibc-only
+# sysroot CI unpacks, every unpacked source tree under packages/ (the
 # kernel's alone is several GB), built images, test logs and fetched CI artifacts.
 #
 # The rest is opt-in because getting it back costs a download. downloads/ is refilled by
@@ -41,7 +41,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-paths=(rootfs sysroot glibc-package output artifacts packages/*/*-[0-9]*/ packages/*/.extracting)
+paths=(staging rootfs extensions sysroot glibc-package output artifacts packages/*/*-[0-9]*/ packages/*/.extracting)
 [ "$downloads" = 1 ] && paths+=(downloads)
 
 # Files a build wrote are owned by the container's users, which are subuids from out

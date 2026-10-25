@@ -289,8 +289,9 @@ patch named. Fuzzy application is how a version bump silently half-applies a fix
 
 **The trap, which belongs in `CLAUDE.md` when this lands:** editing a patch does not
 rebuild anything, because the extracted tree already exists and is skipped. The fix is
-`rm -rf packages/<pkg>/<PACKAGE>` — the same shape as the note about `rootfs/` being
-cumulative, and it will bite exactly once per person.
+`rm -rf packages/<pkg>/<PACKAGE>` — state that outlives the change that should have
+invalidated it, the shape `rootfs/` had before each package got a staging tree of its own,
+and it will bite exactly once per person.
 
 ### The four places that assume a package is unmodified
 

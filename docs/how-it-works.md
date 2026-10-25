@@ -19,7 +19,8 @@ mechanics, and lists the pitfalls in one place.
 ```
 
 There are three stages. **Prep** fetches everything. **Build** compiles each package
-offline into a shared staging tree. **Assemble** copies that tree, trims it, and writes
+offline into a staging tree of its own, and the trees are merged into `rootfs/`.
+**Assemble** copies that tree, trims it, and writes
 the two images.
 
 ## 1. Prep: the only stage that uses the network
@@ -63,7 +64,7 @@ image. Without that, an old base image would install today's packages.
    | unpacked source | `/usr/local/src` | rw (ro for local source) |
    | `packages/<pkg>/build.sh` | `/package-build.sh` | ro |
    | `rootfs/` | `/usr/local/rootfs` | rw: the install target |
-   | `$SYSROOT_DIR` (default `sysroot/`) | `/usr/local/sysroot` | ro: the glibc to compile against, and nothing else |
+   | `$SYSROOT_DIR` (default `staging/glibc/rootfs`) | `/usr/local/sysroot` | ro: the glibc to compile against, and nothing else |
    | each file of Debian's `libc6`, replaced by ours | its own path | ro |
 
 5. Passes the pins as `FLFS_*` environment variables, for the SBOM.
@@ -106,18 +107,21 @@ Debian's gcc, make and perl keep working.
    license, URL, SHA256, builder tag). This only runs if the build succeeded, so a
    failed package never shows up in the SBOM.
 
-### `rootfs/` is shared and cumulative
+### Each package has its own tree; `rootfs/` is merged from them
 
-Every package installs into the same tree, and nothing removes files from it. That has
-three consequences:
+A package installs into `staging/<pkg>/` (built in `staging/.building-<pkg>/` and moved
+into place only on success), laid out like its CI artifact: `rootfs/…`, or
+`extensions/<name>/…` for an `EXTENSION=` package. `tools/merge-staging.sh` then rebuilds
+`rootfs/` and `extensions/` from all of them in sorted order, and fails if two packages
+install the same path. CI's rootfs job unpacks the artifacts into `staging/` and runs the
+same script. Consequences:
 
-- After a version bump or a removed component, old files stay behind. Use
-  `./tools/build-image.sh --clean` to start over.
-- `rootfs/` is both the install target and the sysroot for the next package. The trim
-  must never run on it (see stage 3).
-- Packages must build one at a time locally, since they would race on the tree. CI gets
-  around this by building each package against a separate glibc-only sysroot and
-  uploading only that package's files.
+- A rebuilt package replaces its files. Nothing from an older version stays behind.
+- `rootfs/` is only the image's input, never a sysroot and never an install target. The
+  trim must still never run on it (see stage 3), and editing it by hand is lost at the
+  next merge.
+- Packages still build one at a time locally: each build ends with a merge, and two
+  merges at once would race.
 
 ## 3. Assemble: `image/build-rootfs.sh`
 
@@ -186,7 +190,7 @@ sources ─────────┼─► glibc (×arch) ──► build (×a
   have their own jobs.
 - **Each package job** (`.github/actions/build-package`) does the following:
   - reads `NO_SYSROOT` from `env.sh`;
-  - stages glibc into `sysroot/`;
+  - stages glibc into `sysroot/` (locally the same tree is `staging/glibc/rootfs`);
   - builds with `SYSROOT_DIR=sysroot`;
   - uploads only that package's files.
 - **The cache key** hashes `build.sh`, `tools/lib.sh`, `build-package.sh`, glibc's
@@ -259,8 +263,14 @@ on 3.x. `env.sh` pins the 3.5 series for this reason.
 
 ### Staging tree
 
-**Removed files are still in the image, or headers from an old version are used.**
-`rootfs/` is cumulative. Run `tools/build-image.sh --clean`.
+**`merge-staging.sh` refuses: "rootfs/ or extensions/ exists but was not made by …".**
+The checkout predates per-package staging, and an old cumulative `rootfs/` cannot be split
+into packages. Run `tools/clean.sh && tools/build-image.sh`, or unpack a CI run's
+`package-*` artifacts into `staging/<pkg>/` as the rootfs job does, then merge.
+
+**`merge-staging.sh`: "more than one package installs these files".**
+Two packages install one path. Fix it in one of them (`--disable-fsck` in e2fsprogs is the
+example), never by build order.
 
 **`rm` reports `Permission denied` in `rootfs/` or in a source tree.**
 Those files belong to the container's root, which is a sub-UID on the host. Use

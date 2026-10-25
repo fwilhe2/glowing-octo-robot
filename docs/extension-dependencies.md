@@ -20,7 +20,7 @@ Local builds used to differ. `SYSROOT_DIR` defaulted to `rootfs/`, which is cumu
 so `--sysroot` put *our* headers and `.pc` files for everything staged so far ahead of
 Debian's: the same package compiled against different headers in CI and on a laptop, and
 which ones locally depended on what happened to be built first. It now defaults to
-`sysroot/`, glibc alone, as CI's is — so a declared dependency would be the only way into
+glibc's own staging tree, `staging/glibc/rootfs`, glibc alone, as CI's is — so a declared dependency would be the only way into
 the sysroot in both places, not "declared in CI, anything staged on your machine".
 
 For the base, the `-dev` model works because each library is one small, well-understood
@@ -57,9 +57,9 @@ A package without `DEPENDS` behaves exactly as it does now.
 ### A second sysroot layer
 
 Root `build.sh` mounts one more tree, read-only, at `/usr/local/sysroot-ext`, named by
-`EXT_SYSROOT_DIR` the way the existing one is named by `SYSROOT_DIR`. Locally it defaults
-to `extensions/$EXTENSION`, which is also that package's DESTDIR — the same arrangement
-`rootfs/` already has for the base. In CI it is a directory holding only the declared
+`EXT_SYSROOT_DIR` the way the existing one is named by `SYSROOT_DIR`. Locally it would be
+the merge of the declared dependencies' staging trees (each package already installs
+into `staging/<pkg>/`), which is what CI would unpack from their artifacts. In CI it is a directory holding only the declared
 dependencies' artifacts.
 
 `builder/build-package.sh` puts the layer after the glibc sysroot and ahead of the

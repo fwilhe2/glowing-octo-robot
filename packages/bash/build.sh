@@ -16,7 +16,8 @@ make install DESTDIR=$ROOTFS
 # POSIXLY_CORRECT — so a script relying on bashisms still works, and one that does not is
 # none the wiser. The cost is a symlink.
 #
-# -f because rootfs/ is cumulative: a rebuild would otherwise meet the previous one's.
+# -f dates from when rootfs/ was cumulative and a rebuild met the previous one's link;
+# each build now starts from an empty staging tree, and -f costs nothing.
 ln -sf bash $ROOTFS/usr/bin/sh
 
 # Two things `make install` adds that a booted image cannot use. The loadable builtins in

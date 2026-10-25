@@ -2,16 +2,17 @@
 # Build everything and assemble the images, locally, in one go:
 #
 #     ./tools/build-image.sh                 # glibc, kernel, every package, then erofs + oci
-#     ./tools/build-image.sh --clean         # delete rootfs/ first (after version bumps)
+#     ./tools/build-image.sh --clean         # delete staging/ and rootfs/ first
 #     ./tools/build-image.sh --image-only    # skip the packages, just re-assemble the images
 #     ./tools/build-image.sh --flavour erofs # only one of erofs / oci
 #     ./tools/build-image.sh --skip kernel,systemd   # leave packages out of this run
 #     ./tools/build-image.sh --only strace   # build just these packages, then the images
 #
-# Packages are built one after another: they all install into the shared rootfs/ tree, so
-# running them in parallel would race. glibc goes first because everything else compiles
-# against it; the rest follow in alphabetical order, which is fine since CI builds them
-# independently against a glibc-only sysroot too.
+# Packages are built one after another. Each installs into its own staging/<pkg>/, so
+# they no longer race on a shared tree, but every build ends by re-merging rootfs/ from
+# all of them (tools/merge-staging.sh), and two merges at once would. glibc goes first
+# because everything else compiles against it; the rest follow in alphabetical order,
+# which is fine since CI builds them independently against a glibc-only sysroot too.
 #
 # ADDITIONAL FILES: anything under extra/ (gitignored, create it yourself) is copied over
 # the assembled image as-is, for both flavours. Lay it out like the target filesystem:
@@ -47,9 +48,9 @@ for f in $flavours; do
 done
 
 if [ "$clean" = 1 ]; then
-    echo "==> removing rootfs/"
+    echo "==> removing staging/, rootfs/ and extensions/"
     # Files were created by the container's root, which is a subuid from out here.
-    podman unshare rm -rf rootfs 2>/dev/null || rm -rf rootfs
+    podman unshare rm -rf staging rootfs extensions 2>/dev/null || rm -rf staging rootfs extensions
 fi
 
 if [ "$image_only" = 0 ]; then
@@ -92,7 +93,7 @@ for f in $flavours; do
     podman run --rm --security-opt label=disable \
         -e FLFS_BUILD="$build" \
         -e SOURCE_DATE_EPOCH="$FLFS_SOURCE_DATE_EPOCH" \
-        --volume "$PWD/rootfs":/usr/local/src \
+        --volume "$PWD/rootfs":/usr/local/src:ro \
         --volume "$PWD/extra":/extra:ro \
         --volume "$PWD/output":/usr/local/output \
         rootfs-builder /usr/local/bin/build-rootfs.sh "$f"

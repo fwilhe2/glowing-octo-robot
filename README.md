@@ -64,7 +64,7 @@ image on top of it.
 
 ```sh
 ./tools/build-image.sh               # glibc, kernel, every package, then all images and extensions
-./build.sh <package>                 # or one package into the rootfs/ staging tree
+./build.sh <package>                 # or one package into staging/<package>/, re-merged into rootfs/
 ./tools/build-image.sh --image-only  # re-assemble images and extensions from what is staged
 ```
 

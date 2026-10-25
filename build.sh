@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build one package into the shared rootfs/ staging tree:
+# Build one package into its own staging tree, and merge them all into rootfs/:
 #
 #     ./build.sh <package>        # e.g. ./build.sh coreutils
 #
@@ -21,20 +21,25 @@
 #
 # Packages compile against our own glibc, not the builder image's: a tree that already
 # has glibc staged in it is bind-mounted read-only and passed to gcc as --sysroot (see
-# builder/build-package.sh). That tree is sysroot/, which ./build.sh glibc fills and then
-# copies into rootfs/ for the image, and it holds glibc and nothing else — the same tree
-# CI unpacks the glibc artifact into. It used to be rootfs/ itself, which made a local
-# build compile against our headers for whatever happened to be staged already, where
-# CI's compiled against Debian's. SYSROOT_DIR points it elsewhere. So glibc has to be
-# built before anything else:
+# builder/build-package.sh). That tree is glibc's own staging tree, staging/glibc/rootfs,
+# which holds glibc and nothing else — the same thing CI unpacks the glibc artifact into
+# as sysroot/, and SYSROOT_DIR points it there. It used to be rootfs/ itself, which made
+# a local build compile against our headers for whatever happened to be staged already,
+# where CI's compiled against Debian's. So glibc has to be built before anything else:
 #
 #     ./build.sh glibc && ./build.sh coreutils
 #
-# EXTENSION=<name> in env.sh installs the package into extensions/<name>/ instead of
-# rootfs/: software that belongs in a system extension (docs/sysext.md) rather than in the
-# image. It still compiles against sysroot/ like everything else — the sysroot is a
-# separate mount from the install target — but nothing image/build-rootfs.sh copies ever
-# contains it, so no list of subtractions has to know about it.
+# The install target is staging/<pkg>/rootfs, a tree of this package's files alone, and
+# tools/merge-staging.sh then rebuilds rootfs/ from every package's — so rootfs/ is
+# derived, never installed into, and a rebuilt package replaces its files rather than
+# adding to whatever an older build left behind. The layout is the package's CI artifact,
+# which CI's rootfs job unpacks into staging/ the same way before the same merge.
+#
+# EXTENSION=<name> in env.sh makes the target staging/<pkg>/extensions/<name> instead,
+# merged into extensions/<name>/: software that belongs in a system extension
+# (docs/sysext.md) rather than in the image. It compiles against the same sysroot as
+# everything else, but nothing image/build-rootfs.sh copies ever contains it, so no list
+# of subtractions has to know about it.
 set -euo pipefail
 
 source tools/lib.sh
@@ -50,17 +55,18 @@ PKG_DIR="packages/$PKG"
 load_env "$PKG"
 
 NO_SYSROOT="${NO_SYSROOT:-}"
-SYSROOT_DIR="${SYSROOT_DIR:-sysroot}"
-DEST_DIR=rootfs
-[ -z "${EXTENSION:-}" ] || DEST_DIR="extensions/$EXTENSION"
-# glibc is what fills the sysroot: it installs into a fresh sysroot/, so that tree is
-# exactly glibc, and is copied into rootfs/ after the build. Always ./sysroot rather than
-# $SYSROOT_DIR, which names what other packages read — test/reproducible.sh points that
-# at one shared tree while each of its worktrees builds glibc into its own.
-if [ "$PKG" = glibc ]; then
-    DEST_DIR=sysroot
-    rm -rf "$DEST_DIR" 2>/dev/null || podman unshare rm -rf "$DEST_DIR"
-fi
+SYSROOT_DIR="${SYSROOT_DIR:-staging/glibc/rootfs}"
+
+# Built into a scratch tree and moved into place only once the build has succeeded, so a
+# failed build leaves the previous one staged — rather than an empty tree, and an image
+# that has silently lost the package at the next merge. Files in it belong to the
+# container's users, hence the podman unshare fallback, as in tools/clean.sh.
+STAGE="staging/$PKG"
+BUILDING="staging/.building-$PKG"
+as_owner() { "$@" 2>/dev/null || podman unshare "$@"; }
+as_owner rm -rf "$BUILDING"
+DEST_DIR="$BUILDING/rootfs"
+[ -z "${EXTENSION:-}" ] || DEST_DIR="$BUILDING/extensions/$EXTENSION"
 mkdir -p "$DEST_DIR"
 
 # glibc itself is what fills the sysroot, and the kernel is freestanding — neither has
@@ -71,7 +77,7 @@ if [ -z "$NO_SYSROOT" ]; then
         echo "error: no glibc in the sysroot ($SYSROOT_DIR/usr/lib/libc.so.6 is missing)" >&2
         echo "       packages are compiled against our own glibc, so build it first:" >&2
         echo "           ./build.sh glibc" >&2
-        echo "       (a checkout from before sysroot/ existed has glibc in rootfs/ only, and" >&2
+        echo "       (a checkout from before staging/ existed has glibc in rootfs/ only, and" >&2
         echo "       needs this once; or set NO_SYSROOT=1 to compile against the builder" >&2
         echo "       image's glibc)" >&2
         exit 1
@@ -83,7 +89,7 @@ if [ -z "$NO_SYSROOT" ]; then
                    --env SYSROOT=/usr/local/sysroot)
 fi
 
-mkdir -p rootfs output
+mkdir -p output
 
 # Pull or build the one image everything compiles in, and fetch the sources — the only
 # two steps here that need the network. Its output is two lines and it is the only place
@@ -217,9 +223,6 @@ podman run --rm \
     "${component_env[@]}" \
     "$BUILDER" /build.sh
 
-# The image takes glibc from rootfs/ like everything else; sysroot/ is only what the
-# other packages compile against. cp -a over the merged-/usr symlinks replaces each with
-# the same link, so this is safe on a tree that already has them.
-if [ "$PKG" = glibc ]; then
-    cp -a sysroot/. rootfs/ 2>/dev/null || podman unshare cp -a sysroot/. rootfs/
-fi
+as_owner rm -rf "$STAGE"
+mv "$BUILDING" "$STAGE"
+./tools/merge-staging.sh

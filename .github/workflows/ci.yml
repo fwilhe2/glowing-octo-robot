@@ -306,29 +306,22 @@ jobs:
           pattern: package-*-${{ matrix.arch }}
           path: artifacts
 
-      # In sorted order, and only after checking that no two packages install the same
-      # file: when two do, the image gets whichever was unpacked last, and `find` lists in
-      # the order of the runner's filesystem. That is a different image from the same
-      # packages for no reason anybody chose — e2fsprogs and util-linux both shipped
-      # /usr/bin/fsck until this check existed.
+      # Each artifact into staging/<pkg>/ — exactly the tree build.sh leaves locally — and
+      # then the merge a local build runs too, so the collision check and the sorted order
+      # are one script rather than a copy here: when two packages install the same file,
+      # the image gets whichever was copied last, which is a different image for no reason
+      # anybody chose. e2fsprogs and util-linux both shipped /usr/bin/fsck until this
+      # check existed.
       - &unpack-packages
         name: Unpack the packages
         run: |
-          find artifacts -name '*.tar' | sort > tars
-          dups=$(while read -r t; do tar tf "$t" | grep -v '/$' | sed "s|\$| $(basename "$t" .tar)|"; done < tars |
-                 sort | awk '{ n[$1]++; p[$1] = p[$1] " " $2 } END { for (f in n) if (n[f] > 1) print f ":" p[f] }')
-          # Directory symlinks (bin -> usr/bin and friends) are the merged-/usr skeleton
-          # every package stages identically, in rootfs/ or in an extension's tree;
-          # anything else is a real collision.
-          dups=$(grep -vE '^(rootfs|extensions/[^/]+)/(bin|lib|lib64|sbin|usr/sbin):' <<< "$dups" || true)
-          if [ -n "$dups" ]; then
-              echo "error: more than one package installs these files:"
-              echo "$dups"
-              exit 1
-          fi
           # -p, so modes arrive as packaged: an unprivileged tar otherwise drops setuid
           # and setgid bits, which once made this image differ from a local build.
-          while read -r t; do tar xpf "$t"; done < tars
+          find artifacts -name '*.tar' | sort | while read -r t; do
+              mkdir -p "staging/$(basename "$t" .tar)"
+              tar xpf "$t" -C "staging/$(basename "$t" .tar)"
+          done
+          ./tools/merge-staging.sh
 
       - name: Display structure of downloaded files
         run: find rootfs

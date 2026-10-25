@@ -13,7 +13,7 @@
 # the run built. Needs gh.
 #
 # "From nothing" is the point. Each build gets its own git worktree of HEAD — so a fresh
-# extraction of the tarball and an empty rootfs/ for DESTDIR — because a second build in
+# extraction of the tarball and an empty staging tree for DESTDIR — because a second build in
 # the same source tree is mostly `make` deciding there is nothing to do, and would agree
 # with the first for the wrong reason. Committed state only, for the same reason: the
 # worktree is HEAD, not whatever is uncommitted here.
@@ -23,8 +23,8 @@
 # to SOURCE_DATE_EPOCH, so a staged file's own timestamp never reaches an image, and
 # including it would fail every package for a difference nothing ships.
 #
-# Packages compile against SYSROOT_DIR (default sysroot/, the glibc-only tree
-# ./build.sh glibc fills), read-only, exactly as CI's build matrix does against its own.
+# Packages compile against SYSROOT_DIR (default staging/glibc/rootfs, the glibc-only tree
+# ./build.sh glibc stages), read-only, exactly as CI's build matrix does against its own.
 # Both builds see the same one, so it cannot be the difference — and it has to be
 # glibc-only for AGAINST_RUN to mean anything, since CI's has nothing else in it.
 set -euo pipefail
@@ -46,21 +46,23 @@ if [ -n "${AGAINST_RUN:-}" ]; then
     }
 fi
 
-# A CI package artifact, unpacked: <pkg>.tar holding rootfs/..., as
-# .github/actions/build-package writes it. Unpacked as ourselves, so its files are owned
-# by the same uid the container's root maps to here, which is what the runner's were.
+# A CI package artifact, unpacked: <pkg>.tar holding rootfs/... or extensions/<name>/...,
+# as .github/actions/build-package writes it — the same layout as the staging/<pkg>/ a
+# local build leaves, which is what it is compared with. Unpacked as ourselves, so its
+# files are owned by the same uid the container's root maps to here, which is what the
+# runner's were.
 ci_tree() { # pkg dest
     rm -rf "$2.dl" "$2" && mkdir -p "$2"
     gh run download "$AGAINST_RUN" -n "package-$1-$arch" -D "$2.dl" >/dev/null
-    tar xpf "$2.dl/$1.tar" -C "$2" --strip-components=1
+    tar xpf "$2.dl/$1.tar" -C "$2"
     rm -rf "$2.dl"
 }
 
 if [ -n "${AGAINST_RUN:-}" ]; then
     ci_tree glibc "$work/ci-sysroot"
-    sysroot="$work/ci-sysroot"
+    sysroot="$work/ci-sysroot/rootfs"
 else
-    sysroot=$(realpath "${SYSROOT_DIR:-sysroot}")
+    sysroot=$(realpath "${SYSROOT_DIR:-staging/glibc/rootfs}")
 fi
 
 # Staged files belong to the build container's root, which is a subuid out here, so
@@ -70,7 +72,7 @@ in_ns() { podman unshare "$@"; }
 cleanup_tree() {
     local wt=$1
     [ -d "$wt" ] || return 0
-    in_ns rm -rf "$wt/rootfs" "$wt/packages" 2>/dev/null || true
+    in_ns rm -rf "$wt/rootfs" "$wt/extensions" "$wt/staging" "$wt/packages" 2>/dev/null || true
     git worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"
 }
 
@@ -111,7 +113,9 @@ for pkg in "$@"; do
             failed+=("$pkg")
             continue 2
         fi
-        manifest "$wt/rootfs" > "$work/$pkg-$run.manifest"
+        # The package's own staging tree, not the merged rootfs/: an EXTENSION= package's
+        # files are under extensions/, and comparing rootfs/ compared nothing for those.
+        manifest "$wt/staging/$pkg" > "$work/$pkg-$run.manifest"
     done
 
     if cmp -s "$work/$pkg-1.manifest" "$work/$pkg-2.manifest"; then
