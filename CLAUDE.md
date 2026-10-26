@@ -1121,9 +1121,7 @@ make that safe.** `packages/kernel/env.sh` proposes only point releases — x.y.
   lock file, on purpose: a lock either blocks every bump until somebody accepts it, or
   goes stale the first time it does not — and an unattended kernel is the point.
 
-`tools/fetch-image.sh` / `tools/boot-qemu.sh` are for poking at CI artifacts locally. The `rootfs-dir`
-CI artifact is lossy (`upload-artifact` dereferences symlinks); never rebuild a bootable
-image from it — `output/rootfs.erofs` is the real output.
+`tools/fetch-image.sh` / `tools/boot-qemu.sh` are for poking at CI artifacts locally.
 
 ## Reproducible builds
 

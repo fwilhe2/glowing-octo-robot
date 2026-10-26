@@ -1,28 +1,9 @@
 name: CI
 on:
-  # Everything below this line compiles 36 packages on two architectures and boots the
-  # result four times on each, and not one step of it reads a markdown file: the build
-  # context is builder/ and image/ (see .containerignore), and the only documentation
-  # that ends up in an image is generated. A push that touches nothing but prose has
-  # nothing here to verify, and running the workflow anyway spends an hour of runner
-  # time proving that a sentence was rewritten.
-  #
-  # paths-ignore is all-or-nothing over the files a push changed, which is the safe
-  # direction: a commit touching both a doc and a build.sh runs everything. The patterns
-  # are deliberately narrow. `*.md` is the two at the repository root, README.md and
-  # CLAUDE.md — not `**.md`, because image/files is COPYied into the assembly container
-  # and a markdown file added under there would be part of an image rather than part of
-  # the prose about one.
-  #
-  # The cost is that a docs-only pull request gets no check run from this workflow at
-  # all: filtered out is not the same as passing, it is absent. Nothing depends on that
-  # today — main has no branch protection and no rulesets, so no check is required — and
-  # licenses.yml is unfiltered, so such a pull request still reports something. If
-  # required checks are ever turned on, this has to become a path filter feeding a
-  # per-job `if:` instead, or merging a typo fix will block forever on a check that
-  # never reports.
-  #
-  # workflow_dispatch stays unfiltered, so a run can always be forced by hand.
+  # Prose-only pushes are skipped: nothing here reads a markdown file. Only the root
+  # *.md, not **.md, because image/files is copied into the image. A docs-only pull
+  # request therefore gets no check from this workflow; if checks ever become required,
+  # this has to become a per-job `if:` instead.
   push:
     paths-ignore:
       - 'docs/**'
@@ -49,32 +30,14 @@ on:
 permissions:
   pull-requests: write
 
-# Every job below is matrixed on arch (amd64/arm64) and runs on a runner native to that
-# arch — nothing here cross-compiles, so a native runner is what makes `make defconfig`,
-# `gcc -print-multiarch` and friends pick the right target on their own (see
-# packages/kernel/build.sh, image/build-rootfs.sh). The runner is derived from the arch
-# once, in the `&runner` anchor on the builder job, and every per-arch job aliases it;
-# `ubuntu-26.04-arm` is the GitHub-hosted arm64 label as of this writing — adjust it there
-# if your plan/org exposes it under a different name or you're pointing this at
-# self-hosted arm64 runners instead.
+# Every per-arch job runs on a native runner (nothing cross-compiles), chosen once in the
+# `&runner` anchor. `needs:` waits for both arches of a job, which costs some wall-clock
+# time and saves duplicating every job per arch.
 #
-# `needs:` is a job-level dependency, not a matrix-aware one: e.g. `rootfs`'s `needs:
-# [build, kernel]` waits for *both* arches of `build` and `kernel` to finish before
-# *either* arch of `rootfs` starts, even though rootfs-amd64 only actually needs
-# build-amd64 and kernel-amd64. That costs a little wall-clock time but keeps the
-# workflow from having to duplicate every job definition per arch.
-
-# Prep is the only place in this workflow that is allowed to reach the internet. It
-# publishes the two images every job below consumes, both tagged by content hash
-# (tools/image-tags.sh), so a tag that already exists in the registry is pulled rather
-# than rebuilt and an unchanged dependency list costs one HEAD request. Every build job
-# after this runs its compile with --network=none. See docs/build-container.md.
+# The builder and sources jobs are the only ones that reach the internet. Both images are
+# tagged by content hash (tools/image-tags.sh): an existing tag is pulled, not rebuilt.
 jobs:
-  # One per architecture: the toolchain is compiled software and nothing here
-  # cross-compiles, so the tag carries the arch and each native runner pushes its own.
   builder:
-    # Anchored here and aliased by every per-arch job below: the runner follows from the
-    # arch, so the matrix is just the arch.
     runs-on: &runner ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
     permissions:
       contents: read
@@ -90,17 +53,8 @@ jobs:
         name: Collect Workflow Telemetry
         uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
         with:
-          # Text rather than mermaid, which is about the run summary page and
-          # not about any one job. GitHub renders every mermaid block in its own
-          # sandboxed iframe against viewscreen.githubusercontent.com, and the
-          # run page concatenates all 77 jobs' summaries: at ~11 blocks a job
-          # that is ~860 iframes on one page, which no browser stays responsive
-          # through. Sparklines in a markdown table cost the page nothing and
-          # carry the same shape, peak and mean at lower resolution.
-          #
-          # Every other job aliases this step for that one reason — the cost
-          # is the page they share, so they share the setting. The build
-          # matrix spells it out, adding to it.
+          # Not mermaid: the run page concatenates every job's summary and renders
+          # each mermaid block in its own iframe, hundreds of them.
           charts: sparkline
 
       - name: Log in to ghcr.io
@@ -112,9 +66,7 @@ jobs:
           # too, and every package job rebuilding the builder for itself is not the point.
           FRESH: &fresh-env ${{ (github.event_name == 'schedule' || inputs.fresh == true) && '1' || '' }}
 
-  # Once for both architectures: the tarballs are the same bytes either way, so this is a
-  # manifest list built from a single COPY rather than 450 MB stored twice. It is also
-  # the copy of upstream that outlives upstream — see the doc.
+  # Once for both architectures: the tarballs are the same bytes either way.
   sources:
     runs-on: ubuntu-26.04
     permissions:
@@ -134,8 +86,7 @@ jobs:
         env:
           FRESH: *fresh-env
 
-      # The build matrix, as JSON. Here rather than in a job of its own because this one
-      # already runs first and every build job already waits for it.
+      # The build matrix, as JSON.
       - name: List the packages the build matrix compiles
         id: packages
         run: |
@@ -144,9 +95,8 @@ jobs:
               if [ -z "$(env_get "$pkg" NO_SYSROOT)" ]; then echo "$pkg"; fi
           done | jq -Rnc '[inputs]' | sed 's/^/json=/' >> "$GITHUB_OUTPUT"
 
-  # Everything else is compiled against this glibc rather than the Debian builder's, so
-  # it has to be staged before the matrix below can start. The kernel is the exception:
-  # it links no libc at all, so it runs alongside instead of queueing behind.
+  # Everything else compiles against this glibc. The kernel links no libc, so it runs
+  # alongside.
   glibc:
     runs-on: *runner
     permissions:
@@ -195,16 +145,10 @@ jobs:
           arch: ${{ matrix.arch }}
           fresh: *fresh
 
-      # What this branch's kernel builds in that main's does not, and the reverse. The kernel
-      # follows the latest stable release rather than a pinned series, and the fragments in
-      # packages/kernel/build.sh only constrain the symbols they name — a new `default y`
-      # driver arrives with a bump and nothing fails. This makes it visible on the pull
-      # request instead, where the 24 hours before auto-merge are the time to clear it in
-      # vm.config or label the pull request `hold`. A report, so it never fails the job.
-      #
-      # Only when the kernel was compiled: the source tree it reads Kconfig from is there
-      # only then, and a cache hit is a kernel some earlier run already built. The baseline
-      # is the kernel artifact of main's last green run, the kernel that is shipping.
+      # What this kernel builds in that main's last green one does not, and the reverse,
+      # posted on the pull request: a new `default y` driver arrives with a bump and
+      # fails nothing. A report, never a failure. Only when the kernel was compiled,
+      # since it needs the source tree.
       - name: Report the kernel config against main
         if: github.ref != 'refs/heads/main'
         continue-on-error: true
@@ -252,9 +196,7 @@ jobs:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
-        # Every packages/<pkg> except the NO_SYSROOT ones (glibc and the kernel, which have
-        # jobs of their own above), listed by the sources job. Adding a package is its two
-        # files; nothing here has to be told.
+        # Every package except glibc and the kernel, listed by the sources job.
         package: ${{ fromJSON(needs.sources.outputs.packages) }}
 
     steps:
@@ -264,30 +206,9 @@ jobs:
         uses: fwilhe2/workflow-telemetry-action@787d6e6911130a9858caf1b54e443b1bd438b383 # v3.2.0
         with:
           charts: sparkline # see the builder job
-
-          # This matrix is 66 jobs a run and usually hits its build cache,
-          # so the median job is ~16s. Installing forkstat for a process
-          # trace costs about 5s of that, and a trace of a cache hit says
-          # nothing. Resource metrics need no setup and still get collected.
-          # The long jobs (kernel, glibc, boot, rootfs) keep full tracing.
+          # Most of these jobs are cache hits of a few seconds, where a process
+          # trace costs a third of the job and a summary says nothing.
           proc_trace_enable: false
-
-          # And the summary those metrics would be written to is dropped, which
-          # is about the run page rather than about this job. Every mermaid
-          # block the action emits becomes its own iframe against
-          # viewscreen.githubusercontent.com, and the run summary page
-          # concatenates all 77 jobs' summaries: at ~11 blocks each that is
-          # ~860 iframes on one page, which no browser stays responsive
-          # through. Dropping the 66 jobs that have the least to say leaves
-          # ~130 — the builder, sources, glibc, kernel, rootfs and boot jobs,
-          # where the numbers are worth having.
-          #
-          # This is a stopgap and should not outlive its cause. Nothing here
-          # consumes the metrics once the summary is off, so these jobs now
-          # collect and discard them. The fix is upstream in the action, which
-          # is being taught to render the same data as text — sparklines in a
-          # markdown table, no iframes at all — at which point this line comes
-          # back out and the pin moves instead.
           job_summary: false
 
       - name: Log in to ghcr.io
@@ -301,15 +222,8 @@ jobs:
 
   rootfs:
     runs-on: *runner
-    # Spelled out because the "Image size over time" step reads the size artifact from
-    # *previous* runs, and `actions: read` is what lets the job's token list and download
-    # them. Same-run artifacts need none of this — actions/download-artifact uses the
-    # runtime token for those, which is why this job managed without a block until now.
-    #
-    # pull-requests: write is not new and not this step's: it is what the job inherited
-    # from the workflow-level default, and naming a block here replaces that default
-    # rather than adding to it. The telemetry action comments on the pull request, so
-    # dropping it would have turned this into a silent change to something else.
+    # actions: read for size-history.sh, which reads earlier runs' artifacts. Naming a
+    # block replaces the workflow default, so pull-requests: write (telemetry) is repeated.
     permissions:
       contents: read
       actions: read
@@ -323,61 +237,36 @@ jobs:
 
       - *telemetry
 
-      # Only this arch's packages: every package-<name>-<arch> artifact this run
-      # produced matches the pattern, which is glibc, kernel and the whole build
-      # matrix — the same set the old unfiltered download pulled in, just scoped to one
-      # arch instead of grabbing the other arch's (mutually useless) binaries too.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: package-*-${{ matrix.arch }}
           path: artifacts
 
-      # Each artifact into staging/<pkg>/ — exactly the tree build.sh leaves locally — and
-      # then the merge a local build runs too, so the collision check and the sorted order
-      # are one script rather than a copy here: when two packages install the same file,
-      # the image gets whichever was copied last, which is a different image for no reason
-      # anybody chose. e2fsprogs and util-linux both shipped /usr/bin/fsck until this
-      # check existed.
+      # Each artifact into staging/<pkg>/, as a local build leaves it, then the same merge.
       - &unpack-packages
         name: Unpack the packages
         run: |
-          # -p, so modes arrive as packaged: an unprivileged tar otherwise drops setuid
-          # and setgid bits, which once made this image differ from a local build.
+          # -p: modes as packaged.
           find artifacts -name '*.tar' | sort | while read -r t; do
               mkdir -p "staging/$(basename "$t" .tar)"
               tar xpf "$t" -C "staging/$(basename "$t" .tar)"
           done
           ./tools/merge-staging.sh
 
-      - name: Display structure of downloaded files
-        run: find rootfs
-
-      # Packages are compiled against the Debian builder's libraries, so a missing
-      # runtime dependency is invisible until the binary is exec'd in qemu.
+      # Static checks; each is cheaper than finding the same thing in qemu.
       - name: Check for unresolved library dependencies
         run: ./test/check-rootfs-deps.sh rootfs
 
-      # And a library that is present can still be the wrong one: this is what proves
-      # the packages were built against our glibc and not the builder image's.
       - name: Check for unsatisfied symbol versions
         run: ./test/check-symbol-versions.sh rootfs
 
-      # ...and the unversioned half of that question, which is the builder coupling: a
-      # package compiled against a sid header newer than the library we ship calls a
-      # function ours lacks. glib, json-c and pcre2 have no symbol versions for the
-      # check above to hold against them. See docs/linking.md.
       - name: Check every symbol resolves
         run: ./test/check-symbol-resolution.sh rootfs
 
-      # Cheap, and it names the missing feature. test/container.sh proves a container
-      # actually runs, but only after four minutes of qemu and only as "crun exited 1".
       - name: Check the kernel can run containers
         run: ./test/kernel-caps.sh rootfs
 
-      # The same two library checks for what the extensions add, against what the guest
-      # will see: the base with each extension's /usr merged over it. crio is the one that
-      # links (libseccomp, through cgo); a library the base does not ship, or a symbol
-      # version it does not define, would be a node whose runtime cannot start.
+      # The same library checks for each extension merged over the base, as a guest sees it.
       - name: Check the extensions' libraries against the base
         run: |
           for ext in extensions/*/; do
@@ -391,45 +280,27 @@ jobs:
               rm -rf "$merged"
           done
 
-      # Both outputs of the same staging tree — the disk image, and the same userspace with
-      # the kernel and systemd taken back out as an OCI image — assembled by the same
-      # script a local build uses, so the two cannot drift apart. FLFS_BUILD is the
-      # checked-out commit, which is $GITHUB_SHA.
       - name: Create disk and OCI images
         run: ./tools/build-image.sh --image-only
 
-      # Loading it proves the hand-written OCI layout is well formed, and running it is
-      # the only check in this job that executes a binary we shipped. It is not a
-      # substitute for the boot job below: the container runs on the runner's kernel.
       - name: Run the OCI image
         run: FLFS_BUILD="$GITHUB_SHA" ./test/oci.sh output/flfs-oci.tar
 
-      # Binaries built by the runner's own gcc, g++, rustc and go, run in the image: the
-      # one check here of something this repository did not compile. It is what says
-      # libgcc_s, libstdc++ and zoneinfo are present and usable, which nothing that
-      # links against our sysroot would ever ask for. The runner images carry all four
-      # compilers; the script fails under CI if one has gone missing.
+      # Binaries built by the runner's gcc, g++, rustc and go: libgcc_s, libstdc++ and
+      # zoneinfo, which nothing compiled here asks for.
       - name: Run binaries built elsewhere
         run: |
           ./test/prebuilt.sh build output/prebuilt
           ./test/prebuilt.sh oci output/prebuilt output/flfs-oci.tar
 
-      # The same binaries, for the boot job to run in the guest: compiled once, so that
-      # both flavours are tested with the same bytes.
+      # The same bytes, for the boot job to run in the guest.
       - name: Upload binaries built elsewhere
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: prebuilt-${{ matrix.arch }}
           path: output/prebuilt
 
-      - name: Upload rootfs
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: rootfs-dir-${{ matrix.arch }}
-          path: rootfs
-
-      # A few hundred bytes each, kept so two runs can be diffed directly rather than
-      # through two job summaries.
+      # Read back by size-history.sh in later runs.
       - name: Upload size reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -437,12 +308,7 @@ jobs:
           name: rootfs-size-${{ matrix.arch }}
           path: output/rootfs-size-*.txt
 
-      # image/build-rootfs.sh writes the SBOM by hand — there is no JSON serialiser in
-      # image/Containerfile and adding one to emit thirty string fields would be the same
-      # trade the OCI assembly already declined. That is only sound if something proves
-      # the result parses, and this is where a JSON parser exists. It is also what makes
-      # issue #75's "CI fails if it cannot be produced" true rather than aspirational, so
-      # it is deliberately *not* continue-on-error.
+      # The SBOM is hand-written JSON; this is where a parser exists.
       - name: Check the SBOM
         run: ./test/check-sbom.sh
 
@@ -453,16 +319,8 @@ jobs:
           name: sbom-${{ matrix.arch }}
           path: output/sbom-*.json
 
-      # Last, deliberately: every other check in this job asks whether the image works,
-      # and a bigger one works fine right up until it doesn't fit. These ask how big each
-      # got, against ceilings in test/size-budget.txt that have to be raised on purpose.
-      # They run after the uploads so that failing one still leaves the images and the
-      # breakdowns to look at, and they put those breakdowns in the job summary, which is
-      # where "what grew?" gets answered.
-      #
-      # The disk first, being the real output of this repo — and `always()` on the second
-      # so that an overage in the first still reports the other image's number rather than
-      # hiding it until the next run.
+      # Size checks last, after the uploads, so a failure still leaves everything to look
+      # at; `always()` so one overage does not hide the others.
       - name: Measure the disk image
         run: ./test/rootfs-size.sh erofs
 
@@ -470,28 +328,11 @@ jobs:
         if: always()
         run: ./test/rootfs-size.sh oci
 
-      # And the same question asked from outside: the budget above is a number we chose,
-      # this one is the base image somebody would use instead. Exceeding it is a failure
-      # with no number to raise — see the script.
       - name: Compare the OCI image against debian-slim
         if: always()
         run: ARCH=${{ matrix.arch }} ./test/vs-debian-slim.sh
 
-      # ...and then which way it is going, which the two steps above cannot say. A ceiling
-      # fires once, after the growth has happened and usually some commits after the one
-      # that caused it; this plots the last dozen builds on main and says what this one did
-      # to the number, per flavour and per directory.
-      #
-      # `always()`, and emphatically so: the run where the budget check just failed is the
-      # one where "which commit, and which directory" is worth most, and a step that only
-      # reports on success would be silent exactly then.
-      #
-      # It reads the rootfs-size-<arch> artifact the step above already uploads, from past
-      # runs — so there is no new state anywhere, and the history reaches exactly as far
-      # back as artifact retention. `continue-on-error` because this is telemetry and
-      # test/rootfs-size.sh is the enforcement: a summary that could fail a build would be
-      # a bad trade. The script also declines rather than fails on its own, so this is
-      # belt and braces.
+      # The trend over the last builds on main. Telemetry, so it never fails the job.
       - name: Image size over time
         if: always()
         continue-on-error: true
@@ -503,8 +344,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rootfs.erofs-${{ matrix.arch }}
-          # The image and the kernel arguments that carry its dm-verity root hash: neither
-          # boots without the other.
+          # The image and the command line carrying its root hash: neither boots alone.
           path: |
             output/rootfs.erofs
             output/rootfs.cmdline
@@ -515,9 +355,6 @@ jobs:
           name: oci-image-${{ matrix.arch }}
           path: output/flfs-oci.tar
 
-      # The system extensions, as a guest would get them: extensions/<name>.raw and
-      # confexts/<name>.raw, the layout of /var/lib (docs/sysext.md). The k8s job boots
-      # the kubernetes pair, and tools/fetch-image.sh puts it next to the image.
       - name: Upload system extensions
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -526,8 +363,7 @@ jobs:
             output/extensions
             output/confexts
 
-  # Rebuild the same outputs on the same architecture while boot and k8s validate the
-  # images. This stays a required gate, but no longer holds up rootfs artifact delivery.
+  # Assemble the images a second time and require the same bytes.
   reproducible:
     runs-on: *runner
     permissions:
@@ -568,7 +404,6 @@ jobs:
 
       - *unpack-packages
 
-      # Compare every image output, including extension images and generated SBOMs.
       - name: Check the images are reproducible
         run: |
           outputs="output/rootfs.erofs output/rootfs.cmdline output/flfs-oci.tar output/sbom-erofs.json output/sbom-oci.json"
@@ -577,8 +412,6 @@ jobs:
           ./tools/build-image.sh --image-only > second-build.log 2>&1 || { tail -50 second-build.log; exit 1; }
           sha256sum --check first.sha256
 
-  # An image that builds and resolves all its libraries can still fail to boot, so
-  # actually boot it: the kernel we build is in rootfs/boot/bzImage.
   boot:
     runs-on: *runner
     needs:
@@ -594,16 +427,12 @@ jobs:
           name: rootfs.erofs-${{ matrix.arch }}
           path: artifacts
 
-      # Next to the image, where test/qemu-lib.sh looks for SYSEXTS: podman is an
-      # extension, and the podman, rootless and persistent-/var tests attach it; debug is
-      # one too, and test/debug.sh attaches that.
+      # Next to the image, where test/qemu-lib.sh looks for SYSEXTS.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: extensions-${{ matrix.arch }}
           path: artifacts
 
-      # Just the kernel package, not the whole assembled rootfs artifact: the image is
-      # already in artifacts/rootfs.erofs and qemu only needs the bzImage next to it.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: package-kernel-${{ matrix.arch }}
@@ -616,15 +445,8 @@ jobs:
           name: prebuilt-${{ matrix.arch }}
           path: artifacts/prebuilt
 
-      # test/*.sh pick the qemu binary, machine type and console device to match the
-      # runner's own arch on their own (see test/boot.sh); the only thing this step
-      # has to get right is installing the package that ships that binary. qemu-system-
-      # arm is Debian/Ubuntu's name for the package that provides qemu-system-aarch64,
-      # not a typo.
-      #
-      # virtiofsd and socat are test/vmm.sh's host half of virtiofs and vsock, and vsock
-      # also needs the host's vhost_vsock module and a device the runner user can open.
-      # The test skips either part, with a note, where the host cannot provide it.
+      # qemu-system-arm is the package with qemu-system-aarch64. virtiofsd, socat and
+      # vhost_vsock are test/vmm.sh's, which skips what the host cannot provide.
       - name: Install qemu
         run: |
           sudo apt-get update
@@ -639,78 +461,36 @@ jobs:
       - name: Boot the image
         run: ./test/boot.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
-      # The same image with one byte changed, which has to be refused: the boot above
-      # shows dm-verity accepts the image it was built for, this that it rejects anything
-      # else. The byte is one EROFS never reads, so only verity can be what noticed.
       - name: Check that dm-verity refuses a tampered image
         run: ./test/verity.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
-      # A second boot, this one all the way into systemd, asking whether systemd is happy
-      # with itself: a package that ships a unit it cannot run leaves every boot
-      # `degraded`, and nothing above notices. It also runs flfsfetch on the shell it
-      # already has, which is the only time CI executes a shipped binary that is not on
-      # systemd's or login's critical path — and prints the result, which is the point.
       - name: Check for failed units, and say hello
         run: ./test/systemd.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
-      # A third boot: networkd has to configure the NIC, resolved has to answer, and the
-      # guest has to reach the outside world.
       - name: Check networking
         run: ./test/network.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
-      # A fourth, which logs into the guest over ssh: once from inside the guest to itself,
-      # then from the runner through tools/ssh.sh and the ephemeral key qemu_ssh_setup
-      # hands the guest at boot. sshd is the first thing this image ever listens on and
-      # nothing above would notice it refusing every connection — test/systemd.sh only
-      # asks whether the unit *started*.
-      #
-      # Logged in, it also runs the rootfs job's test/prebuilt.sh binaries in the guest:
-      # the OCI run there tested the container flavour, this tests the disk.
       - name: Check ssh, and binaries built elsewhere
         run: PREBUILT=artifacts/prebuilt ./test/ssh.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
-      # And a fifth, which starts an actual container: the kernel's container.config
-      # fragment and crun are only useful together, and nothing above this exercises
-      # either of them.
       - name: Check containers
         run: ./test/container.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
-      # And the engine on top: podman's own report of what it was built with, a container
-      # with seccomp applied, DNS and TCP from inside one through netavark, and a Quadlet
-      # file becoming a running unit. The image is imported in the guest rather than
-      # pulled, so this does not depend on a registry's rate limits.
       - name: Check podman
         run: ./test/podman.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
-      # Two boots of one VM with a disk for /var: the first has systemd format it and
-      # writes a file, a podman image and a journal; the second has to find all three, and
-      # the same machine ID. Every other boot here runs on the RAM-backed default.
-      # And as the unprivileged user: newuidmap/newgidmap with their file capabilities on
-      # the disk image, a container with the subordinate ID range, and pasta's network.
       - name: Check rootless containers
         run: ./test/rootless.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
       - name: Check a persistent /var
         run: ./test/persistent-var.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
-      # The debug extension, each tool on something real in the guest: a decoded syscall,
-      # a captured packet, systemd's BPF programs, perf trace on the syscall tracepoints
-      # and a kprobe — the last two being the kernel's trace.config as much as perf.
       - name: Check the debug extension
         run: ./test/debug.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
-      # Software added without changing the image: a system and a configuration extension
-      # on the /var disk, merged at boot, the unit one ships started and the file the other
-      # ships read; and one built for another SYSEXT_LEVEL, which has to be refused. The
-      # images are made in the image-assembly container (tools/build-extension.sh), so
-      # this builds that from image/Containerfile first.
       - name: Check system extensions
         run: ./test/sysext.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
-      # The shapes of machine the kernel is built for besides qemu's own, which every boot
-      # above uses. Firecracker's: no PCI, virtio over MMIO announced on the command line,
-      # and on amd64 the bzImage's own vmlinux booted through PVH. Virtualization.framework's:
-      # an hvc0 console with no UART behind it, a virtiofs mount, and ssh over vsock.
       - name: Check Firecracker- and Virtualization.framework-shaped boots
         run: ./test/vmm.sh artifacts/rootfs.erofs rootfs/boot/bzImage
 
@@ -721,21 +501,8 @@ jobs:
           name: boot-console-log-${{ matrix.arch }}
           path: output/*.log
 
-  # A three-node Kubernetes cluster from the image and its kubernetes system extension
-  # (test/k8s.sh, through tools/k8s-demo.sh): the extension merged at boot from each
-  # node's /var disk, kubeadm init and join, CRI-O on the image's crun, a Service answered
-  # from pods on more than one node. What it holds the image to is everything a node
-  # needs from it — kubeadm's preflight accepting the kernel config, kube-proxy starting
-  # with its hostPath /lib/modules, kubeadm writing /etc/kubernetes through the
-  # extension's link into /var — with no workaround for any of it.
-  #
-  # A job of its own rather than more of `boot`, for two reasons. It needs KVM, which
-  # the boot tests do without: three guests running a control plane under emulation
-  # take long enough that a timeout would say nothing about the image. GitHub's x86
-  # runners have /dev/kvm but not for the runner user, which the udev rule below fixes;
-  # where there is none at all the test skips with a note. And it depends on
-  # registry.k8s.io for the control plane's images, so `publish-oci` does not wait on it:
-  # a registry outage is not a reason to hold back an image every other test passed.
+  # A three-node kubeadm cluster (test/k8s.sh). Its own job because it needs KVM (it
+  # skips without), and nothing waits on it, since it depends on registry.k8s.io.
   k8s:
     runs-on: *runner
     needs:
@@ -751,7 +518,6 @@ jobs:
           name: rootfs.erofs-${{ matrix.arch }}
           path: artifacts
 
-      # Next to the image, which is where tools/k8s-demo.sh looks for the pair.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: extensions-${{ matrix.arch }}
@@ -790,19 +556,9 @@ jobs:
           path: output/*.log
           if-no-files-found: ignore
 
-  # The container image, published where it can be pulled from rather than only attached
-  # to a run as an artifact. One job rather than a push step in each `rootfs` matrix leg,
-  # because the useful thing to publish is a *manifest list* covering both architectures,
-  # and that can only be assembled once both exist. Loading and pushing a foreign-arch
-  # image needs no emulation — nothing here runs it — so this can be one amd64 runner.
-  #
-  # `needs: boot`, not `needs: rootfs`: the OCI and EROFS images are the same userspace
-  # out of the same staging tree, so the boot job failing means the thing about to be
-  # published is broken, whatever test/oci.sh made of it in isolation.
-  #
-  # Only on main. The per-arch tags are commit-scoped and would be harmless from a
-  # branch, but `latest` is a name with one holder, and a branch build taking it is how
-  # `podman pull` starts serving something nobody merged.
+  # Both architectures as one manifest list, so one job once both exist. After boot: the
+  # OCI image is the same userspace as the disk. Only on main, because `latest` has one
+  # holder.
   publish-oci:
     runs-on: ubuntu-26.04
     needs:
@@ -815,8 +571,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Both, unmerged: tools/publish-oci.sh reads them at the per-artifact paths this
-      # leaves behind, artifacts/oci-image-<arch>/flfs-oci.tar.
+      # tools/publish-oci.sh reads artifacts/oci-image-<arch>/flfs-oci.tar.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: oci-image-*

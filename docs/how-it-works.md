@@ -291,10 +291,6 @@ example), never by build order.
 Those files belong to the container's root, which is a sub-UID on the host. Use
 `podman unshare rm -rf …`.
 
-**Don't rebuild an image from the `rootfs-dir` CI artifact.**
-`upload-artifact` follows symlinks, so the merged-`/usr` links are lost. Use
-`rootfs.erofs` from CI, or build locally.
-
 ### Image and kernel
 
 **A change to `image/files/` does not show up.**

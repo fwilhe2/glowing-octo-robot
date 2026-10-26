@@ -60,9 +60,8 @@ find "$ROOT" -type f -print0 \
 find "$ROOT" -type l -printf '===LINK=== %f %l\n' > "$work/links"
 
 # Allowlist entries are "<soname> <symbol>", # comments — the SONAME rather than a path,
-# so an entry holds wherever the library is found (the rootfs-dir CI artifact, which
-# dereferences symlinks, has libthread_db under three names). An object with no SONAME,
-# a plugin or a program, is named by its file name.
+# so an entry holds wherever the library is found. An object with no SONAME, a plugin or
+# a program, is named by its file name.
 allow=$work/allow
 if [ -f "$ALLOW" ]; then
     sed 's/#.*//' "$ALLOW" | awk 'NF == 2' > "$allow"
