@@ -1,15 +1,8 @@
 #!/usr/bin/env bash
 # The qemu plumbing shared by the boot tests and tools/boot-qemu.sh.
 #
-# Sourced, never executed. The scripts in test/ and one in tools/ all have to launch the
-# same guest — same machine type, same console device, same accel flags, same kernel
-# command line — and four of them then have to drive a serial login. Written out per
-# script that was ~470 lines of identical text, and the failure mode of letting it drift
-# is nasty in a specific way: tools/boot-qemu.sh is what somebody reaches for to debug a
-# boot CI just failed, so a divergence there means debugging a different machine than the
-# one that broke.
-#
-# The caller sets ROOTFS/KERNEL/INIT and whatever else it needs, then:
+# Sourced, never executed, so that debugging a failed boot with tools/boot-qemu.sh boots
+# the same machine CI did. The caller sets ROOTFS/KERNEL/INIT and whatever else it needs, then:
 #
 #   qemu_setup       normalize $ARCH; pick the binary, console device and accel flags
 #   qemu_preflight   refuse now if the binary or the images are missing
@@ -24,24 +17,17 @@
 
 source tools/lib.sh   # normalize_arch
 
-# Defaults every caller shares. ROOTFS, KERNEL and INIT are deliberately not among them:
-# they differ per script and a wrong default there boots the wrong thing quietly.
-TIMEOUT="${TIMEOUT:-300}"   # qemu falls back to TCG in CI, where there is no KVM, and
-MEM="${MEM:-1024}"          # that is slow
+# ROOTFS, KERNEL and INIT have no default: a wrong one boots the wrong thing quietly.
+TIMEOUT="${TIMEOUT:-300}"   # generous: CI has no KVM
+MEM="${MEM:-1024}"
 CPUS="${CPUS:-2}"
 LOGIN_USER="${LOGIN_USER:-root}"
 
 # What a guest looks like on its way out. Matched by await and by test/boot.sh's own loop.
 QEMU_DIED='Kernel panic|Attempted to kill init|Requesting system (poweroff|reboot)'
 
-# Defaults to the host's own architecture — CI runs these on a matching amd64 or arm64
-# runner, so it never has to be told. Override with ARCH=amd64|arm64 to point at the other
-# qemu binary and machine type explicitly. Both uname's spelling (x86_64/aarch64) and this
-# repo's (amd64/arm64) are accepted.
-#
-# QEMU_PROFILE picks the shape of the machine, for the VMMs the kernel is built for
-# (packages/kernel/build.sh, guest.config). qemu is the only one CI can run, so the other
-# two are approximated by the devices they give a guest:
+# ARCH defaults to the host's. QEMU_PROFILE picks the machine's shape, approximating the
+# VMMs the kernel is built for by the devices they give a guest:
 #
 #   pc       qemu's own PCI machine, virtio-pci devices, a UART console. The default, and
 #            what every other test boots.
@@ -61,14 +47,7 @@ qemu_setup() {
         *) echo "error: QEMU_PROFILE=$PROFILE (expected pc, microvm or vz)" >&2; exit 1 ;;
     esac
 
-    # amd64's "pc" machine needs no flag (the cpu does, below); arm64 has no implicit
-    # machine type, so qemu-system-aarch64 refuses to start without one. ttyS0 is the 8250
-    # UART kvm_guest.config/vm.config build in on amd64; arm64's virt board exposes a
-    # PL011 instead, at ttyAMA0 — see packages/kernel/build.sh.
-    #
-    # Use KVM acceleration when available. On arm64 that means naming the machine type and
-    # accel together (-machine virt,accel=kvm) rather than as a separate flag, since virt
-    # isn't optional there the way amd64's implicit pc machine is.
+    # arm64 has no default machine type; its console is the virt board's PL011.
     accel=()
     machine=()
     if [ "$ARCH" = arm64 ]; then
@@ -83,34 +62,25 @@ qemu_setup() {
     else
         QEMU=qemu-system-x86_64
         CONSOLE=ttyS0
-        # -cpu max when emulating, as on arm64, not qemu's default qemu64. That model is
-        # x86-64 baseline, and a binary somebody else built may not be: Ubuntu 26.04's gcc
-        # marks its output as needing x86-64-v3, and glibc refuses such a binary with "CPU
-        # ISA level is lower than required" on a CPU without AVX2. A guest on a real
-        # VMM gets the host's CPU, which is what -cpu host and max both approximate.
+        # -cpu max, not qemu64: Ubuntu 26.04's gcc builds for x86-64-v3, which glibc
+        # refuses to run on a CPU without AVX2.
         if [ -w /dev/kvm ]; then
             accel=(-enable-kvm -cpu host)
         else
             echo "note: /dev/kvm not available, emulating (slow)"
             accel=(-cpu max)
         fi
-        # ACPI off, so the devices are announced on the command line as Firecracker does.
-        # The PIT is named rather than left to qemu's "auto": Firecracker gives an x86 guest
-        # KVM's in-kernel PIT and PIC, and without KVM — CI — a guest without a PIT has no
-        # timer interrupt and hangs at boot after "Unable to calibrate against PIT".
-        # arm64 keeps the virt board, whose device tree already has MMIO transports for the
-        # -device …-device forms qemu_argv uses.
+        # ACPI off, so devices are announced on the command line as Firecracker does.
+        # pit=on: without KVM a guest with no PIT hangs at "Unable to calibrate against
+        # PIT". arm64 keeps the virt board, which has MMIO transports already.
         [ "$PROFILE" != microvm ] ||
             machine=(-machine microvm,acpi=off,pit=on,rtc=on,isa-serial=on)
     fi
     [ "$PROFILE" != vz ] || CONSOLE=hvc0
 }
 
-# Where tools/fetch-image.sh put the image, for the scripts that boot it interactively —
-# tools/boot-qemu.sh, boot-firecracker.sh and boot-vz.sh — and the rest of their defaults.
-# fetch-image.sh only appends -$ARCH to its output directory when ARCH is overridden away
-# from the host's own, so a plain ./tools/fetch-image.sh followed by a plain boot script
-# still finds output/boot-image with no suffix on either side.
+# Where tools/fetch-image.sh puts the image (-$ARCH only for a foreign arch), for the
+# interactive boot scripts.
 fetched_image_defaults() {
     if [ "$ARCH" = "$(normalize_arch)" ]; then
         OUT="${OUT:-output/boot-image}"
@@ -123,9 +93,7 @@ fetched_image_defaults() {
     QEMU_HINT="(run ./tools/fetch-image.sh)"
 }
 
-# $QEMU_HINT is appended to a missing-image message: tools/boot-qemu.sh boots what
-# tools/fetch-image.sh downloaded, and naming the command that produces the file is the
-# whole difference between a useful error and a true one.
+# $QEMU_HINT names the command that would produce a missing file.
 qemu_preflight() {
     command -v "$QEMU" >/dev/null || { echo "error: $QEMU not found" >&2; exit 1; }
     [ -f "$KERNEL" ] || { echo "error: missing kernel: $KERNEL${QEMU_HINT:+ $QEMU_HINT}" >&2; exit 1; }
@@ -137,45 +105,22 @@ qemu_preflight() {
     }
 }
 
-# The kernel arguments that mount the root, which are not ours to write: they carry the
-# image's dm-verity root hash, so image/build-rootfs.sh writes them next to the image, as
-# rootfs.cmdline beside rootfs.erofs. ROOT_CMDLINE names another file.
+# The root's kernel arguments, with its dm-verity root hash, written by
+# image/build-rootfs.sh beside the image. ROOT_CMDLINE names another file.
 root_cmdline_file() {
     echo "${ROOT_CMDLINE:-$(dirname "$ROOTFS")/rootfs.cmdline}"
 }
 
-# Passwordless ssh into the guest, the way Vagrant and Lima do it: a key pair generated on
-# the host for this boot only, its public half handed to the guest as it boots, a host
-# port forwarded to the guest's 22, and an ssh_config tying the three together, so that
-# `ssh -F $SSH_DIR/config flfs` — which is all tools/ssh.sh is — needs nothing else.
+# Passwordless ssh, the way Vagrant and Lima do it: a key pair for this boot only (deleted
+# with $SSH_DIR when the guest goes), the public half passed as the systemd credential
+# ssh.authorized_keys.root on the kernel command line (not SMBIOS, which arm64's virt board
+# lacks without firmware), a port forward from 127.0.0.1:$SSH_PORT (the first free one
+# from 2222) to the guest's 22, and an ssh_config for tools/ssh.sh.
 #
-# Nothing about it is in the image. The key reaches the guest as the systemd credential
-# ssh.authorized_keys.root on the kernel command line (systemd.set_credential_binary=,
-# base64 because a public key has spaces in it). That is systemd's own interface for
-# exactly this, and it works the same on both architectures, which SMBIOS — the other way
-# qemu passes credentials — does not: arm64's virt board has no SMBIOS without UEFI
-# firmware, and this boots the kernel directly. The command line is world-readable inside
-# the guest, which is fine for a *public* key and is the reason nothing else goes this
-# way. packages/openssh/build.sh has sshd read the credential where PID 1 put it, so the
-# key this boot was handed works whatever has since happened to /root/.ssh.
+# SSH_PROXY replaces the forward with a ProxyCommand, for VMMs with only vsock
+# (tools/boot-firecracker.sh, boot-vz.sh); systemd's ssh generator has sshd listen there.
 #
-# Ephemeral in the sense that matters: generated per call, never written into the image,
-# and deleted with $SSH_DIR when the guest goes away — by qemu_boot's cleanup, or by the
-# caller's when it launches qemu itself. A private key that outlives its guest is one more
-# file to keep track of for no gain; the next boot makes a new one in milliseconds.
-#
-# The forward binds 127.0.0.1 only. SSH_PORT picks the port; by default it is the first
-# from 2222 that nothing on this host is listening on, which is racy in theory and lets
-# two guests run side by side in practice.
-#
-# SSH_PROXY replaces the forward with a ProxyCommand, for VMMs that have no user-mode
-# network to forward through but do have vsock: tools/boot-firecracker.sh and
-# tools/boot-vz.sh. sshd in the guest listens on vsock port 22 on its own — systemd's
-# ssh generator sets that up whenever the machine has a vsock device — so the command
-# only has to get ssh's bytes onto that port. Everything else here is the same.
-#
-# Sourced by tools/boot-vz.sh on macOS too, so this function and the two after it stay
-# within what bash 3.2 and a BSD userland have: no base64 -w, no truncate.
+# boot-vz.sh sources this on macOS: stay within bash 3.2 and BSD tools here.
 qemu_ssh_setup() {
     command -v ssh-keygen >/dev/null || { echo "error: ssh-keygen not found (install an openssh client)" >&2; exit 1; }
     SSH_DIR="${SSH_DIR:-output/ssh}"
@@ -190,14 +135,9 @@ qemu_ssh_setup() {
     mkdir -p -m 700 "$SSH_DIR"
     ssh-keygen -q -t ed25519 -N '' -C "flfs-ephemeral@$(hostname)" -f "$SSH_DIR/id_ed25519"
 
-    # StrictHostKeyChecking/UserKnownHostsFile because the guest generates its host keys at
-    # every boot (sshd-keygen.service, into a tmpfs /var), so every guest is a new host on
-    # the same port and recording it would only buy a MITM warning next time. This is a
-    # loopback forward to a VM this shell just started, which is the one case where that
-    # trade is right; Lima and Vagrant make it too. IdentitiesOnly keeps an agent full of
-    # other keys from using up MaxAuthTries before this one is offered, and BatchMode
-    # turns "the key was refused" into an error rather than a password prompt root could
-    # never pass (PermitRootLogin prohibit-password).
+    # No host key checking: the guest makes new host keys every boot, and this is a
+    # loopback to a VM just started. IdentitiesOnly so an agent's keys do not exhaust
+    # MaxAuthTries first; BatchMode so a refusal is an error, not a password prompt.
     local reach="    ProxyCommand ${SSH_PROXY:-}"
     [ -n "${SSH_PROXY:-}" ] || reach="    HostName 127.0.0.1
     Port $SSH_PORT"
@@ -218,15 +158,8 @@ EOF
     QEMU_SSH_DIR="$SSH_DIR"
 }
 
-# The disk is attached read-only as well as being EROFS under dm-verity: the image is
-# immutable at the VMM, not only in the guest, so one file can back any number of guests
-# at once and nothing a guest does can reach it. Everything writable is a tmpfs
-# (image/files/etc/fstab) unless VAR_DISK gives /var a disk (qemu_var_disk below). The
-# root= and dm-mod.* arguments come from the image's own rootfs.cmdline.
-#
-# QEMU_NIC_ARGS, when set, replaces pc's user-mode NIC with whatever -netdev/-device pair
-# it holds: tools/k8s-demo.sh puts its nodes on a segment of their own that way, with no
-# NAT of their own to be confused by.
+# The root is attached read-only too, so one file can back any number of guests.
+# QEMU_NIC_ARGS replaces pc's user-mode NIC (tools/k8s-demo.sh's own segment).
 qemu_argv() {
     local root_args devices=() display=(-nographic) nic
     root_args=$(cat "$(root_cmdline_file)")
@@ -242,12 +175,8 @@ qemu_argv() {
         pc)
             nic=(-nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}")
             [ -z "${QEMU_NIC_ARGS:-}" ] || nic=("${QEMU_NIC_ARGS[@]}")
-            # Every disk an explicit -device, in this order: the root first, because the
-            # verity table on the command line names it /dev/vda; the /var disk second,
-            # which its mount-extra= names /dev/vdb; extensions after, whose tables
-            # qemu_sysexts wrote for exactly these positions.
-            # qemu creates if=virtio disks after all explicit devices, so mixing the two
-            # forms would put the extensions first.
+            # The order names the devices: root /dev/vda, /var /dev/vdb, then extensions.
+            # All explicit -device, since qemu adds if=virtio disks after those.
             devices=(
                 -drive id=root,file="$ROOTFS",format=raw,if=none,readonly=on
                 -device virtio-blk-pci,drive=root
@@ -256,9 +185,7 @@ qemu_argv() {
                 "${nic[@]}"
             ) ;;
         microvm)
-            # Every device on the MMIO transport, which is all Firecracker has. On x86 the
-            # microvm machine with acpi=off describes them the way Firecracker does, as
-            # virtio_mmio.device= arguments qemu appends to the command line.
+            # Everything on the MMIO transport, which is all Firecracker has.
             devices=(
                 -drive id=root,file="$ROOTFS",format=raw,if=none,readonly=on
                 -device virtio-blk-device,drive=root
@@ -266,10 +193,8 @@ qemu_argv() {
                 -device virtio-rng-device
             ) ;;
         vz)
-            # Virtualization.framework's devices on qemu's PCI machine: the console is a
-            # virtio console rather than a UART (hvc0, and no serial port at all), a host
-            # directory is virtiofs, and the host reaches the guest over vsock. virtiofs
-            # needs the guest's RAM shared with virtiofsd, hence the memfd backend.
+            # Virtualization.framework's devices: hvc0 and no UART, virtiofs (which needs
+            # shared memory with virtiofsd), vsock.
             display=(-display none -serial none -monitor none -vga none)
             devices=(
                 -drive file="$ROOTFS",format=raw,if=virtio,readonly=on
@@ -297,30 +222,9 @@ qemu_argv() {
     )
 }
 
-# A persistent /var, when VAR_DISK names a file: the guest's state on a disk of its own,
-# while the image stays read-only and shared. Everything about it is decided here, at the
-# VMM, and nothing in the image changes — the image's own var.mount is a tmpfs fallback,
-# and the systemd.mount-extra= below generates a var.mount that outranks it.
-#
-#   - The file is created sparse at VAR_SIZE (default 4G) if it does not exist, and left
-#     blank: x-systemd.makefs has systemd-makefs put ext4 on it at the first boot, and
-#     x-systemd.growfs grows that filesystem when the file is made bigger later.
-#   - It is the second virtio disk, so /dev/vdb under qemu (and under Firecracker).
-#   - The machine ID goes with the disk, in <file>.machine-id, made once. Without it every
-#     boot is a new machine — the image's /etc/machine-id is empty and read-only — which
-#     with a persistent /var means a new journal directory and a new DHCP client
-#     identity per boot. The state and the identity of a VM are one thing; this keeps
-#     them in one place.
-# A /var disk with files already on it: <tree> laid out as /var should look, made into
-# an ext4 filesystem in <disk> before the first boot. x-systemd.makefs only formats a blank
-# disk, so this is what the guest finds — tools/k8s-demo.sh and test/sysext.sh put system
-# extensions in lib/extensions and lib/confexts this way.
-#
-# Every file has to arrive owned by root, and mkfs.ext4 -d records the owner it reads.
-# Run as an ordinary user that would be the user's uid on every file and directory — and
-# systemd-tmpfiles then refuses to create anything below a /var/lib it does not trust,
-# with "unsafe path transition". So mkfs runs inside `podman unshare`, where the caller is
-# uid 0 and so is everything they own. Not used by macOS's tools/boot-vz.sh.
+# A /var disk seeded with <tree> (tools/k8s-demo.sh, test/sysext.sh). mkfs.ext4 -d records
+# owners, and a /var/lib not owned by root makes tmpfiles refuse it ("unsafe path
+# transition"), hence podman unshare.
 qemu_seed_var_disk() { # disk size tree
     local disk="$1" size="$2" tree="$3" run=()
     command -v mkfs.ext4 >/dev/null || { echo "error: mkfs.ext4 not found (install e2fsprogs)" >&2; exit 1; }
@@ -333,23 +237,10 @@ qemu_seed_var_disk() { # disk size tree
     "${run[@]}" mkfs.ext4 -q -F -d "$tree" "$disk"
 }
 
-# System extensions attached the way the root is (docs/sysext.md): SYSEXTS names them,
-# and each <name> becomes a read-only virtio disk of EXTENSIONS/extensions/<name>.raw —
-# and of EXTENSIONS/confexts/<name>.raw too, when there is one — mounted at
-# /run/extensions/<name> (/run/confexts/<name>) by systemd.mount-extra=. Those mounts are
-# ordered before local-fs.target and systemd-sysext.service after it, so the merge finds
-# a directory extension there, on a machine whose /var is RAM as much as on one with a
-# disk. One file serves any number of guests, like the root.
-#
-# And verified like the root: each image's dm-verity table (<name>.dm-verity beside it,
-# from image/build-extension.sh) joins the root's in dm-mod.create=, so the kernel sets up
-# /dev/mapper/ext-<name> (conf-<name>) before userspace starts, and that is what is
-# mounted; image/files/etc/udev/rules.d/10-dm-init.rules is what names it, there being no
-# lvm2 here to do it. dm-init runs before udev, so a table names its disk by position — after
-# the root and the /var disk, in the order qemu_argv attaches them.
-#
-# EXTENSIONS defaults to the directory the image is in, where tools/build-image.sh and
-# tools/fetch-image.sh both put them.
+# SYSEXTS: each <name> is a read-only disk of $EXTENSIONS/{extensions,confexts}/<name>.raw
+# (default: beside the image), verified like the root — its <name>.dm-verity table joins
+# the root's dm-mod.create=, naming its disk by position — and mounted under
+# /run/{extensions,confexts}/<name>, where systemd-sysext finds it (docs/sysext.md).
 qemu_sysexts() {
     QEMU_SYSEXT_DRIVES=() QEMU_SYSEXT_APPEND= QEMU_DM_TABLES= QEMU_DM_WAITFOR=
     [ -n "${SYSEXTS:-}" ] || return 0
@@ -380,6 +271,9 @@ qemu_sysexts() {
     done
 }
 
+# VAR_DISK: a persistent /var on a disk of its own (sparse, VAR_SIZE, default 4G). The
+# guest formats it on first boot and grows it later; the generated var.mount outranks the
+# image's tmpfs one. The machine ID lives beside it, since state and identity go together.
 qemu_var_disk() {
     QEMU_VAR_DRIVE=() QEMU_VAR_APPEND=
     [ -n "${VAR_DISK:-}" ] || return 0
@@ -464,28 +358,15 @@ await() { # pattern seconds [since]
     return 1
 }
 
-# The guest echoes back everything typed at the console until `stty -echo` takes effect, so
-# a marker must not appear verbatim in the command that produces it or we would match our
-# own input. The guest's shell strips the quotes; READY is the joined string.
+# The marker is split by quotes so the echo of what we typed cannot match it.
 READY="SHELL-IS-UP"
 PROBE="echo SHELL-IS'-UP'"
-# With the terminal echo off the console log holds the guest's output and nothing else,
-# which keeps a long command line from being redrawn all over the transcript.
-# SYSTEMD_COLORS=0 because every failure path here is read as text, in a CI log or an
-# output/*.log, and systemctl/networkctl/resolvectl wrap each field in escapes.
+# Echo off, prompt and colours off: the log is read as text.
 QUIET="stty -echo; PS1=; export SYSTEMD_COLORS=0"
 
-# Log in at the serial getty and leave a quiet shell behind on fd 3.
-#
-# There is no password to type: the image ships none (image/files/etc/shadow), and
-# qemu_argv passes the credential login.noauth, which serial-getty@.service imports and
-# util-linux's login reads as `login -f`. So the username is the whole login, for root
-# and `user` alike, and it still goes through PAM's account and session stacks — which
-# is what gives `user` a logind session and an XDG_RUNTIME_DIR.
-#
-# agetty reprints the prompt after a mistimed attempt, so the login is worth retrying:
-# typing into it while it is still setting the line up loses characters. The probe is
-# only typed after the username, and only output after that point can satisfy the wait.
+# Log in at the serial getty and leave a quiet shell on fd 3. The username is the whole
+# login: qemu_argv passes the login.noauth credential. Retried, since agetty loses what is
+# typed while it sets the line up; only output after the username satisfies the wait.
 console_login() {
     await 'login:' "$TIMEOUT" || fail "no login prompt"
     echo ">> got a login prompt, logging in as $LOGIN_USER"
