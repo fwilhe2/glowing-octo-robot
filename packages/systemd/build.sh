@@ -1,30 +1,12 @@
-# -Dc_args=-Wno-error=override-init: systemd promotes -Werror=override-init specifically,
-# which a blanket -Wno-error does NOT cancel; the errno aliases in the generated
-# errno-to-name.inc trip it on this bleeding-edge sid toolchain.
-# The disabled features drop optional runtime libs we don't ship (libselinux, libaudit,
-# libcrypto); libcap, libpam, libcrypt (libxcrypt) and libseccomp are built as packages.
-# -Dseccomp=enabled is what makes SystemCallFilter=, SystemCallArchitectures= and
-# RestrictAddressFamilies= mean something: with it disabled, every unit that sets them —
-# most of systemd's own — ran unfiltered, with one line in the journal saying so.
+# meson_install supplies --buildtype=release; -Dmode=release is about log and status
+# format, not optimization. -Dc_args replaces CFLAGS rather than adding to it, so the
+# sysroot flags are passed by hand (SYSROOT_CFLAGS, without the -O2 that would override
+# the buildtype). -Wno-error=override-init: systemd promotes that warning specifically,
+# and sid's compiler trips it in generated code.
 #
-# -Dpam=enabled builds pam_systemd, which is what registers a login as a session with
-# systemd-logind — without it logind runs but never sees a seat used, so `loginctl
-# list-sessions` stays empty. It is referenced from _files/etc/pam.d/login.
-# -Dc_args replaces the CFLAGS environment variable rather than adding to it, so the
-# sysroot flags builder/build-package.sh exports have to be carried over by hand or systemd
-# would be the one package still compiled against the builder's glibc. SYSROOT_CFLAGS
-# rather than CFLAGS, which also carries the -O2 for autotools packages and would override
-# --buildtype=release's -O3.
-#
-# The groups after that are the trim. systemd builds close to ninety components by
-# default and a headless VM that runs containers needs a fraction of them: what is
-# turned off below is either hardware we do not have, an install/deployment mechanism
-# we do not use, or a daemon with no consumer in this image. Each one dropped is a
-# binary, its units and its dbus policy gone — and one less thing that can leave a boot
-# `degraded`.
-# meson_install supplies --buildtype=release. -Dmode=release below is a systemd option
-# about logging and status format and does not touch the optimizer. See "the three things
-# that break silently" in CLAUDE.md — this is by far the worst-affected package.
+# seccomp is what makes SystemCallFilter= in systemd's own units do anything; pam builds
+# pam_systemd, which registers logins with logind. The rest is the trim: each component
+# off is a binary, its units and its D-Bus policy gone, and one less way to degrade a boot.
 systemd_opts=(
     -Dmode=release
     -Dc_args="${SYSROOT_CFLAGS:-} -Wno-error=override-init"
@@ -32,61 +14,40 @@ systemd_opts=(
     -Dselinux=disabled -Dseccomp=enabled -Daudit=disabled
     -Dpam=enabled -Dopenssl=disabled -Dlibcryptsetup=disabled
 
-    # No firmware boot path: qemu is handed the kernel with -kernel, so there is no ESP
-    # to install a loader into and nothing to build a UKI for. Takes systemd-boot,
-    # bootctl, ukify, kernel-install and the whole EFI half of the tree with it.
+    # No firmware boot path: VMMs are handed the kernel, so no ESP, loader or UKI.
     -Dbootloader=disabled -Defi=false -Dkernel-install=false -Dukify=disabled
     -Dtpm=false -Dtpm2=disabled
 
-    # Hardware that does not exist in a VM, or that only matters on a laptop: screen
-    # backlight, radio kill switches, suspend-to-disk, disk quotas, the virtual console
-    # (the console here is ttyS0), pstore crash dumps and binfmt_misc.
+    # Hardware a VM does not have, or that only matters on a laptop.
     -Dbacklight=false -Drfkill=false -Dhibernate=false -Dquotacheck=false
     -Dvconsole=false -Dpstore=false -Dbinfmt=false -Dxdg-autostart=false
 
-    # The hardware database is 22 MB of PCI/USB/OUI vendor names and input-device
-    # quirks, all of it describing devices a virtio guest never sees. udev's hwdb
-    # builtin stays compiled in and simply finds no database, which it logs at debug.
+    # 22 MB describing devices a virtio guest never sees.
     -Dhwdb=false
 
-    # No locale data is shipped (see image/build-rootfs.sh), so localed would have
-    # nothing to switch between and systemd's own translations nothing to translate.
+    # C-locale only.
     -Dlocaled=false -Dtranslations=false
 
-    # Container and image machinery we do not use: crun is the runtime (constraint 3),
-    # and there is no image tooling to feed nspawn/machined/importd a machine image.
-    # nss-mymachines resolves container hostnames through machined, so it goes too.
-    # mountfsd and nsresourced are the same machinery's unprivileged half — varlink
-    # services that mount a disk image and hand out a user-namespace range to a caller
-    # without root, for nspawn, vmspawn and systemd-dissect. podman allocates its own
-    # ranges from /etc/subuid through newuidmap, and mounts through crun.
+    # systemd's own container and image machinery: crun and podman are the runtime, and
+    # podman takes its ID ranges from /etc/subuid.
     -Dmachined=false -Dnspawn=disabled -Dvmspawn=disabled -Dimportd=disabled
     -Dnss-mymachines=disabled -Dportabled=false
     -Dmountfsd=false -Dnsresourced=false
 
-    # systemd-sysext and systemd-confext stay: they are how software is added to this
-    # immutable image without changing it (docs/sysext.md). Without libcryptsetup they
-    # merge plain images only, not verity-protected ones; see the Trust section there.
+    # How software is added to the immutable image (docs/sysext.md). Verity is set up by
+    # the kernel (dm-init), so no libcryptsetup.
     -Dsysext=true
 
-    # Deployment and provisioning: repartitioning the disk, A/B image updates, cloud
-    # instance metadata, home-directory management, exporting block devices over NVMe.
-    # firstboot goes with them — the image ships a complete /etc, which is why the
-    # service used to be masked in image/build-rootfs.sh.
-    # libfdisk goes with them: repart, sysupdate and homed are its only callers, so
-    # nothing would ever take the dlopen and packages/util-linux no longer builds it.
+    # Deployment and provisioning. firstboot: the image ships a complete /etc. fdisk:
+    # repart, sysupdate and homed were its only callers.
     -Drepart=disabled -Dsysupdate=disabled -Dsysinstall=false -Dfirstboot=false
     -Dimds=disabled -Dhomed=disabled -Dstoragetm=false -Doomd=false
     -Dfdisk=disabled
 
-    # Coredump handling needs elfutils to symbolize a backtrace, and the journal's
-    # remote transports need libcurl/gnutls/microhttpd. We ship none of those to the
-    # image (elfutils is packaged for libelf, which libbpf links against).
+    # coredump and journal-remote need libraries the image does not ship.
     -Dcoredump=false -Delfutils=disabled -Dremote=disabled
 
-    # Optional dependencies the Debian builder image happens to have installed.
-    # Autodetection would link against them and the missing .so would only turn up when
-    # the binary is exec'd in qemu, so they are turned off by name rather than by luck.
+    # Optional libraries the builder has and the image does not, off by name.
     -Dlibcurl=disabled -Dgnutls=disabled -Dmicrohttpd=disabled -Dgcrypt=disabled
     -Dp11kit=disabled -Dlibfido2=disabled -Dqrencode=disabled -Dlibarchive=disabled
     -Dxkbcommon=disabled -Dpcre2=disabled -Dglib=disabled -Dxenctrl=disabled

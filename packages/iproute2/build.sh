@@ -1,21 +1,8 @@
-# iproute2's configure is hand-written rather than autotools, and it takes almost no
-# options: what gets built is decided by which libraries it finds in the builder image.
-# That is the trap builder/deps.txt exists to close, so the list is worth stating —
-# found: libmnl (ours), libelf (ours, via elfutils), libcap (ours); not found and
-# therefore configured out on their own: libdb (arpd), libtirpc, xtables and ipset (tc's
-# iptables-action modules), libbpf.
-#
-# libselinux is the exception and it is the sharp one. deps.txt does not name it — it is
-# in the deliberately-absent list at the bottom of that file — but libblkid-dev and
-# friends pull it into the builder image anyway, so configure finds it and links both
-# `ip` and `ss` against a library the image does not ship. That failure would not be
-# caught: libselinux.so.1 is already on test/known-missing-libs.txt for glibc's nscd, so
-# test/check-rootfs-deps.sh would file `ip` under the accepted backlog and pass, and the
-# first sign of trouble would be `ip` not starting in qemu.
-#
-# There is no --without-selinux to pass. What configure does take is $PKG_CONFIG, so hide
-# that one library from it and let everything else through. There is no policy in the
-# image and no kernel support for one, so nothing is lost.
+# iproute2 builds whatever libraries it finds: libmnl, libelf and libcap (ours), and
+# none of the rest. Except libselinux, which the builder has (libblkid-dev pulls it in)
+# and the image does not, and which is allowlisted for nscd, so check-rootfs-deps.sh
+# would pass an `ip` that cannot start. There is no --without-selinux, so it is hidden
+# from pkg-config, and the binary is checked at the end.
 cat > /tmp/pkg-config-no-selinux <<'EOF'
 #!/bin/sh
 for arg; do [ "$arg" = libselinux ] && exit 1; done
@@ -23,39 +10,20 @@ exec pkg-config "$@"
 EOF
 chmod +x /tmp/pkg-config-no-selinux
 
-# --libdir is the one thing configure cannot work out: Debian's pkg-config answers with
-# the multiarch path, which nothing in the image searches, and LIBDIR is compiled into
-# `tc` as where its action plugins live.
+# --libdir: Debian's pkg-config answers with the multiarch path.
 PKG_CONFIG=/tmp/pkg-config-no-selinux ./configure --prefix=/usr --libdir /usr/lib
 
 make
 
-# SBINDIR is /sbin by default and this tree is merged-/usr, so an install would land in
-# /usr/bin anyway by following two symlinks. Name it instead: builder/build-package.sh
-# stages those links, and a package that installs through them rather than to a real
-# path is one staging change away from writing outside the tree.
+# SBINDIR named, rather than installing through the merged-/usr symlinks.
 make install DESTDIR=$ROOTFS PREFIX=/usr SBINDIR=/usr/bin LIBDIR=/usr/lib
 
-# `routel` is #!/usr/bin/env python3, and `make install` puts it beside `ip`. This is
-# exactly the case CLAUDE.md's constraint 5 is about — the image ships bash and no other
-# interpreter, so this would install as a file that cannot run. Nothing is lost: it
-# prints `ip route list` in a different table layout.
+# routel is python (constraint 5), and `ip route` says the same.
 drop_installed routel
 
-# Everything but ip, ss, bridge, tc and nstat goes, which is 1.6 MiB of the package's
-# 3.5. Most of it configures hardware a VM guest does not have (constraint 2): dcb (data
-# centre bridging on a physical NIC), devlink (NIC and switch ASIC firmware), dpll (clock
-# synchronisation chips), rdma, vdpa (the *host* side of virtio offload), netshaper (NIC
-# rate limiters). tipc is a cluster transport the kernel does not build. genl lists
-# generic-netlink families, which `ip` and the tools above already speak. ifstat, lnstat
-# (with its ctstat and rtstat aliases), rtacct and rtmon are the old /proc/net counters
-# and route-logging daemons; nstat, which stays, reads the same counters, and `ip monitor`
-# replaces rtmon.
+# Everything but ip, ss, bridge, tc and nstat: physical-NIC and host-side hardware, a
+# transport the kernel lacks, and old counters nstat and `ip monitor` replace.
 drop_installed dcb devlink dpll rdma vdpa netshaper tipc genl \
                ifstat lnstat ctstat rtstat rtacct rtmon
 
-# And the assertion the PKG_CONFIG override above is worth nothing without, since the
-# thing it prevents is a check that passes. `ip` is the binary this whole package exists
-# for; if it came out linked against a library the image has no copy of, stop here rather
-# than four CI jobs later in qemu.
 assert_not_linked libselinux usr/bin/ip
