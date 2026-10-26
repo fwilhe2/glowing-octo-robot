@@ -38,17 +38,9 @@
 #     ./tools/ssh.sh --root           # a root shell
 #     scp -F output/ssh/config file flfs:/tmp/
 #
-# That works because every boot gets a fresh ed25519 key pair, generated here into
-# $SSH_DIR and deleted when qemu exits, whose public half the guest is handed at boot as
-# the systemd credential ssh.authorized_keys.root — the same idea as Vagrant's per-machine
-# key and Lima's injected one, with nothing written into the image. test/qemu-lib.sh
-# (qemu_ssh_setup) has the details. The key is root's, and nothing has a password: at the
-# console, type a username and the login.noauth credential lets it straight in.
-#
-# The machine it boots is assembled by test/qemu-lib.sh, which is the same code the four
-# boot tests use, and that is the point of sharing it: this is what somebody reaches for
-# to debug a boot CI has just failed, so it has to be the *same* guest — same machine
-# type, same console device, same kernel command line — and not merely a similar one.
+# Every boot gets a fresh key pair, handed to the guest as a credential and deleted when
+# qemu exits (qemu_ssh_setup in test/qemu-lib.sh). At the console, a username is enough.
+# The guest is assembled by test/qemu-lib.sh, the same code as the boot tests.
 #
 # Drop to a raw shell instead of systemd (handy for debugging a broken boot):
 #   INIT=/bin/bash ./tools/boot-qemu.sh

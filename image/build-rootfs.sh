@@ -541,11 +541,11 @@ image_name="flfs-$flavour-$oci_arch"
     printf '    }'
 
     for record in "$components"/*; do
-        name= version= license= origin= builder= url= sha256=
+        name= version= license= origin= url= sha256=
         while IFS='=' read -r key value; do
             case "$key" in
                 name) name=$value ;; version) version=$value ;; license) license=$value ;;
-                origin) origin=$value ;; builder) builder=$value ;;
+                origin) origin=$value ;;
                 url) url=$value ;; sha256) sha256=$value ;;
             esac
         done < "$record"

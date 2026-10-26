@@ -3,8 +3,8 @@
 #
 #     ./test/rootless.sh [rootfs.erofs] [bzImage]
 #
-# Overrides: TIMEOUT, MEM/CPUS, LOG, as in test/podman.sh. LOGIN_USER/LOGIN_PASSWORD are
-# fixed to the uid-1000 account image/files/etc/passwd ships, because that is the point.
+# Overrides: TIMEOUT, MEM/CPUS, LOG, as in test/podman.sh. LOGIN_USER is fixed to the
+# uid-1000 account image/files/etc/passwd ships, because that is the point.
 #
 # Rootless needs three things the rootful path does not, and each round checks one:
 #   1. newuidmap and newgidmap with their file capabilities on the disk image — getcap
@@ -33,7 +33,6 @@ INIT="${INIT:-/usr/lib/systemd/systemd}"
 LOG="${LOG:-output/rootless-test.log}"
 TEST_NAME=rootless
 LOGIN_USER=user
-LOGIN_PASSWORD=user
 
 CAPS_OK="ROOTLESS-CAPS-OK"
 INFO="ROOTLESS-INFO:"
