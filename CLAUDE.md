@@ -1171,7 +1171,10 @@ keep in mind when touching image assembly:
 gating nothing. Each package job uses `.github/actions/build-package`,
 which stages a glibc-only sysroot via `SYSROOT_DIR=sysroot` so each package artifact
 contains only its own files, and caches on a hash that deliberately includes
-`glibc/env.sh` — a glibc bump must rebuild everything.
+`glibc/env.sh` and `glibc/build.sh` — a glibc change must rebuild everything. The key also
+carries the half-month, and a schedule on the 1st and 15th rebuilds main with no cache and
+freshly built builder and sources images (`FRESH=1` in `tools/prep.sh`): a cache hit only
+proves the pinned inputs built once, not that they still do.
 
 `publish-oci` is the only job that writes anything the world can see, and the only one
 **gated to `main`** (`if: github.ref == 'refs/heads/main'`), which has a consequence worth

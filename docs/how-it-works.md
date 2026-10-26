@@ -194,8 +194,14 @@ sources ─────────┼─► glibc (×arch) ──► build (×a
   - builds with `SYSROOT_DIR=sysroot`;
   - uploads only that package's files.
 - **The cache key** hashes `build.sh`, `tools/lib.sh`, `build-package.sh`, glibc's
-  `env.sh`, the package's own `env.sh`/`build.sh`/`src`, and the builder tag. A glibc
-  bump or a builder change rebuilds everything.
+  `env.sh` and `build.sh`, the package's own `env.sh`/`build.sh`/`src` (and the `env.sh`
+  it `FOLLOWS`), and the builder tag. A glibc change or a builder change rebuilds
+  everything. It also carries the half-month, turning over at 20:00 UTC on the 1st and
+  15th, so no binary is served from the cache for more than about two weeks.
+- **A scheduled run rebuilds main from scratch** at that same time: `FRESH=1` makes
+  `tools/prep.sh` rebuild the builder and sources images instead of pulling them, and
+  the package jobs skip the cache restore. `workflow_dispatch` with `fresh` does the same
+  by hand.
 - **`rootfs`** unpacks every package artifact for its arch, runs the static checks, and
   then calls `tools/build-image.sh --image-only`, the same path as a local build.
 - **Per-arch jobs** share the `&per-arch` strategy, the `&runner` expression and the

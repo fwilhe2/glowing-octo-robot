@@ -28,6 +28,23 @@ on:
       - 'docs/**'
       - '*.md'
   workflow_dispatch:
+    inputs:
+      fresh:
+        description: "Build everything from scratch: rebuild the builder and sources images and ignore the package cache"
+        type: boolean
+        default: false
+  # A clean build of main every two weeks. Every input here is pinned and every result
+  # cached, which is exactly the arrangement in which a build can stop working without any
+  # run noticing: a cache hit proves only that the inputs once built. So this run trusts
+  # nothing it did not make — the builder is rebuilt from the Debian snapshot, the sources
+  # image from upstream's URLs, every package without its cache (`fresh` below) — and
+  # publishes the result like any run on main. At night in Europe (22:00 CEST, 21:00
+  # CET), like the other scheduled workflows, and an hour before update-packages.yml opens
+  # its pull requests, whose runs then mostly find a warm cache. The time is also when
+  # the cache key's period turns over (.github/actions/build-package), so this is the
+  # first run of each period; change the two together.
+  schedule:
+    - cron: "0 20 1,15 * *"
 
 permissions:
   pull-requests: write
@@ -90,6 +107,10 @@ jobs:
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
 
       - run: ./tools/prep.sh --push builder
+        env:
+          # Only here and in the sources job, never workflow-wide: build.sh calls prep.sh
+          # too, and every package job rebuilding the builder for itself is not the point.
+          FRESH: &fresh-env ${{ (github.event_name == 'schedule' || inputs.fresh == true) && '1' || '' }}
 
   # Once for both architectures: the tarballs are the same bytes either way, so this is a
   # manifest list built from a single COPY rather than 450 MB stored twice. It is also
@@ -110,6 +131,8 @@ jobs:
         run: podman login ghcr.io -u '${{ github.actor }}' -p '${{ secrets.GITHUB_TOKEN }}'
 
       - run: ./tools/prep.sh --push sources
+        env:
+          FRESH: *fresh-env
 
       # The build matrix, as JSON. Here rather than in a job of its own because this one
       # already runs first and every build job already waits for it.
@@ -145,6 +168,7 @@ jobs:
         with:
           package: glibc
           arch: ${{ matrix.arch }}
+          fresh: &fresh ${{ (github.event_name == 'schedule' || inputs.fresh == true) && 'true' || 'false' }}
 
   kernel:
     runs-on: *runner
@@ -169,6 +193,7 @@ jobs:
         with:
           package: kernel
           arch: ${{ matrix.arch }}
+          fresh: *fresh
 
       # What this branch's kernel builds in that main's does not, and the reverse. The kernel
       # follows the latest stable release rather than a pinned series, and the fragments in
@@ -272,6 +297,7 @@ jobs:
         with:
           package: ${{ matrix.package }}
           arch: ${{ matrix.arch }}
+          fresh: *fresh
 
   rootfs:
     runs-on: *runner

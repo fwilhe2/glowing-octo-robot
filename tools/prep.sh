@@ -3,6 +3,7 @@
 #
 #     ./tools/prep.sh            # make sure both images exist locally, building if needed
 #     ./tools/prep.sh --push     # ...and push them to the registry
+#     FRESH=1 ./tools/prep.sh    # build both even if the registry has them
 #
 # After this succeeds a build needs nothing from the internet, which is why build.sh runs
 # the compile with --network=none. Run it before going offline, or let build.sh call it.
@@ -23,8 +24,13 @@ want="${1:-both}"
 builder=$(./tools/image-tags.sh builder)
 sources=$(./tools/image-tags.sh sources)
 
-have() { podman image exists "$1"; }
-pull() { podman pull --quiet "$1" >/dev/null 2>&1; }
+# FRESH=1 is CI's scheduled clean rebuild: a tag that resolves proves the image was built
+# once, not that its inputs still build — the snapshot still serving the pinned packages,
+# every upstream URL still answering with the pinned bytes. So neither lookup counts, both
+# images are built from their inputs, and --push replaces what the tag pointed at. The
+# inputs are pinned, so it is the same image by everything the tag claims to describe.
+have() { [ -z "${FRESH:-}" ] && podman image exists "$1"; }
+pull() { [ -z "${FRESH:-}" ] && podman pull --quiet "$1" >/dev/null 2>&1; }
 
 # A manifest list and a plain image do not take the same push verb, and which one is
 # under a given name is not a thing to assume: the sources image is *built* as a list,
