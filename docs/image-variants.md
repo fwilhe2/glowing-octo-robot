@@ -51,8 +51,8 @@ does not need. An image is one of each, per architecture.
 | `net` | a machine somebody can debug: addressing, DNS, TLS, `ip`/`ping`/`curl` | minimal + iproute2, iputils, libmnl, openssl, ca-certificates, curl | `erofs`, `oci` |
 | `full` | everything this repository builds — today's image, unchanged | all of them | `erofs`, `oci` |
 | `lima` | a VM somebody actually works in, via `limactl start` — see below | net + openssh, sudo, sshfs, fuse3 | `lima` |
-| `container-host` *(later)* | runs OCI containers: crun and the tooling of `docs/container-runtime.md` | net + crun, json-c, … | `erofs` |
-| `k8s-node` *(later)* | issue #83, once that question has an answer | container-host + … | `erofs` |
+| `container-host` | superseded: the base runs crun, and podman is a system extension (`docs/sysext.md`) | | |
+| `k8s-node` | superseded: the `kubernetes` system extension (`docs/sysext.md`) | | |
 
 | platform | artifact | what it subtracts |
 | --- | --- | --- |
@@ -409,8 +409,7 @@ VM that will not start.
    boot, rather than debugging both at once.
 5. **`firecracker`**, which needs a runner-side binary and a fifth boot script, and is
    independent of everything above.
-6. **`container-host` / `k8s-node`**, gated on the packaging in `docs/container-runtime.md`
-   and issue #83 rather than on anything here.
+6. ~~`container-host` / `k8s-node`~~, done as system extensions instead (`docs/sysext.md`).
 
 ## Trade-offs and open questions
 

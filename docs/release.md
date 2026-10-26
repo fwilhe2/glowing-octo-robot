@@ -1,8 +1,8 @@
 # Cutting a release
 
-**Status: not implemented.** The two pieces it stands on are in flight — #95 teaches a
-build to stamp its version into `os-release`, #96 pins both Debian images to a snapshot —
-and the workflow itself is not written. This is the design, decided but unbuilt.
+**Status: not implemented.** The two pieces it stands on exist — `image/build-rootfs.sh`
+stamps `FLFS_VERSION` into `os-release`, and both Debian images are pinned to a snapshot —
+but the workflow itself is not written. This is the design, decided but unbuilt.
 
 Today every commit on `main` publishes `flfs:<commit>` and `flfs:latest` to ghcr and
 nothing else. There is no artifact a person can download, nothing that says which build it

@@ -68,8 +68,8 @@ cp -r /files/* .
 install -D -m 644 etc/os-release usr/lib/os-release
 ln -sfn ../usr/lib/os-release etc/os-release
 
-# The fields only a build knows. FLFS_VERSION is set for a release only (release.yml's
-# CalVer), FLFS_BUILD is the commit. Unset, the file is exactly as it is in git.
+# The fields only a build knows. FLFS_VERSION is for a release (docs/release.md; nothing
+# sets it yet), FLFS_BUILD is the commit. Unset, the file is exactly as it is in git.
 # PRETTY_NAME is rewritten in place: not every parser takes the last of two assignments.
 if [ -n "${FLFS_VERSION:-}" ]; then
     sed -i "s/^PRETTY_NAME=\"\(.*\)\"\$/PRETTY_NAME=\"\1 $FLFS_VERSION\"/" usr/lib/os-release

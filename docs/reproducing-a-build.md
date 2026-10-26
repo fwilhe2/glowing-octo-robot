@@ -183,10 +183,9 @@ two should land as one thing rather than two scripts that both almost do it.
 
 Stated plainly, so nobody reads more into the word than is there:
 
-- **`FROM debian:sid` is unpinned.** The builder tag is a hash of `builder/`, not of what
-  apt resolved that morning, so an old `builder:<hash>` that is still in the registry can
-  be pulled and reused, but rebuilding it from scratch produces a different toolchain.
-  This is phase 4 of `docs/build-container.md` and it is the largest remaining hole.
+- **The builder image is pinned, not proven.** `builder/Containerfile` pins a dated sid
+  image and the snapshot archive, so a rebuild resolves the same package versions, but
+  nothing compares a rebuilt builder to the byte. CI's two-weekly fresh run rebuilds it.
 - **Anything not yet checked.** Part 0 says what has been compared to the byte; a
   package outside that list, or an architecture other than amd64, is expected to
   reproduce but has not been shown to.

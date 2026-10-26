@@ -1,9 +1,8 @@
 # One builder image, vendored sources
 
-**Status: phases 1-3 implemented, phase 4 not.** The two artifacts, the checksums, the
-single builder image and the `--network=none` build all exist. Still open: pinning
-`debian:sid` to a snapshot, and trimming `builder/deps.txt` further now that it is a list
-somebody can actually read.
+**Status: implemented.** The two artifacts, the checksums, the single builder image, the
+`--network=none` build and the snapshot pin (`SNAPSHOT` in `builder/Containerfile`) all
+exist. What is left is trimming `builder/deps.txt` further.
 
 The idea is to split a build into two phases with a hard line between them: **prep**,
 which is allowed to touch the network and produces two OCI artifacts, and **build**, which

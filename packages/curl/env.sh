@@ -3,8 +3,7 @@
 #
 # There is no second candidate worth listing. wget2 and httpie are the alternatives and
 # neither is close: wget2 drags in its own TLS choice plus libpsl and gettext, httpie is
-# python. curl is C, it is in every distribution, and it is the client every registry API
-# in docs/container-runtime.md is written against.
+# python. curl is C, and it is in every distribution.
 VERSION="8.23.0"
 PACKAGE="curl-${VERSION}"
 TARBALL="$PACKAGE.tar.xz"

@@ -1,14 +1,14 @@
 # The image's TLS. Nothing here could open an HTTPS connection before it.
 #
-# docs/container-runtime.md preferred mbedTLS on size — ~1.5 MB against OpenSSL's ~5 —
-# and issue #77 left the choice open. It is settled the other way, on the "modern *and*
+# mbedTLS would be smaller — ~1.5 MB against OpenSSL's ~5 — but the choice is settled the
+# other way, on the "modern *and*
 # established" test in CLAUDE.md. mbedTLS is established in embedded firmware; OpenSSL is
 # what a general-purpose Linux has, and this image is meant to be one: Debian, Fedora and
 # Alpine all ship it as *the* TLS library, and the next thing here that wants TLS —
 # openssh is the obvious candidate — will look for libcrypto and find it. Carrying both
 # is the outcome nobody wants, so the one to carry is the one that scales. It is modern
 # too: 3.5 does TLS 1.3 and ML-KEM key exchange, and its Configure being perl was never
-# a disqualification — see the rule in docs/container-runtime.md.
+# a disqualification: constraint 5 is about what ships, not what builds.
 #
 # Two reasons this pins the 3.5 LTS branch rather than tracking whatever is newest, and
 # only the second is negotiable:
