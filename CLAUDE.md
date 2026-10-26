@@ -1174,7 +1174,9 @@ contains only its own files, and caches on a hash that deliberately includes
 `glibc/env.sh` and `glibc/build.sh` — a glibc change must rebuild everything. The key also
 carries the half-month, and a schedule on the 1st and 15th rebuilds main with no cache and
 freshly built builder and sources images (`FRESH=1` in `tools/prep.sh`): a cache hit only
-proves the pinned inputs built once, not that they still do.
+proves the pinned inputs built once, not that they still do. `gh workflow run ci.yml -f
+fresh=true` (with `--ref <branch>` for a branch) is the same run by hand; a plain cache
+miss is not, since it still pulls both images from ghcr.
 
 `publish-oci` is the only job that writes anything the world can see, and the only one
 **gated to `main`** (`if: github.ref == 'refs/heads/main'`), which has a consequence worth

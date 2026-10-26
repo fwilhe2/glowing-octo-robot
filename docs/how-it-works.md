@@ -200,8 +200,17 @@ sources ─────────┼─► glibc (×arch) ──► build (×a
   15th, so no binary is served from the cache for more than about two weeks.
 - **A scheduled run rebuilds main from scratch** at that same time: `FRESH=1` makes
   `tools/prep.sh` rebuild the builder and sources images instead of pulling them, and
-  the package jobs skip the cache restore. `workflow_dispatch` with `fresh` does the same
-  by hand.
+  the package jobs skip the cache restore. To run one by hand, on `main` or any branch:
+
+  ```sh
+  gh workflow run ci.yml -f fresh=true             # main
+  gh workflow run ci.yml -f fresh=true --ref <branch>
+  ```
+
+  A cache miss is not the same thing. A change to the key (a new period, a builder or
+  glibc change) rebuilds every package, but still pulls the builder and sources images
+  from ghcr, so it says nothing about whether the Debian snapshot or an upstream URL
+  still answers. Only a fresh run does.
 - **`rootfs`** unpacks every package artifact for its arch, runs the static checks, and
   then calls `tools/build-image.sh --image-only`, the same path as a local build.
 - **Per-arch jobs** share the `&per-arch` strategy, the `&runner` expression and the
