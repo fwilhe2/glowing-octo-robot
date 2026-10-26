@@ -1,5 +1,5 @@
 # ping, and the two other things worth having next to it. The first command anyone types
-# on a machine whose network looks wrong, and until now the image could not answer it.
+# on a machine whose network looks wrong.
 #
 # iputils is the ping every Linux distribution ships — Debian, Fedora, Arch and Alpine's
 # non-busybox build all take it from here. It moved to meson and dropped its museum

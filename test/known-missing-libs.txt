@@ -32,8 +32,6 @@ libfuse3.so.4
 # glibc nscd (name service cache daemon), makedb, and memusagestat (a profiling tool).
 # Building glibc --without-selinux would drop the libselinux reference, but nscd and
 # makedb are far enough off the boot path not to be worth a 13-minute glibc rebuild.
-# Note coreutils used to account for 15 of libselinux's consumers; it is now built
-# --without-selinux, so ls/cp/mv/id no longer need it.
 libaudit.so.1
 libgd.so.3
 libselinux.so.1

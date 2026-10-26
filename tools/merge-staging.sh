@@ -4,21 +4,10 @@
 #     ./tools/merge-staging.sh
 #
 # Each package installs into staging/<pkg>/, laid out like its CI artifact: rootfs/...
-# for the base, extensions/<name>/... for a package with EXTENSION=. Nothing installs
-# into rootfs/ any more; it is *derived*, by this script, which root build.sh runs after
-# every package and CI's rootfs job runs after unpacking the artifacts into staging/
-# the same way. One script for both is the point: the collision check and the unpack
-# order used to exist only in ci.yml, so a local build could ship a file two packages
-# installed, and get whichever was built last.
-#
-# What that buys over the cumulative rootfs/ it replaces:
-#
-#   - a rebuilt package replaces its files instead of adding to them, so a file a new
-#     version stopped installing is gone, rather than staged until somebody deletes
-#     rootfs/ and rebuilds everything from glibc;
-#   - which package installed a file is a question with an answer: the one whose
-#     staging/ has it;
-#   - two packages installing one path fail the merge, here and in CI alike.
+# for the base, extensions/<name>/... for a package with EXTENSION=. rootfs/ is derived,
+# by this script, which root build.sh runs after every package and CI's rootfs job runs
+# after unpacking the artifacts — so a rebuilt package replaces its files, and two
+# packages installing one path fail here and in CI alike, in sorted order either way.
 #
 # The copies are --reflink=auto: on btrfs or XFS a copy-on-write clone that costs nothing,
 # on ext4 a real copy. Not hardlinks, which would be as fast everywhere but would make an
