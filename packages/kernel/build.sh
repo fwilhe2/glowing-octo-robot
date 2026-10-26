@@ -1,91 +1,50 @@
-# defconfig plus kvm_guest.config is what a qemu guest needs: virtio-blk for the root
-# disk and a built-in serial console (8250/ttyS0 on amd64, PL011/ttyAMA0 on arm64), so
-# the image boots with no initrd. This builds natively — never cross-compiled — so
-# `make defconfig` already resolved to the right arch's defconfig from `uname -m`
-# (SUBARCH in the kernel's own top-level Makefile); nothing here passes ARCH= explicitly.
-# kvm_guest.config is a generic (arch/-independent) fragment, but a few of the symbols
-# in it — CONFIG_PARAVIRT and friends — only exist under arch/x86; merge_config.sh warns
-# that it couldn't apply them on arm64 and moves on, which is expected and harmless.
-# Reproducible: kbuild otherwise stamps the build's date, user and host into the version
-# string every `uname -v` prints, and a counter from .version that goes up by one with
-# every build in the same tree — the `#3` a local rebuild shows. SOURCE_DATE_EPOCH comes
-# from build.sh (tools/lib.sh); the identity is the project's rather than the builder
-# container's, which is a random hostname.
+# defconfig + kvm_guest.config, then fragments that say what the kernel is for (container,
+# k8s, guest, rootfs, trace) and one that takes defconfig's hardware back out (vm). Built
+# natively, so `make defconfig` picks the arch from `uname -m`. The fragments are heredocs
+# because only this file is bind-mounted into the builder. kvm_guest.config's x86-only
+# symbols (PARAVIRT and friends) are skipped with a warning on arm64, which is harmless.
+#
+# Reproducible: without these kbuild stamps date, user, host and a per-tree build counter
+# into `uname -v`. SOURCE_DATE_EPOCH comes from build.sh.
 export KBUILD_BUILD_TIMESTAMP="$(date -u -d "@$SOURCE_DATE_EPOCH")"
 export KBUILD_BUILD_USER=flfs KBUILD_BUILD_HOST=flfs KBUILD_BUILD_VERSION=1
 
 make defconfig
 make kvm_guest.config
 
-# ...but neither of them turns on anything a container runtime needs. defconfig
-# gives us CGROUPS, the pid/net/ipc/uts namespaces and SECCOMP_FILTER and stops there:
-# no USER_NS, no MEMCG, no OVERLAY_FS, no veth. This fragment is the difference between
-# "the kernel has namespaces" and "crun can actually start a container". Every symbol in
-# it lives outside arch/, so it applies identically on amd64 and arm64.
-#
-# It is written out here rather than kept as a file next to this one because only
-# build.sh is bind-mounted into the builder — the rest of kernel/ isn't there to copy.
-# `make <name>.config` runs scripts/kconfig/merge_config.sh, which merges the fragment
-# and then re-runs olddefconfig, so anything these symbols select gets pulled in too — and
-# anything they ask for that olddefconfig cannot honour is dropped in silence. Nothing
-# upstream complains about that; the check after `make vm.config` below is what does.
+# What a container runtime needs. defconfig stops at CGROUPS, the basic namespaces and
+# SECCOMP_FILTER. `make <name>.config` merges a fragment and re-runs olddefconfig, which
+# drops anything whose dependencies are unmet in silence — the check after vm.config is
+# what notices.
 cat > kernel/configs/container.config <<'EOF'
-# Namespaces and cgroup v2 controllers. CGROUPS, CGROUP_PIDS, CGROUP_FREEZER,
-# CGROUP_DEVICE, BLK_CGROUP and CGROUP_SCHED are already on; MEMCG is what makes
-# memory.max exist, and a bundle that asks for a memory limit fails without it.
+# User namespaces, and memory.max (any memory limit fails without MEMCG).
 CONFIG_USER_NS=y
 CONFIG_MEMCG=y
 
-# The two limits defconfig's CGROUP_SCHED and BLK_CGROUP do not give you on their own.
-# CFS_BANDWIDTH is what makes cpu.max exist — docker --cpus and every Kubernetes CPU
-# limit write it, and runc fails the whole container when the file is not there.
-# BLK_DEV_THROTTLING is the io.max bandwidth/iops half of the io controller, behind
-# docker --device-read-bps and friends; without it io.max accepts nothing.
+# cpu.max (docker --cpus, every Kubernetes CPU limit) and io.max's bandwidth limits.
 CONFIG_CFS_BANDWIDTH=y
 CONFIG_BLK_DEV_THROTTLING=y
 
-# The cgroup v2 device controller is a BPF program attached to the cgroup, not a
-# knob — no BPF_SYSCALL means no device whitelisting at all.
+# The cgroup v2 device controller is a BPF program.
 CONFIG_BPF_SYSCALL=y
 CONFIG_CGROUP_BPF=y
 
-# systemd's own sandboxing is BPF too, and it needs more than the syscall. It loads its
-# programs through libbpf (the libbpf package) and logs "cgroup BPF features disabled"
-# without it; these are what make the loaded programs actually run.
-#
-# BPF_JIT: BPF_LSM depends on it, and defconfig leaves it off.
-# FTRACE: BPF_LSM also depends on BPF_EVENTS, which is not a knob — it is `default y`
-#   behind (KPROBE_EVENTS || UPROBE_EVENTS) && PERF_EVENTS, and both of those probe
-#   types live inside the FTRACE menu. x86_64_defconfig leaves FTRACE on and arm64's
-#   defconfig switches it off explicitly, so asking for BPF_LSM got a kernel with it on
-#   amd64 and a kernel silently without it on arm64. UPROBE_EVENTS is enough on its own
-#   (it only wants ARCH_SUPPORTS_UPROBES, which both arches have), so this does not also
-#   need KPROBES.
-# BPF_LSM: the hook type behind RestrictFileSystems= and nsresourced's user-namespace
-#   lockdown. CONFIG_LSM already lists "bpf", so enabling this is all it takes to make
-#   it show up as active.
-# SECURITYFS: how a booted system reports which LSMs are on, in
-#   /sys/kernel/security/lsm. systemd reads exactly that file to decide whether bpf-lsm
-#   is available, so without securityfs the answer is "no" no matter what is compiled in.
+# systemd's BPF sandboxing (loaded through libbpf).
+# BPF_JIT: BPF_LSM depends on it.
+# FTRACE: BPF_LSM also needs BPF_EVENTS, which is `default y` behind the probe event
+#   types inside the FTRACE menu — and arm64's defconfig turns FTRACE off.
+# BPF_LSM: RestrictFileSystems= and nsresourced. CONFIG_LSM already lists "bpf".
+# SECURITYFS: systemd reads /sys/kernel/security/lsm to decide whether bpf-lsm exists.
 CONFIG_BPF_JIT=y
 CONFIG_FTRACE=y
 CONFIG_BPF_LSM=y
 CONFIG_SECURITYFS=y
 
-# An LSM program is attached by naming the kernel function it hooks, and resolving that
-# name needs the kernel's own BTF in /sys/kernel/btf/vmlinux. Without it the program
-# loads and then fails to attach — systemd says "bpf-restrict-fs: Failed to load BPF
-# object: No such process" at every boot.
-#
-# DEBUG_INFO_BTF alone does not get there, and used not to: it lives inside `if
-# DEBUG_INFO`, and DEBUG_INFO is not a knob either — it is selected by the "Debug
-# information" choice, which x86_64_defconfig leaves at None and arm64's defconfig sets
-# to REDUCED. Under a None or a REDUCED choice the symbol does not exist to be set, so
-# the line below it was a no-op on both arches. Settling that choice here is what makes
-# it real, and what makes this the expensive option it was always described as: the
-# kernel is compiled with full debug info and pahole runs over vmlinux (dwarves is in
-# builder/deps.txt for exactly that). Only the .BTF section is installed; the
-# DWARF stays behind in the build tree.
+# An LSM program names the kernel function it hooks, which needs /sys/kernel/btf/vmlinux
+# ("bpf-restrict-fs: ... No such process" at boot without it). DEBUG_INFO_BTF lives inside
+# `if DEBUG_INFO`, which only the "Debug information" choice selects, so the choice has to
+# be settled first. Expensive: full debug info plus pahole (dwarves, builder/deps.txt);
+# only the .BTF section ships.
 CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT=y
 # CONFIG_DEBUG_INFO_REDUCED is not set
 CONFIG_DEBUG_INFO_BTF=y
@@ -93,19 +52,15 @@ CONFIG_DEBUG_INFO_BTF=y
 # Image layers.
 CONFIG_OVERLAY_FS=y
 
-# Containers built for another architecture: `podman run --platform` runs them through a
-# qemu-user interpreter the kernel hands their binaries to, and Rosetta on an Apple host
-# registers itself the same way. arm64's defconfig has it; x86_64_defconfig does not.
+# Foreign-arch containers: `podman run --platform` through qemu-user, or Rosetta.
 CONFIG_BINFMT_MISC=y
 
-# Container networking: a veth pair per container into a bridge, tun for anything
-# doing userspace networking (slirp4netns and friends).
+# Container networking: veth into a bridge, tun for userspace networking.
 CONFIG_VETH=y
 CONFIG_BRIDGE=y
 CONFIG_TUN=y
 
-# Port publishing is NAT, and nftables is hidden behind NETFILTER_ADVANCED, which
-# defconfig leaves off. NF_CONNTRACK and NF_NAT are already on.
+# nftables and NAT for published ports; nftables hides behind NETFILTER_ADVANCED.
 CONFIG_NETFILTER_ADVANCED=y
 CONFIG_BRIDGE_NETFILTER=y
 CONFIG_NF_TABLES=y
@@ -114,32 +69,19 @@ CONFIG_NFT_NAT=y
 CONFIG_NFT_MASQ=y
 CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
 
-# What an engine's own nftables rules use: dockerd's nftables backend writes `ct state`
-# and `fib daddr type local`, and loads an ip6 table beside the ip one. Missing the IPv6
-# fib makes that table fail to load, which dockerd reports as a warning and IPv6
-# container networking quietly lacks.
+# What engines' nftables rules use. dockerd: `ct state`, `fib daddr type local`, for ip
+# and ip6.
 CONFIG_NFT_CT=y
 CONFIG_NFT_FIB_IPV4=y
 CONFIG_NFT_FIB_IPV6=y
-# netavark, podman's backend, writes one `inet` table for both families rather than an ip
-# and an ip6 table, and `fib` inside an inet table is its own expression type: with only
-# the two above, nft answers "Could not process rule: No such file or directory" and no
-# container gets a network.
+# netavark: `fib` inside an `inet` table ("No such file or directory" without it), and
+# `ct mark set` for published ports ("Operation not supported").
 CONFIG_NFT_FIB_INET=y
-# And `ct mark set`, which netavark uses to mark a published port's connections so its
-# postrouting chain knows to masquerade them. The mark lives in the conntrack entry and
-# is its own option; without it nft rejects the rule with "Operation not supported".
 CONFIG_NF_CONNTRACK_MARK=y
 
-# And what the iptables command line needs on top. There are none of the legacy IP_NF_*
-# tables (NETFILTER_XTABLES_LEGACY is off), so packages/iptables is iptables-nft: it
-# writes nf_tables rules, and any match or target it cannot express natively it embeds
-# as the x_tables extension itself, run by NFT_COMPAT. Without NFT_COMPAT every rule with
-# a -m or a -j other than a verdict fails with "Extension ... revision 0 not supported,
-# missing kernel module?". The extensions below are the ones Docker's default iptables
-# backend uses — conntrack --ctstate, addrtype --dst-type (above), mark, and the
-# MASQUERADE, SNAT and DNAT targets — named here even where defconfig already has them,
-# so the check after `make vm.config` holds both arches to it.
+# iptables-nft: matches and targets it cannot express natively run as x_tables
+# extensions through NFT_COMPAT ("revision 0 not supported" without one). These are
+# Docker's iptables set, named even where defconfig has them so the check holds them.
 CONFIG_NFT_COMPAT=y
 CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y
 CONFIG_NETFILTER_XT_MARK=y
@@ -148,32 +90,14 @@ CONFIG_NETFILTER_XT_NAT=y
 EOF
 make container.config
 
-# What an orchestrator needs on top of a container runtime: kubelet and CRI-O on the
-# host, kube-proxy and a CNI as pods (docs/sysext.md). Its own fragment rather than more
-# of container.config, which is about what *a container* needs — this is what a node in
-# a cluster needs, and there is no module to load it from later: CONFIG_MODULES is off,
-# so a feature a pod expects of the host kernel is in the image or it is nowhere.
-#
-# kube-proxy runs in nftables mode — GA, and the older iptables mode wants a much longer
-# list of x_tables matches for the same job. What its rules use beyond the container
-# fragment:
-#   NFT_NUMGEN   `numgen random mod N vmap`, how a service picks an endpoint
-#   NFT_REJECT   `reject`, which a service with no endpoints answers with
-#   NF_CT_NETLINK  kube-proxy deletes stale UDP conntrack entries over netlink when
-#                an endpoint goes away; without it DNS to a restarted CoreDNS blackholes
-#                until the entry times out
-# and for the CNIs that run as pods:
-#   VXLAN        the overlay flannel and Calico default to on a multi-node cluster
-#   NFT_REDIR    `redirect`, used by service meshes and Calico's nftables dataplane
-#   NF_TABLES_NETDEV  the netdev family, ingress hooks on an interface rather than a
-#                table — Calico's nftables dataplane and Cilium's host firewall
-# and two x_tables extensions that kubeadm's preflight requires of every node, whatever
-# mode kube-proxy runs in — its SystemVerification check reads this kernel's config
-# (through /usr/lib/modules/<release>/config, below) and refuses to init or join without
-# them. They are also what the iptables dataplanes of flannel and Calico use, through
-# NFT_COMPAT here:
-#   NETFILTER_XT_TARGET_REDIRECT  `-j REDIRECT` (kubeadm asks for it as IP_NF_TARGET_REDIRECT)
-#   NETFILTER_XT_MATCH_COMMENT    `-m comment`, which every kube-proxy and CNI rule carries
+# What a Kubernetes node needs on top (docs/sysext.md). With modules off, a feature a pod
+# expects of the host kernel is in here or nowhere.
+#   NFT_NUMGEN, NFT_REJECT  kube-proxy's nftables mode: endpoint choice, no-endpoint reject
+#   NF_CT_NETLINK  kube-proxy flushes stale UDP conntrack (else DNS to a restarted CoreDNS
+#                  blackholes)
+#   VXLAN, NFT_REDIR, NF_TABLES_NETDEV  CNI overlays and dataplanes (flannel, Calico, Cilium)
+#   NETFILTER_XT_TARGET_REDIRECT, NETFILTER_XT_MATCH_COMMENT  kubeadm preflight refuses a
+#                  node without them (it reads /usr/lib/modules/<release>/config, below)
 cat > kernel/configs/k8s.config <<'EOF'
 CONFIG_NFT_NUMGEN=y
 CONFIG_NFT_REJECT=y
@@ -186,26 +110,12 @@ CONFIG_NETFILTER_XT_MATCH_COMMENT=y
 EOF
 make k8s.config
 
-# The virtual hardware of the VMMs this image targets, beyond the qemu PCI devices
-# kvm_guest.config already turns on. What each one brings:
-#
-#   Firecracker (and cloud-hypervisor) has no PCI: every device is virtio over MMIO, and
-#     on x86 the devices are named on the kernel command line (`virtio_mmio.device=`),
-#     which VIRTIO_MMIO_CMDLINE_DEVICES is what parses. It boots an uncompressed vmlinux
-#     through the PVH entry point. Its console is an 8250 on both architectures — on
-#     arm64 a device-tree one, which SERIAL_OF_PLATFORM drives — and on x86 its "send
-#     Ctrl-Alt-Del" goes through an i8042 keyboard controller, which is why SERIO_I8042
-#     and ATKBD stay on.
-#   Apple's Virtualization.framework (and vfkit on top of it) gives the guest a virtio
-#     console (hvc0), virtiofs for shared directories and vsock for host↔guest control,
-#     and boots an uncompressed arm64 Image directly.
-#   All of them offer a balloon, an entropy source and, after a snapshot restore, a VM
-#     generation id: VMGENID is what tells the guest's RNG that it has been cloned and
-#     has to reseed, so two VMs restored from one snapshot do not share a key stream.
-#
-# virtiofs replaces 9p (which kvm_guest.config asks for, and vm.config clears) as the
-# way to share a host directory: it is what Virtualization.framework offers, qemu has it
-# through virtiofsd, and it is the one with page-cache sharing and real POSIX semantics.
+# The VMMs' virtual hardware, beyond kvm_guest.config's qemu PCI devices.
+#   Firecracker: no PCI, virtio-mmio devices named on the command line, PVH boot of a
+#     vmlinux, an 8250 console (device-tree on arm64), Ctrl-Alt-Del through i8042 on x86.
+#   Virtualization.framework: hvc0, virtiofs (which replaces 9p here), vsock.
+#   All: balloon, virtio-rng, and VMGENID, so two VMs restored from one snapshot reseed
+#     their RNG instead of sharing a key stream.
 cat > kernel/configs/guest.config <<'EOF'
 CONFIG_VIRTIO_MMIO=y
 CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y
@@ -222,12 +132,8 @@ CONFIG_VMGENID=y
 CONFIG_SERIAL_8250=y
 CONFIG_SERIAL_8250_CONSOLE=y
 EOF
-# The lines that only exist on one architecture, appended per architecture because the
-# check below holds every =y line of this fragment to being in .config. x86: Firecracker's
-# PVH entry and i8042 above. arm64: qemu virt's PL011 console, PL031 clock and PL061 GPIO
-# with gpio-keys on top (its power button is a GPIO line), the generic ECAM host bridge
-# that both qemu virt and Virtualization.framework expose, and Firecracker's 8250. The
-# defconfig has all of these already; naming them is what makes losing one an error.
+# Per-arch lines, since the check requires every =y here. arm64: qemu virt's PL011, PL031,
+# PL061 + gpio-keys (the power button), and the ECAM host bridge.
 case "$(uname -m)" in
     x86_64)  printf '%s\n' CONFIG_PVH=y CONFIG_SERIO_I8042=y CONFIG_KEYBOARD_ATKBD=y ;;
     aarch64) printf '%s\n' CONFIG_SERIAL_OF_PLATFORM=y CONFIG_SERIAL_AMBA_PL011=y \
@@ -236,21 +142,9 @@ case "$(uname -m)" in
 esac >> kernel/configs/guest.config
 make guest.config
 
-# The root filesystem. The image is EROFS — read-only by construction, compressed, and
-# what image/build-rootfs.sh lays the tree out as — so the kernel has to mount it with no
-# initrd to load a driver from. ZIP is the compressed-file support, with LZ4 always built
-# in; ZIP_ZSTD is the one mkfs.erofs is asked for, because on this tree it makes an image
-# 28% smaller than LZ4HC at the same cluster size and still decompresses faster than a
-# virtio disk reads (see image/build-rootfs.sh). Its own fragment rather
-# than a line in container.config: it is what boots the machine, not what runs containers
-# on it, and the check below holds both to the same standard.
-#
-# And the integrity check underneath it: dm-verity verifies every block read from the
-# image against a hash tree whose root hash is on the kernel command line, so the image
-# is not only unwritable but unforgeable — a changed byte is an I/O error, not a changed
-# file. DM_INIT is what makes that possible without an initrd: it builds the verity
-# device from `dm-mod.create=` before the root is mounted, which is otherwise the job of
-# veritysetup in an initramfs. MD is only the menu device-mapper lives in.
+# The root: EROFS with zstd (what image/build-rootfs.sh's mkfs.erofs uses), on dm-verity.
+# DM_INIT builds the verity device from `dm-mod.create=` with no initrd. MD is only the
+# menu device-mapper lives in.
 cat > kernel/configs/rootfs.config <<'EOF'
 CONFIG_EROFS_FS=y
 CONFIG_EROFS_FS_ZIP=y
@@ -262,26 +156,10 @@ CONFIG_DM_VERITY=y
 EOF
 make rootfs.config
 
-# What the tracing tools in the debug system extension attach to (docs/debugging.md).
-# With modules off an extension can add programs but never kernel features, so whatever
-# perf, bpftool and the like are meant to be able to see has to be here, on every
-# machine, whether the extension is attached or not.
-#
-# KPROBES and KPROBE_EVENTS: a probe on any kernel function, which is what `perf probe`
-#   places and what a BPF kprobe program attaches to. x86_64_defconfig already had both,
-#   with nothing naming them; arm64's defconfig had neither, so arm64 had no kprobes at
-#   all until this fragment (and PROBE_EVENTS_BTF_ARGS came with them).
-# UPROBE_EVENTS: the same for a function in a program or library; container.config
-#   already relies on it for BPF_EVENTS, and this says it is wanted for itself too.
-# FTRACE_SYSCALLS: the syscalls:sys_enter_* and sys_exit_* tracepoints. `perf trace` is
-#   built on them — without them it is strace with nothing to read — and so is every
-#   BPF tool that counts system calls across the machine. A tracepoint costs a patched
-#   branch until something enables it.
-#
-# Not FUNCTION_TRACER, which BPF fentry/fexit programs need: it puts a patchable entry in
-# every kernel function, which costs size on every machine, and nothing in the extension
-# uses it yet — it comes with the first tool that does. Not IKCONFIG: the config is
-# already at /usr/lib/modules/<release>/config (below).
+# What the debug extension's tracers attach to (docs/debugging.md); an extension can add
+# programs, never kernel features. Kprobes and uprobes, and the syscall tracepoints
+# `perf trace` is built on. Not FUNCTION_TRACER (fentry/fexit): it costs every machine
+# size, and nothing uses it yet.
 cat > kernel/configs/trace.config <<'EOF'
 CONFIG_KPROBES=y
 CONFIG_KPROBE_EVENTS=y
@@ -290,29 +168,13 @@ CONFIG_FTRACE_SYSCALLS=y
 EOF
 make trace.config
 
-# A second fragment for the other direction: the arch's defconfig is a general-purpose
-# config and turns on hardware a VM will never have. Only ever a guest (qemu today,
-# rust-vmm-style VMMs next), so this is dead code and, in the wireless case, a boot-time
-# error — cfg80211 asks the firmware loader for regulatory.db, which the image does not
-# ship and never will, and the failure lands in the journal at every boot.
-# Order matters: this comes after container.config so that where the two disagree the
-# subtractive fragment is what olddefconfig sees last. Nothing here may take away what
-# container.config just turned on — the guest devices are virtio and nothing else.
-#
-# A handful of lines below (AGP, the IOMMU pair, ACPI_DOCK/ACPI_BGRT, SCHED_MC_PRIO,
-# X86_CHECK_BIOS_CORRUPTION, EARLY_PRINTK_DBGP, MACINTOSH_DRIVERS, EEEPC_LAPTOP) name
-# symbols that only exist under arch/x86, and simply do not appear in the .config when
-# this runs on arm64. That is fine and the check below allows it: a subtraction only has
-# to hold for symbols this architecture actually has.
+# The other direction: hardware defconfig turns on that no VM has. Merged last, and it may
+# not take back anything the fragments above turn on. A symbol that does not exist on this
+# arch is fine; one that exists and stays on fails the check. When a line does not stick,
+# clear the symbol that selects it.
 cat > kernel/configs/vm.config <<'EOF'
-# arm64's defconfig is a multi-platform config: it turns on every ARM SoC vendor's
-# platform support, and each one drags in that SoC's pinctrl, clocks, PHYs, regulators,
-# MMC, SPI and RTC behind it. That is 2484 symbols built in on arm64 that amd64 never
-# has, and it is why the arm64 kernel is 54 MB against amd64's 11 MB and takes twice as
-# long to compile. qemu's virt board needs none of it: there is no ARCH_VIRT symbol
-# because the board is described entirely by the device tree qemu passes in and driven
-# by generic drivers — GICv3, the PL011 UART, the architected timer, PSCI and virtio.
-# These are all arm64-only symbols, so on amd64 they simply do not appear.
+# arm64's SoC platforms, each dragging in its pinctrl, clocks, PHYs, MMC, SPI and RTC.
+# qemu virt needs none: it is device tree plus generic drivers (GIC, PL011, PSCI, virtio).
 # CONFIG_ARCH_ACTIONS is not set
 # CONFIG_ARCH_AIROHA is not set
 # CONFIG_ARCH_ALPINE is not set
@@ -362,11 +224,8 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_ARCH_XGENE is not set
 # CONFIG_ARCH_ZYNQMP is not set
 
-# Buses and device classes the virt board does not expose, all of which x86_64_defconfig
-# already leaves off — so these lines only ever do anything on arm64, and what they do is
-# close the gap rather than take anything away from amd64. Note SERIAL_8250 is *not* here
-# even though the virt board has no 8250 either: this fragment is shared, and amd64's
-# console is exactly that.
+# Buses the virt board does not have (x86_64_defconfig already leaves them off). Never add
+# SERIAL_8250 here: it is amd64's and Firecracker's console.
 # CONFIG_MTD is not set
 # CONFIG_MMC is not set
 # CONFIG_SPI is not set
@@ -374,26 +233,17 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_BT is not set
 # CONFIG_CAN is not set
 
-# No radio in a virtual machine. Clearing WIRELESS takes CFG80211 and MAC80211 with it —
-# but only once WLAN goes too: WLAN is `default y` and `select WIRELESS`, so clearing
-# WIRELESS on its own was undone by olddefconfig on the spot, on both arches. The
-# leftover cfg80211 is what asks the firmware loader for a regulatory.db the image does
-# not ship, which is the boot-time error this was written to remove in the first place.
+# No radio (cfg80211 would ask for a regulatory.db at every boot). WLAN selects WIRELESS.
 # CONFIG_WLAN is not set
 # CONFIG_WIRELESS is not set
 # CONFIG_RFKILL is not set
 
-# No display. Every console we use is the 8250 serial port (`console=ttyS0`, and every
-# qemu invocation in test/ and tools/ passes -nographic), so the DRM stack — i915, and
-# virtio-gpu from kvm_guest.config — draws for nobody. This is the single biggest driver
-# in the tree.
+# No display: every console is serial or hvc0.
 # CONFIG_DRM is not set
 # CONFIG_AGP is not set
 # CONFIG_SOUND is not set
 
-# No USB controller is on the qemu command line, so the four host controllers, the
-# storage and printer class drivers and the HID layer above them are all unreachable.
-# Input stays for virtio-input; the exotic gamepad and tablet drivers do not.
+# No USB, no HID. Input stays for virtio-input.
 # CONFIG_USB_SUPPORT is not set
 # CONFIG_HID_SUPPORT is not set
 # CONFIG_INPUT_JOYSTICK is not set
@@ -401,12 +251,8 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_INPUT_TOUCHSCREEN is not set
 # CONFIG_INPUT_MISC is not set
 
-# The root disk is virtio-blk (`-drive if=virtio`), which leaves defconfig's SATA and
-# PATA controllers, the CD-ROM and SCSI generic paths, software RAID and PCMCIA with
-# nothing to bind to. VIRTIO_BLK, BLK_DEV_SD and SCSI_VIRTIO stay; so does the loop
-# device, which is how a container image gets mounted. Device-mapper stays too, for
-# dm-verity (rootfs.config), but only that target: the MD menu it lives in is kept,
-# and RAID inside it is not, nor the two other targets defconfig turns on.
+# Disks are virtio-blk: no SATA/PATA, CD-ROM, SCSI generic, RAID or PCMCIA. Loop and
+# device-mapper (for verity) stay; the other dm targets go.
 # CONFIG_DM_MIRROR is not set
 # CONFIG_DM_ZERO is not set
 # CONFIG_ATA is not set
@@ -416,43 +262,31 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_PCCARD is not set
 # CONFIG_MACINTOSH_DRIVERS is not set
 # CONFIG_EEEPC_LAPTOP is not set
-# No camera, tuner or capture card on any qemu command line here, and MEDIA_SUPPORT is
-# what drags I2C back in behind it (MEDIA_SUBDRV_AUTOSELECT selects it), so clearing I2C
-# alone did nothing on arm64, whose defconfig has the media stack and x86_64's does not.
+# No media devices; MEDIA_SUPPORT selects I2C on arm64.
 # CONFIG_MEDIA_SUPPORT is not set
 # CONFIG_I2C is not set
 # CONFIG_WATCHDOG is not set
 # CONFIG_NVRAM is not set
 # CONFIG_DMADEVICES is not set
 
-# The NIC is virtio-net (`-nic user,model=virtio-net-pci`). CONFIG_ETHERNET is the menu
-# holding every vendor driver — tigon3, e1000, e1000e, sky2, forcedeth, 8139too, r8169,
-# tulip — and virtio_net does not live under it, so this drops them all and keeps ours.
+# The NIC is virtio-net, which lives outside the ETHERNET menu of vendor drivers.
 # CONFIG_ETHERNET is not set
 # CONFIG_NETCONSOLE is not set
 
-# IOMMU emulation is for passing host devices into a guest, which is the other side of
-# the boundary we live on.
+# IOMMUs are for passing devices through, which is the host's side.
 # CONFIG_AMD_IOMMU is not set
 # CONFIG_INTEL_IOMMU is not set
 
-# Power management a VM does not do: there is no disk to suspend to, no CPU frequency to
-# scale (the vCPU's clock is the host's problem), and no dock or boot splash.
+# Power management a VM does not do. SCHED_MC_PRIO selects CPU_FREQ on x86.
 # CONFIG_HIBERNATION is not set
-# SCHED_MC_PRIO is `default y` on x86 and selects CPU_FREQ, so that one had to go first
-# or the governor stack came back with it.
 # CONFIG_SCHED_MC_PRIO is not set
 # CONFIG_CPU_FREQ is not set
 # CONFIG_ACPI_DOCK is not set
 # CONFIG_ACPI_BGRT is not set
 
-# Filesystems with nothing to mount: no optical media, no FAT partition (there is no
-# ESP — we are booted with -kernel), no NFS server anywhere near this image, and quotas
-# on a single-user appliance root. ext4 is the root, 9p stays for host directory
-# sharing, and autofs stays because systemd's .automount units need it.
+# Filesystems with nothing to mount (no ESP: the kernel is passed directly). VFAT_FS
+# selects FAT_FS. autofs stays for systemd's .automount units.
 # CONFIG_ISO9660_FS is not set
-# VFAT_FS is the one both defconfigs actually set, and it selects FAT_FS, so clearing
-# FAT_FS on its own came straight back.
 # CONFIG_VFAT_FS is not set
 # CONFIG_MSDOS_FS is not set
 # CONFIG_FAT_FS is not set
@@ -461,28 +295,21 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_NLS_CODEPAGE_437 is not set
 # CONFIG_NLS_ISO8859_1 is not set
 
-# SELinux is compiled in by defconfig, but every package here is built --without-selinux
-# and the image ships no policy, so the hooks can never do anything. NETLABEL and the
-# secmark netfilter targets exist only to label packets for it. SECURITY itself stays:
-# BPF_LSM hangs off it.
+# No SELinux userspace or policy, and the packet labelling that exists for it. SECURITY
+# stays for BPF_LSM.
 # CONFIG_SECURITY_SELINUX is not set
 # CONFIG_NETLABEL is not set
 # CONFIG_NETFILTER_XT_TARGET_SECMARK is not set
 # CONFIG_NETFILTER_XT_TARGET_CONNSECMARK is not set
 
-# The audit subsystem has no consumer: systemd is built -Daudit=disabled and there is no
-# auditd to read the netlink socket.
+# No auditd, and systemd is built -Daudit=disabled.
 # CONFIG_AUDIT is not set
 
-# Everything in this config is built in and `make modules_install` is never run, so a
-# symbol that ends up =m is silently dropped from the image instead of failing the
-# build. Turning modules off makes that impossible: kconfig has to resolve every
-# tristate to y or n, and the module loader, its signature checking and the /proc and
-# sysfs interfaces around it stop being built at all.
+# No modules: modules_install never runs, so an =m would be silently missing. With this
+# off every tristate resolves to y or n.
 # CONFIG_MODULES is not set
 
-# Kernel debugging left on by defconfig. DEBUG_KERNEL itself has to stay — kvm_guest.config
-# asks for it and DEBUG_INFO_BTF needs it — but the expensive checks under it do not.
+# defconfig's debugging. DEBUG_KERNEL stays (kvm_guest.config, DEBUG_INFO_BTF).
 # CONFIG_DEBUG_ENTRY is not set
 # CONFIG_DEBUG_WX is not set
 # CONFIG_DEBUG_STACK_USAGE is not set
@@ -499,26 +326,15 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_EARLY_PRINTK_DBGP is not set
 # CONFIG_X86_CHECK_BIOS_CORRUPTION is not set
 
-# cgroup controllers for hardware this kernel no longer has drivers for.
+# A cgroup controller for hardware with no driver here.
 # CONFIG_CGROUP_RDMA is not set
 
-# Everything below this line is the same rule applied further: hardware no VMM this
-# image targets (qemu, Firecracker, Virtualization.framework) puts in a guest, and
-# kernel features with nothing in the image to use them. Most of it is arm64's, whose
-# defconfig is a board-support config and turns these on outside the ARCH_* gates above;
-# the lines that only exist on one architecture vanish on the other, as above.
-#
-# Other hypervisors' guest support, and being a hypervisor: KVM is the host side, which a
-# guest only needs for nested virtualization, and VFIO is passing a device through to a
-# guest of our own. Xen is a platform this image does not run on.
+# Being a hypervisor (KVM, VFIO), or a guest of one we do not target (Xen).
 # CONFIG_XEN is not set
 # CONFIG_KVM is not set
 # CONFIG_VFIO is not set
 
-# Firmware interfaces and management controllers of real machines: ChromeOS's embedded
-# controller and coreboot tables, TrustZone (OP-TEE), the TPM, IPMI BMCs, memory error
-# reporting, ARM's SoC power/clock firmware (SCMI, SCPI) and its mailboxes, UEFI capsule
-# updates, and coprocessors (remoteproc, rpmsg).
+# Firmware and management interfaces of real machines.
 # CONFIG_CHROME_PLATFORMS is not set
 # CONFIG_GOOGLE_FIRMWARE is not set
 # CONFIG_TEE is not set
@@ -534,14 +350,8 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_RPMSG is not set
 # CONFIG_RPMSG_VIRTIO is not set
 
-# SoC buses and the device classes that only exist on boards: industrial I/O sensors,
-# PWM, FPGAs, LEDs, batteries and chargers, thermal zones and fans, hardware monitoring,
-# the power-reset drivers (PSCI and ACPI already power a guest off), on-chip
-# interconnects, memory controllers, muxes, hardware spinlocks and timestamping, device
-# frequency scaling, infrared remotes, HDMI CEC, CoreSight tracing, and the staging tree.
-# POWER_SUPPLY and POWER_RESET themselves are selected by ARM64, so on arm64 it is the
-# drivers under them that go. THERMAL is selected by ACPI_PROCESSOR, which ACPI CPU
-# hotplug needs, so only ACPI's thermal zone goes (below), not the framework.
+# SoC buses and board-only device classes. ARM64 selects POWER_SUPPLY and POWER_RESET, so
+# their drivers go instead; THERMAL stays for ACPI_PROCESSOR.
 # CONFIG_SLIMBUS is not set
 # CONFIG_SPMI is not set
 # CONFIG_GREYBUS is not set
@@ -572,16 +382,13 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_STM is not set
 # CONFIG_STAGING is not set
 
-# Radios other than the Wi-Fi and Bluetooth already cleared: NFC, cellular modems, GPS.
+# Other radios.
 # CONFIG_NFC is not set
 # CONFIG_WWAN is not set
 # CONFIG_GNSS is not set
 
-# PCI from the other side, and PCI host controllers of real SoCs. qemu's virt board and
-# Virtualization.framework both expose a generic ECAM host (PCI_HOST_GENERIC, kept in
-# guest.config); x86 has no host driver to choose. A guest is never a PCI endpoint, and
-# SR-IOV's PF side belongs to the host. The IOMMU a guest could be given is virtio-iommu,
-# not an SMMU.
+# PCI endpoint and SR-IOV (host side), SoC PCI hosts and SMMUs. The generic ECAM host
+# stays (guest.config).
 # CONFIG_PCI_ENDPOINT is not set
 # CONFIG_PCI_IOV is not set
 # CONFIG_PCIE_ALTERA is not set
@@ -594,29 +401,21 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_ARM_SMMU is not set
 # CONFIG_ARM_SMMU_V3 is not set
 
-# Storage controllers no target VMM emulates: the root and /var are virtio-blk, and
-# virtio-scsi stays for the VMMs that prefer it. NVMe, SAS HBAs and UFS do not.
+# Storage controllers no target VMM emulates. virtio-scsi stays.
 # CONFIG_BLK_DEV_NVME is not set
 # CONFIG_MEGARAID_SAS is not set
 # CONFIG_SCSI_MPT3SAS is not set
 # CONFIG_SCSI_UFSHCD is not set
 
-# Filesystems with nothing to mount, as above: the image is EROFS, /var is ext4, a host
-# directory is virtiofs (guest.config) rather than 9p, and nothing ships a btrfs or
-# squashfs. CUSE is character devices in userspace, which nothing here implements.
+# More filesystems with nothing to mount; host directories are virtiofs, not 9p.
 # CONFIG_NET_9P is not set
 # CONFIG_9P_FS is not set
 # CONFIG_BTRFS_FS is not set
 # CONFIG_SQUASHFS is not set
 # CONFIG_CUSE is not set
 
-# Networking for switch silicon and time-sensitive networking: DSA drives the switch chip
-# on a router board, HSR/PRP is industrial ring redundancy, and CBS/ETF/TAPRIO/MQPRIO
-# schedule hardware transmit queues a virtio NIC does not have. Ethernet PHYs are the
-# chip under a NIC driver, and the NIC drivers went with CONFIG_ETHERNET — PHYLIB itself
-# is what the Synopsys PCS (an stmmac part) selects, and the generic PHY framework is what
-# the Cadence SerDes and MIPI D-PHYs and the CAN transceiver select. IPVS is kube-proxy's
-# third mode, behind the nftables one k8s.config is for.
+# Switch silicon, TSN queueing, PHYs (and what selects them), and IPVS (kube-proxy runs
+# nftables).
 # CONFIG_NET_DSA is not set
 # CONFIG_HSR is not set
 # CONFIG_NET_SCH_CBS is not set
@@ -633,24 +432,17 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_PHY_CAN_TRANSCEIVER is not set
 # CONFIG_IP_VS is not set
 
-# No display, as with DRM above: no framebuffer and no boot logo. The virtual terminal
-# layer stays, though every console here is a serial line or hvc0: VT only has a prompt
-# under CONFIG_EXPERT, and turning EXPERT on changes defaults all over the tree to buy one
-# subtraction — exactly the kind of silent change this file exists to avoid.
+# No framebuffer. VT stays: it is only settable under EXPERT, which changes defaults
+# tree-wide.
 # CONFIG_FB is not set
 # CONFIG_LOGO is not set
 
-# Input devices of a desk: a PS/2 mouse, ARM's PS/2 controller, polled GPIO keys. The
-# i8042 keyboard on x86 and the GPIO power key on arm64 stay (guest.config).
+# Desk input devices. i8042 and the GPIO power key stay (guest.config).
 # CONFIG_INPUT_MOUSE is not set
 # CONFIG_SERIO_AMBAKMI is not set
 # CONFIG_KEYBOARD_GPIO_POLLED is not set
 
-# UARTs. Every console here is a plain 8250/16550 (x86 qemu, Firecracker), a PL011
-# (arm64 qemu) or hvc0, so the many-ports and RSA extensions, the PCI serial cards and
-# the vendor variants — Intel's LPSS and MID, Exar, Pericom, DesignWare, Freescale,
-# Xilinx — and the serdev bus for devices hanging off a UART have nothing to drive. To
-# repeat the warning above: SERIAL_8250 itself is amd64's console and must never be here.
+# UART variants and serial cards. SERIAL_8250 itself must stay.
 # CONFIG_SERIAL_8250_EXTENDED is not set
 # CONFIG_SERIAL_8250_PCI is not set
 # CONFIG_SERIAL_8250_EXAR is not set
@@ -663,8 +455,7 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_SERIAL_XILINX_PS_UART is not set
 # CONFIG_SERIAL_DEV_BUS is not set
 
-# Entropy sources of particular CPUs and SoCs. The guest's are virtio-rng (guest.config)
-# and, on arm64, the SMCCC TRNG KVM offers, which stays; RDRAND needs no driver.
+# CPU and SoC entropy drivers; the guest has virtio-rng and (arm64) the SMCCC TRNG.
 # CONFIG_HW_RANDOM_INTEL is not set
 # CONFIG_HW_RANDOM_AMD is not set
 # CONFIG_HW_RANDOM_VIA is not set
@@ -672,10 +463,7 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_HW_RANDOM_CN10K is not set
 # CONFIG_HW_RANDOM_HISI_TRNG is not set
 
-# Performance counters of the physical machine. A guest gets the architected core PMU
-# (x86's, ARM's PMUv3) virtualized, and nothing else: uncore, power and C-state counters,
-# ARM's interconnect and memory-controller PMUs and its statistical profiling are host
-# hardware no VMM passes in.
+# Host PMUs. A guest only gets the architected core PMU.
 # CONFIG_PERF_EVENTS_INTEL_UNCORE is not set
 # CONFIG_PERF_EVENTS_INTEL_RAPL is not set
 # CONFIG_PERF_EVENTS_INTEL_CSTATE is not set
@@ -690,25 +478,15 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_ARM_CORESIGHT_PMU_ARCH_SYSTEM_PMU is not set
 # CONFIG_HISI_PMU is not set
 
-# A laptop's ACPI devices: no battery, no AC adapter, no fan, no thermal zone, no
-# backlight (ACPI_VIDEO, which selects THERMAL on its own account).
+# A laptop's ACPI devices.
 # CONFIG_ACPI_VIDEO is not set
 # CONFIG_ACPI_AC is not set
 # CONFIG_ACPI_BATTERY is not set
 # CONFIG_ACPI_FAN is not set
 # CONFIG_ACPI_THERMAL is not set
 
-# Board support that arm64's defconfig turns on outside the ARCH_* gates, because the
-# driver has a COMPILE_TEST or OF alternative to the platform symbol: the ASPEED BMC
-# family, Microchip PolarFire, Xilinx, the Raspberry Pi 5's RP1 southbridge, ARM's
-# Versatile Express, TI's SoC glue, Freescale's power controller, Socionext's interrupt
-# bridge, the MediaTek and HiSilicon PMICs behind phone and board power rails, SoC GPIO
-# blocks, SoC reset and pin controllers, the backlight a panel would have, the power
-# sequencing of Qualcomm's Wi-Fi/Bluetooth combo, Qualcomm's IPC router, an accelerator
-# framework, a reserved-memory NVMEM, and the reboot-mode plumbing for a bootloader that
-# reads a magic value, and the generic PCI slot power control that pulls power
-# sequencing in. qemu's virt board needs the PL011, PL031, PL061 and GPIO keys
-# (guest.config), and nothing in this list.
+# arm64 board support outside the ARCH_* gates (drivers with a COMPILE_TEST or OF
+# alternative).
 # CONFIG_ASPEED_LPC_CTRL is not set
 # CONFIG_ASPEED_LPC_SNOOP is not set
 # CONFIG_ASPEED_P2A_CTRL is not set
@@ -760,10 +538,7 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_IOMMU_IO_PGTABLE_ARMV7S is not set
 # CONFIG_SCSI_SAS_LIBSAS is not set
 
-# And x86's equivalent: Intel's Management Engine interface, the WMI and laptop-platform
-# drivers, Microsoft Surface support, the package-temperature and thermal-control-circuit
-# drivers, which read MSRs a VMM does not virtualize, and ACPI's debug statements and
-# initrd table override.
+# x86's equivalent: ME, WMI, laptop platforms, thermal MSRs, ACPI debugging.
 # CONFIG_INTEL_MEI is not set
 # CONFIG_X86_PLATFORM_DEVICES is not set
 # CONFIG_ACPI_WMI is not set
@@ -774,11 +549,8 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_ACPI_TABLE_UPGRADE is not set
 # CONFIG_PNP_DEBUG_MESSAGES is not set
 
-# Hardware features of block devices and switches no virtual one has: inline encryption
-# engines, T10 protection information, uploading firmware into a device, VLAN and
-# multicast registration with a physical switch (GVRP, MVRP), switchdev offload, the
-# per-stream gate of time-sensitive networking, and the macvtap device a host gives *its*
-# guests. MACVLAN and 802.1Q VLANs themselves stay: they are container networking.
+# Block and switch hardware features no virtual device has, and macvtap (for a host's
+# guests). MACVLAN and 802.1Q stay: container networking.
 # CONFIG_BLK_INLINE_ENCRYPTION is not set
 # CONFIG_BLK_DEV_INTEGRITY is not set
 # CONFIG_FW_UPLOAD is not set
@@ -788,19 +560,13 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_NET_ACT_GATE is not set
 # CONFIG_MACVTAP is not set
 
-# Kernel features with nothing in the image to use them: loading another kernel or
-# writing a crash dump (no kexec-tools, no kdump), merging identical pages (a host
-# feature, for its guests), the contiguous allocator and DMA-buf heaps (for camera and
-# display pipelines), and /proc/config.gz (the config is shipped as /boot/config).
+# Features nothing in the image uses. The config ships as /boot/config, not config.gz.
 # CONFIG_KEXEC_FILE is not set
 # CONFIG_CRASH_DUMP is not set
 # CONFIG_KSM is not set
 # CONFIG_CMA is not set
 # CONFIG_DMABUF_HEAPS is not set
 # CONFIG_IKCONFIG is not set
-# Nor for a RAM-backed oops log, which needs a memory region a bootloader reserves, or
-# one in EFI variables, the boot-time memory test, or the BSD-style ptys that predate
-# /dev/pts. pstore itself stays on arm64, where ACPI_APEI selects it for error records.
 # CONFIG_PSTORE_RAM is not set
 # CONFIG_EFI_VARS_PSTORE is not set
 # CONFIG_MEMTEST is not set
@@ -808,30 +574,13 @@ cat > kernel/configs/vm.config <<'EOF'
 EOF
 make vm.config
 
-# Now check that the two fragments above actually took, because nothing else does.
-# merge_config.sh only verifies its own work when it is the thing that runs the config
-# command; `make <name>.config` passes it -m and re-runs olddefconfig separately, so a
-# symbol whose dependencies are unmet is dropped between the two steps without a word.
-# Every one of the silent failures this file has had went that way: DEBUG_INFO_BTF asked
-# for inside a `if DEBUG_INFO` that was off, BPF_LSM asked for without the BPF_EVENTS
-# under it, WIRELESS cleared and immediately selected back by WLAN. A fragment that
-# quietly does nothing is worse than one that fails, so fail.
-#
-# The two halves are not checked the same way. Everything container.config,
-# rootfs.config, k8s.config, guest.config and trace.config turn on has to be there, no
-# exceptions.
-# vm.config is allowed to name symbols that do not exist on this architecture — the
-# x86-only lines above are expected to vanish on arm64 — so the bar there is that nothing
-# it clears came back on...
-#
-# ...and that every symbol any fragment names is still defined by *some* Kconfig file in
-# the tree, on any architecture. Without that, "not on this arch" and "not any more" look
-# the same: a cleared symbol upstream renamed is a line that does nothing, and the driver
-# it was clearing comes back under its new name with no check able to notice. This is the
-# one that keeps following the latest stable kernel safe — a release that renames a
-# symbol fails here, before the compile, instead of quietly changing the image. The cost
-# is that a fragment cannot clear a symbol before the kernel it is pinned to has it: a
-# line for a driver the next release adds goes in with the bump, not ahead of it.
+# Check the fragments took, because olddefconfig drops what it cannot apply in silence:
+#   - every symbol named is defined by some Kconfig, so a rename upstream fails here
+#     instead of quietly bringing a driver back (a clear for a symbol the pinned kernel
+#     does not have yet goes in with the bump);
+#   - everything the additive fragments turn on is =y;
+#   - nothing cleared came back =y.
+fragments=(kernel/configs/{container,rootfs,k8s,guest,trace}.config)
 unapplied=""
 
 kconfig_symbols=$(find . -name 'Kconfig*' -not -path './Documentation/*' -print0 \
@@ -842,23 +591,18 @@ while read -r sym; do
         unapplied="$unapplied  CONFIG_$sym  (no Kconfig in this kernel defines it — renamed or removed?)"$'\n'
     fi
 done < <(sed -n -E 's/^# CONFIG_([A-Z0-9_]+) is not set$/\1/p; s/^CONFIG_([A-Z0-9_]+)=.*/\1/p' \
-             kernel/configs/container.config kernel/configs/rootfs.config \
-             kernel/configs/k8s.config kernel/configs/guest.config \
-             kernel/configs/trace.config kernel/configs/vm.config | sort -u)
+             "${fragments[@]}" kernel/configs/vm.config | sort -u)
 while read -r sym; do
     if ! grep -qx "$sym" .config; then
         unapplied="$unapplied  $sym  (asked for, not in .config)"$'\n'
     fi
-done < <(grep -hE '^CONFIG_[A-Z0-9_]+=y$' kernel/configs/container.config \
-             kernel/configs/rootfs.config kernel/configs/k8s.config \
-             kernel/configs/guest.config kernel/configs/trace.config)
+done < <(grep -hE '^CONFIG_[A-Z0-9_]+=y$' "${fragments[@]}")
 
 while read -r sym; do
     if grep -qx "$sym=y" .config; then
         unapplied="$unapplied  $sym  (cleared, came back =y)"$'\n'
     fi
-done < <(sed -n 's/^# \(CONFIG_[A-Z0-9_]*\) is not set$/\1/p' \
-             kernel/configs/container.config kernel/configs/vm.config)
+done < <(sed -n 's/^# \(CONFIG_[A-Z0-9_]*\) is not set$/\1/p' kernel/configs/container.config kernel/configs/vm.config)
 
 if [ -n "$unapplied" ]; then
     echo "error: config fragments did not apply as written:" >&2
@@ -868,13 +612,7 @@ fi
 
 make
 
-# Building natively rather than cross-compiling means `make defconfig` already picked
-# x86_64_defconfig or arm64 defconfig on its own, from SUBARCH's `uname -m` — nothing
-# above this line is arch-conditional. But the two arches don't put the finished image
-# in the same place or call it the same thing: x86 emits a self-decompressing bzImage,
-# arm64 emits a plain Image (qemu-system-aarch64's -kernel loads that directly; there is
-# no bzImage equivalent). Staged under one conventional name either way, so nothing
-# downstream (test/, tools/, ci.yml) needs to know which arch built it.
+# Staged as boot/bzImage on both arches, so nothing downstream needs to know which.
 case "$(uname -m)" in
     x86_64)  kernel_image=arch/x86/boot/bzImage ;;
     aarch64) kernel_image=arch/arm64/boot/Image ;;
@@ -882,28 +620,16 @@ case "$(uname -m)" in
        exit 1 ;;
 esac
 
-# The rootfs image is what CI hands to qemu, so the kernel rides along inside it. It is
-# never loaded from there — qemu is passed -kernel — but keeping the two together means
-# a build artifact is always bootable on its own.
+# Never loaded from the image (VMMs are passed the kernel), but it keeps the artifact
+# bootable on its own.
 install -D -m 644 "$kernel_image" $ROOTFS/boot/bzImage
 
-# The resolved config rides along beside it, the way a distro ships /boot/config-*. The
-# check above proves the fragments applied; test/kernel-caps.sh reads this to prove the
-# result can actually run a container, which is a different question — a capability the
-# defconfig used to provide for free can stop being provided without any fragment
-# changing. It is ~250 KB and it is the only record of how the kernel next to it was
-# configured, which is worth that on its own when a boot misbehaves.
+# The resolved config, which test/kernel-caps.sh reads.
 install -D -m 644 .config $ROOTFS/boot/config
 
-# And under the name software asks for it by. There are no modules, but there is a
-# /usr/lib/modules/<release>, for two consumers that look there and nowhere this image
-# has: kubeadm's preflight reads the kernel config from a list of conventional paths
-# (/proc/config.gz, /boot/config-<release>, /usr/lib/modules/<release>/config — the
-# last is where Fedora ships it) and fails the node when it finds none; and kube-proxy's
-# DaemonSet, like Calico's and Cilium's, bind-mounts the host's /lib/modules, which on a
-# read-only root nothing can create at runtime, so every one of its pods fails with
-# "mkdir /lib/modules: read-only file system". A symlink rather than a second copy, and
-# /proc/config.gz stays off (vm.config) for the same reason: one copy is enough.
+# There are no modules, but /usr/lib/modules/<release> has to exist: kubeadm's preflight
+# reads the config from there, and kube-proxy and CNI pods bind-mount /lib/modules, which
+# a read-only root cannot create at runtime.
 release=$(make -s kernelrelease)
 install -d $ROOTFS/usr/lib/modules/$release
 ln -sfn ../../../../boot/config $ROOTFS/usr/lib/modules/$release/config
