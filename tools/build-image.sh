@@ -87,7 +87,7 @@ mkdir -p output extra
 # Rebuilt every time: image/files is COPYed into it, so a stale image ships a stale /etc.
 podman build -q -t rootfs-builder -f image/Containerfile .
 
-build=$(git rev-parse HEAD 2>/dev/null || echo local)
+build=${FLFS_BUILD:-$(git rev-parse HEAD 2>/dev/null || echo local)}
 for f in $flavours; do
     echo "==> image: $f"
     podman run --rm --security-opt label=disable \
