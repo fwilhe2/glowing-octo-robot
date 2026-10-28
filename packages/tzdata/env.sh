@@ -5,11 +5,11 @@
 #
 # TARBALL names the file in downloads/, not the one GitHub serves: the archive is called
 # 2026e.tar.gz, which says nothing about what it is in a directory shared by every package.
-VERSION="2026e"
+VERSION="2026f"
 PACKAGE="tzdata-${VERSION}"
 TARBALL="$PACKAGE.tar.gz"
 URL="https://github.com/eggert/tz/archive/refs/tags/${VERSION}.tar.gz"
-SHA256="5b62258a9a868813f00b070983b9b3e7279634575571a0fcc732be6a1f7047c1"
+SHA256="2fe4b4f27f75beea17970dfdd242ffb7f099fad9447950a39d0fe8eae522d8e2"
 # The data and zic are public domain; the BSD-3-Clause files LICENSE names (date.c,
 # strftime.c) are neither built nor shipped here.
 LICENSE="LicenseRef-PublicDomain"
