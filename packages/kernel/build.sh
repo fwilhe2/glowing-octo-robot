@@ -119,6 +119,11 @@ make k8s.config
 #   Virtualization.framework: hvc0, virtiofs (which replaces 9p here), vsock.
 #   All: balloon, virtio-rng, and VMGENID, so two VMs restored from one snapshot reseed
 #     their RNG instead of sharing a key stream.
+#   qemu: FW_CFG_SYSFS, qemu's fw_cfg entries under /sys/firmware/qemu_fw_cfg. systemd
+#     imports credentials from opt/io.systemd.credentials/ there (qemu's -fw_cfg,
+#     libvirt's <sysinfo type="fwcfg">), the channel for anything that should not be on
+#     the command line: too big for its 2048 bytes, or a secret, since /proc/cmdline is
+#     world-readable. Unlike SMBIOS it needs no firmware, so arm64's virt board has it too.
 cat > kernel/configs/guest.config <<'EOF'
 CONFIG_VIRTIO_MMIO=y
 CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y
@@ -134,6 +139,7 @@ CONFIG_VIRT_DRIVERS=y
 CONFIG_VMGENID=y
 CONFIG_SERIAL_8250=y
 CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_FW_CFG_SYSFS=y
 EOF
 # Per-arch lines, since the check requires every =y here. arm64: qemu virt's PL011, PL031,
 # PL061 + gpio-keys (the power button), and the ECAM host bridge.
