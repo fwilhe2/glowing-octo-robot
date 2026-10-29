@@ -73,8 +73,16 @@ TAINT_CHECK="echo SYSTEMD'-TAINT':[\$(systemctl show -p Tainted)]"
 ROFS="SYSTEMD-ROFS:"
 ROFS_CHECK="n=0; while IFS= read -r l; do [[ \$l == *'Read-only file system'* ]] && { n=\$((n+1)); echo \"ROFS> \$l\"; }; done < <(journalctl -b --no-pager -o short); echo SYSTEMD'-ROFS':[\$n]"
 DIAGNOSE="systemctl --failed --no-pager --plain; journalctl -p err -b --no-pager -o short"
+# A credential over SMBIOS rather than the command line, where the machine has SMBIOS
+# (amd64's pc): what libvirt uses for anything over the command line's 2048 bytes, and
+# readable only through DMI_SYSFS. Without it the credential is silently not there, so
+# nothing else would notice it go. $(< file) is a builtin; the value is not in the
+# command typed, so the echo cannot match.
+SMBIOS="SYSTEMD-SMBIOS:"
+SMBIOS_CHECK="echo SYSTEMD'-SMBIOS':[\$(< /run/credentials/@system/flfs.smbios-probe)]"
 
 qemu_setup
+[ "$ARCH" != amd64 ] || [ "$PROFILE" != pc ] || QEMU_SMBIOS_CREDENTIALS="flfs.smbios-probe=delivered"
 qemu_preflight
 qemu_boot
 console_login
@@ -137,6 +145,15 @@ case "$rofs" in
         fail "could not read the read-only filesystem error count (got: ${rofs:-<nothing>})"
         ;;
 esac
+
+if [ -n "${QEMU_SMBIOS_CREDENTIALS:-}" ]; then
+    console_send "$SMBIOS_CHECK"
+    await "$SMBIOS" 30 || fail "could not read the SMBIOS credential"
+    smbios=$(tr -d '\r' < "$LOG" | sed -n "s/.*${SMBIOS}\\[\\([^]]*\\)\\].*/\\1/p" | tail -1)
+    [ "$smbios" = delivered ] ||
+        fail "a credential passed as SMBIOS type 11 did not arrive (got: [${smbios}]) — is CONFIG_DMI_SYSFS in the kernel (guest.config)?"
+    echo ">> systemd OK: a credential arrived over SMBIOS"
+fi
 
 # Partly for the pleasure of seeing it in a CI log, and partly because this is the only
 # place anything in test/ runs a binary out of usr/bin that is not already on systemd's

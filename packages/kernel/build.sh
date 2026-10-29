@@ -119,6 +119,10 @@ make k8s.config
 #   Virtualization.framework: hvc0, virtiofs (which replaces 9p here), vsock.
 #   All: balloon, virtio-rng, and VMGENID, so two VMs restored from one snapshot reseed
 #     their RNG instead of sharing a key stream.
+#   x86: DMI_SYSFS, the SMBIOS entries under /sys/firmware/dmi/entries. systemd imports
+#     credentials from type 11 strings there (libvirt's <sysinfo><oemStrings>, qemu's
+#     -smbios type=11), which is the channel for anything too big for the command line.
+#     Not arm64: qemu virt has SMBIOS only under UEFI, and the kernel is booted directly.
 cat > kernel/configs/guest.config <<'EOF'
 CONFIG_VIRTIO_MMIO=y
 CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y
@@ -138,7 +142,7 @@ EOF
 # Per-arch lines, since the check requires every =y here. arm64: qemu virt's PL011, PL031,
 # PL061 + gpio-keys (the power button), and the ECAM host bridge.
 case "$(uname -m)" in
-    x86_64)  printf '%s\n' CONFIG_PVH=y CONFIG_SERIO_I8042=y CONFIG_KEYBOARD_ATKBD=y ;;
+    x86_64)  printf '%s\n' CONFIG_PVH=y CONFIG_SERIO_I8042=y CONFIG_KEYBOARD_ATKBD=y CONFIG_DMI_SYSFS=y ;;
     aarch64) printf '%s\n' CONFIG_SERIAL_OF_PLATFORM=y CONFIG_SERIAL_AMBA_PL011=y \
                  CONFIG_SERIAL_AMBA_PL011_CONSOLE=y CONFIG_PCI_HOST_GENERIC=y \
                  CONFIG_RTC_DRV_PL031=y CONFIG_GPIO_PL061=y CONFIG_KEYBOARD_GPIO=y ;;
