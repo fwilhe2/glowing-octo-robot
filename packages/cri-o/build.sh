@@ -70,13 +70,24 @@ ln -sfn /run/crio/auth "$ROOTFS/etc/crio/auth"
 cat > "$ROOTFS/usr/lib/tmpfiles.d/crio.conf" <<'CONF'
 d /run/crio/auth 0700 root root -
 CONF
+# Two settings are for kubelet's stats, which come from the cAdvisor built into it and
+# which test/node-conformance.sh's Summary API test checks. cAdvisor reads a pod's network
+# counters through its infra (pause) process, which CRI-O by default does not start; and
+# it counts a container's processes in the cgroup CRI-O names, where crun on cgroup v2
+# puts them one level below, in a `container` subgroup. Without the two, /stats/summary
+# has no pod network stats and a process count of 0. Both are how containerd and runc lay
+# a pod out anyway. The other way round — kubelet asking CRI-O instead, the
+# PodAndContainerStatsFromCRI gate — is beta and off in 1.37, and fails the same test on
+# more fields (no PSI); worth trying again when it is on by default.
 cat > "$ROOTFS/etc/crio/crio.conf.d/10-flfs.conf" <<'CONF'
 [crio.runtime]
 default_runtime = "crun"
+drop_infra_ctr = false
 
 [crio.runtime.runtimes.crun]
 runtime_path = "/usr/bin/crun"
 runtime_root = "/run/crun"
+default_annotations = { "run.oci.systemd.subgroup" = "" }
 
 [crio.image]
 signature_policy = "/etc/containers/policy.json"
