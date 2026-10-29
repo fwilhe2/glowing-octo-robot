@@ -207,6 +207,14 @@ for that preflight to read.
 
 `test/k8s.sh` runs the demo in CI on amd64. arm64 runners have no KVM, so it skips there.
 
+`test/node-conformance.sh` holds a single node to Kubernetes' node conformance tests: the
+`[NodeConformance]` specs of upstream's node e2e suite, built for the shipped kubelet's
+version by `tools/build-node-e2e.sh` and run in the guest against the extension's kubelet
+and CRI-O. It runs in CI beside `k8s.sh`, and locally on a build of your own or on CI's
+(`./test/node-conformance.sh output/boot-image/rootfs.erofs output/boot-image/bzImage`
+after `tools/fetch-image.sh`). `FOCUS=` narrows it to a few specs, and `KEEP=1` leaves the
+node running afterwards.
+
 **Current limits:**
 * kubeadm is the only way a node joins.
 * The control plane runs as static pods from registry.k8s.io, as kubeadm deploys it.
@@ -228,6 +236,7 @@ CI runs all of them but the last:
 | `test/container.sh`, `podman.sh`, `rootless.sh` | crun on the base; podman with seccomp, networking and Quadlet; rootless |
 | `test/sysext.sh` | extensions merge from both places, a wrong level and a tampered image are refused |
 | `test/persistent-var.sh`, `vmm.sh`, `k8s.sh` | state survives on a `/var` disk; Firecracker- and VZ-shaped boots; a cluster |
+| `test/node-conformance.sh` | a node passes Kubernetes' node conformance tests |
 | `test/oci.sh`, `rootfs-size.sh`, `vs-debian-slim.sh` | the OCI image runs; its size against the budget and against debian-slim |
 | `test/reproducible.sh <pkg>` | a package builds to the same bytes twice (CI checks the images that way itself) |
 

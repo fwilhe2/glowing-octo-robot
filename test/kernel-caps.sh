@@ -93,6 +93,7 @@ NFT_REDIR           `redirect`, for service meshes and Calico's nftables datapla
 NF_TABLES_NETDEV    netdev-family ingress hooks: Calico nftables, Cilium's host firewall
 NETFILTER_XT_TARGET_REDIRECT  -j REDIRECT; kubeadm's preflight refuses a node without it
 NETFILTER_XT_MATCH_COMMENT    -m comment; kubeadm's preflight, and every kube-proxy/CNI rule
+DUMMY               dummy interfaces: kube-proxy IPVS, NodeLocal DNSCache, node conformance
 VIRTIO_BLK          the root and /var disks on every VMM
 VIRTIO_NET          the network on every VMM
 VIRTIO_PCI          qemu's and Virtualization.framework's devices

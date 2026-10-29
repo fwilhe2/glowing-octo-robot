@@ -98,6 +98,8 @@ make container.config
 #   VXLAN, NFT_REDIR, NF_TABLES_NETDEV  CNI overlays and dataplanes (flannel, Calico, Cilium)
 #   NETFILTER_XT_TARGET_REDIRECT, NETFILTER_XT_MATCH_COMMENT  kubeadm preflight refuses a
 #                  node without them (it reads /usr/lib/modules/<release>/config, below)
+#   DUMMY          dummy interfaces: kube-proxy's IPVS mode (kube-ipvs0), NodeLocal
+#                  DNSCache, and node conformance's privileged-pod test, which makes one
 cat > kernel/configs/k8s.config <<'EOF'
 CONFIG_NFT_NUMGEN=y
 CONFIG_NFT_REJECT=y
@@ -107,6 +109,7 @@ CONFIG_NFT_REDIR=y
 CONFIG_NF_TABLES_NETDEV=y
 CONFIG_NETFILTER_XT_TARGET_REDIRECT=y
 CONFIG_NETFILTER_XT_MATCH_COMMENT=y
+CONFIG_DUMMY=y
 EOF
 make k8s.config
 
