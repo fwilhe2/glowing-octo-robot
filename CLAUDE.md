@@ -157,6 +157,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/verity.sh output/rootfs.erofs rootfs/boot/bzImage   # a tampered copy of the image is refused
 ./test/vmm.sh output/rootfs.erofs rootfs/boot/bzImage      # Firecracker- and Virtualization.framework-shaped boots
 ./test/k8s.sh output/rootfs.erofs rootfs/boot/bzImage      # 3-node kubeadm cluster via tools/k8s-demo.sh (KVM; skips without)
+./test/node-conformance.sh output/rootfs.erofs rootfs/boot/bzImage  # upstream's [NodeConformance] node e2e specs on one node (KVM; FOCUS=, KEEP=1)
 ./test/reproducible.sh <pkg>...   # build twice from clean worktrees, compare to the byte (AGAINST_RUN=<id>: against CI's)
 ./test/oci.sh output/flfs-oci.tar # load and run the container image (no qemu)
 ./test/prebuilt.sh [build|oci|ssh] # host-compiled C, C++, Rust and Go binaries, run in the image
@@ -171,6 +172,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./tools/k8s-demo.sh up|ps|kubectl|ssh|down  # a 3-node kubeadm cluster on the image and its kubernetes extension, this checkout's build if there is one (docs/sysext.md)
 ./tools/clean.sh [-n] [--downloads|--images|--all]  # delete build state, tarballs, stale images
 ./tools/build-extension.sh sysext|confext <name> <dir>  # a directory tree → output/extensions|confexts/<name>.raw
+./tools/build-node-e2e.sh         # e2e_node.test + ginkgo for the pinned Kubernetes, in a golang container
 ```
 
 There is no test suite and no linter — the checks above plus a real boot are the
@@ -483,7 +485,8 @@ touching assembly:
 ## CI
 
 `.github/workflows/ci.yml`: `builder`/`sources` → `glibc` (and `kernel`) → `build` matrix →
-`rootfs` → `boot`, `reproducible` → `publish-oci`, with `k8s` beside them gating nothing.
+`rootfs` → `boot`, `reproducible` → `publish-oci`, with `k8s` and `node-conformance` beside
+them gating nothing.
 Each package job uses `.github/actions/build-package`, which stages a glibc-only sysroot so
 each artifact holds only its own files. Its cache key hashes the build scripts, glibc's
 `env.sh` and `build.sh` (every package compiles against them), the package's `env.sh`,
