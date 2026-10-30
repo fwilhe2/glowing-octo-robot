@@ -38,9 +38,12 @@ meson_install \
 find $ROOTFS/usr/lib -maxdepth 1 \( -name 'libgio-2.0.so*' -o -name 'libgobject-2.0.so*' \
     -o -name 'libgmodule-2.0.so*' -o -name 'libgthread-2.0.so*' -o -name 'libgirepository-2.0.so*' \) -delete
 # usr/lib/glib-2.0 is glibconfig.h, a header installed outside usr/include where the trim
-# does not look; consumers compile against the builder's anyway.
+# does not look; consumers compile against the builder's anyway. usr/share/gdb is gdb's
+# auto-load scripts for libglib and libgobject: python (constraint 5), for a debugger the
+# image does not have, and the second for a library it does not ship.
 rm -rf $ROOTFS/usr/lib/gio $ROOTFS/usr/lib/glib-2.0 $ROOTFS/usr/libexec/gio-launch-desktop \
        $ROOTFS/usr/share/glib-2.0 $ROOTFS/usr/share/gettext/its
+drop_installed usr/share/gdb
 for f in $ROOTFS/usr/bin/*; do
     case "$(basename "$f")" in
         gapplication|gdbus|gdbus-codegen|gi-*|gio|gio-querymodules|glib-*|gobject-query|\
