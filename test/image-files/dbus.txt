@@ -1,0 +1,15 @@
+# dbus-daemon's setuid activation helper, which none of the image's services use, and
+# the tools for a session bus started by hand rather than by systemd's user instance
+# (packages/dbus/build.sh).
+absent usr/libexec/dbus-daemon-launch-helper
+absent usr/bin/dbus-launch
+absent usr/bin/dbus-run-session
+absent usr/bin/dbus-update-activation-environment
+absent usr/bin/dbus-cleanup-sockets
+absent usr/bin/dbus-uuidgen
+absent usr/bin/dbus-test-tool
+absent usr/lib/dbus-1.0/*
+# The bus itself, and the two tools that are for looking at it.
+present usr/bin/dbus-daemon
+present usr/bin/dbus-send
+present usr/bin/dbus-monitor
