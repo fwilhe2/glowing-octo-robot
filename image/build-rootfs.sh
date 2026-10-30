@@ -292,7 +292,20 @@ rm -f "$elf_list"
 find usr \( -name '*.a' -o -name '*.la' \) -delete
 find usr/lib usr/lib64 -maxdepth 1 -name '*.o' -delete 2>/dev/null || true
 rm -rf usr/include usr/src
-rm -rf usr/lib/pkgconfig usr/lib64/pkgconfig usr/share/pkgconfig
+rm -rf usr/lib/pkgconfig usr/lib64/pkgconfig usr/share/pkgconfig usr/lib/*-linux-gnu/pkgconfig
+rmdir usr/lib/*-linux-gnu 2>/dev/null || true
+# Headers a package installs beside its library rather than under usr/include
+# (dbus-1.0/include, glib-2.0/include).
+find usr/lib -mindepth 2 -maxdepth 2 -type d -name include -exec rm -rf {} +
+# The unversioned names a library is linked by (-lfoo finds libfoo.so), and glibc's
+# linker scripts of the same shape: at run time the loader asks for the SONAME, and
+# nothing here dlopens a bare libfoo.so (the strings that name one are messages, and
+# ld.so.cache, which only indexes what is there). Symlinks and ld scripts only: some real
+# libraries are called *.so, libelf-0.197.so among them.
+find usr/lib usr/lib64 -maxdepth 1 -name 'lib*.so' -type l -delete
+for script in usr/lib/lib*.so usr/lib64/lib*.so; do
+    [ -f "$script" ] && grep -q 'GNU ld script' "$script" && rm -f "$script"
+done
 rm -rf usr/share/aclocal usr/share/gtk-doc
 # e2fsprogs' compile_et/mk_cmds templates, used to generate C at build time.
 rm -rf usr/share/et usr/share/ss
