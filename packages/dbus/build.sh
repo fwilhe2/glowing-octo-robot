@@ -17,4 +17,20 @@ meson_install \
   -Dx11_autolaunch=disabled \
   -Dxml_docs=disabled -Dducktype_docs=disabled -Ddoxygen_docs=disabled \
   -Dmodular_tests=disabled -Dinstalled_tests=false \
-  -Dsystem_socket=/run/dbus/system_bus_socket -Dsystem_pid_file=/run/dbus/pid
+  -Dsystem_socket=/run/dbus/system_bus_socket -Dsystem_pid_file=/run/dbus/pid \
+  -Dtraditional_activation=false
+
+# -Dtraditional_activation=false: no dbus-daemon-launch-helper. It starts a service the
+# bus activates without systemd, which none here is (each names SystemdService=, and
+# systemd1's is Exec=/bin/false on purpose), and it needs setuid root, which nothing in
+# this image is allowed.
+#
+# -Dtools has no finer switch. dbus-send and dbus-monitor stay, for poking at the bus.
+# The rest are for a session bus systemd's user instance already provides: dbus-launch
+# and dbus-run-session start one by hand, dbus-update-activation-environment feeds a
+# desktop session's environment to it, dbus-cleanup-sockets removes what such hand-
+# started buses leave in /tmp, dbus-uuidgen writes the machine ID systemd already owns,
+# and dbus-test-tool is a test fixture. The arch header is for building against libdbus.
+drop_installed dbus-launch dbus-run-session dbus-update-activation-environment \
+               dbus-cleanup-sockets dbus-uuidgen dbus-test-tool \
+               usr/lib/dbus-1.0/include
