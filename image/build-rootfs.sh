@@ -153,7 +153,7 @@ if [ "$flavour" = oci ]; then
     # back (`su` answers "Critical error - immediate abort"), so it is broken here
     # anyway. `grep -a` is required: without it GNU grep discards a match inside an ELF
     # .dynstr. `if` rather than `&&`, which would be the loop's exit status under set -e.
-    rm -rf usr/lib/security etc/security
+    rm -rf usr/lib/security etc/security usr/share/pam
     rm -f  usr/lib/libpam*
     while IFS= read -r bin; do
         if grep -qa 'libpam\.so' "$bin" 2>/dev/null; then
@@ -338,7 +338,8 @@ rm -rf usr/share/dbus-1/interfaces
 # CMake package files: link-time metadata, like pkg-config.
 rm -rf usr/lib/cmake
 
-# PAM modules no file in pam.d names (with or without `.so`), and helpers only they use.
+# PAM modules no file in pam.d names (with or without `.so`), and the helpers and
+# configuration only they read: Linux-PAM has no switch to leave a module out.
 if [ -d usr/lib/security ]; then
     pam_conf=$(cat etc/pam.d/* usr/lib/pam.d/* 2>/dev/null | grep -v '^[[:space:]]*#')
     for module in usr/lib/security/pam_*.so; do
@@ -352,6 +353,21 @@ if [ -d usr/lib/security ]; then
                 pam_mkhomedir) rm -f usr/bin/mkhomedir_helper ;;
                 pam_timestamp) rm -f usr/bin/pam_timestamp_check ;;
             esac
+            # Its configuration, in the vendor directory or /etc. Not /etc/environment, which
+            # systemd's environment generator reads as well as pam_env.
+            case $name in
+                pam_access|pam_faillock|pam_group|pam_limits|pam_pwhistory|pam_time)
+                    conf=${name#pam_} ;;
+                pam_env)       conf=pam_env; rm -f usr/share/pam/environment ;;
+                pam_namespace) conf=namespace
+                               rm -f usr/share/pam/security/namespace.init usr/bin/pam_namespace_helper
+                               rm -rf etc/security/namespace.d ;;
+                *)             conf= ;;
+            esac
+            if [ -n "$conf" ]; then
+                rm -f "usr/share/pam/security/$conf.conf" "etc/security/$conf.conf"
+                rm -rf "etc/security/$conf.d"
+            fi
         fi
     done
 fi
