@@ -36,6 +36,22 @@ mkdir -p "$IMAGE"
 cp -a "$STAGE"/. "$IMAGE"/
 cd "$IMAGE"
 
+# The license texts builder/build-package.sh ships per package are the one tree here that
+# nothing may touch: not the trim, not the container flavour's subtractions, not a future
+# rule that matches more than it meant to. Taken now and compared before the image is
+# written, so any step that removes or changes one fails the build.
+licenses_sum() {
+    find usr/share/licenses \( -type f -o -type l \) -print0 2>/dev/null \
+        | LC_ALL=C sort -z | xargs -0r sha256sum
+}
+licenses_before=$(licenses_sum)
+if [ -z "$licenses_before" ]; then
+    echo "error: no license texts in usr/share/licenses" >&2
+    echo "       builder/build-package.sh ships them with every package; a tree without" >&2
+    echo "       them predates that. Delete staging/ and rebuild." >&2
+    exit 1
+fi
+
 mkdir -p usr/bin bin sbin boot
 mkdir -p {dev,etc,home,lib}
 mkdir -p {mnt,opt,proc,srv,sys}
@@ -502,6 +518,22 @@ if [ ! -d "$components" ] || [ -z "$(ls -A "$components" 2>/dev/null)" ]; then
     echo "error: no component records in usr/share/flfs/components" >&2
     echo "       builder/build-package.sh stages one per package; a tree without them" >&2
     echo "       predates that and cannot be described. Delete rootfs/ and rebuild." >&2
+    exit 1
+fi
+
+# Every component the SBOM will name ships its license text (a vendor record is its
+# package's: the vendored crates' texts are under the package's own directory).
+for record in "$components"/*; do
+    name=$(sed -n 's/^name=//p' "$record")
+    [ -d "usr/share/licenses/${name%-vendor}" ] || {
+        echo "error: the SBOM names $name, and usr/share/licenses/${name%-vendor}/ is missing" >&2
+        exit 1
+    }
+done
+
+if [ "$(licenses_sum)" != "$licenses_before" ]; then
+    echo "error: a step of the assembly removed or changed license texts:" >&2
+    diff <(echo "$licenses_before") <(licenses_sum) | sed 's/^/       /' >&2 || true
     exit 1
 fi
 

@@ -128,11 +128,19 @@ else
     fi
 fi
 
+# packages/<pkg>/licenses/: license texts for a source that carries none of its own,
+# which builder/build-package.sh ships with the rest.
+license_mount=()
+if [ -d "$PKG_DIR/licenses" ]; then
+    license_mount=(--volume "$PWD/$PKG_DIR/licenses":/usr/local/licenses:ro)
+fi
+
 # label=disable for SELinux hosts: relabelling with :z would rewrite the checkout's labels.
 podman run --rm \
     --network=none \
     --security-opt label=disable \
     "${src_mount[@]}" \
+    "${license_mount[@]}" \
     --volume "$PWD/$PKG_DIR/build.sh":/package-build.sh:ro \
     --volume "$PWD/$DEST_DIR":/usr/local/rootfs \
     "${sysroot_mount[@]}" \

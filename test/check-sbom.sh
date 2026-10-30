@@ -107,6 +107,21 @@ for doc in "${docs[@]}"; do
           | select(.relatedSpdxElement | startswith("SPDXRef-Unresolved-")) ] | length' "$doc")
     [ "$wrongly_contained" = 0 ] || fail "$wrongly_contained unresolved libraries claimed as CONTAINS"
 
+    # Every package it names ships its license text, in the image the document is for:
+    # the manifest image/build-rootfs.sh writes beside it (sbom-<flavour>.json and
+    # rootfs-files-<flavour>.txt). A vendor component's texts are its package's.
+    manifest="$(dirname "$doc")/rootfs-files-$(basename "$doc" .json | sed 's/^sbom-//').txt"
+    if [ -f "$manifest" ]; then
+        unlicensed=$(jq -r '.packages[] | select(.SPDXID | startswith("SPDXRef-Package-")) | .name' "$doc" \
+            | sed 's/-vendor$//' | sort -u | while read -r name; do
+                grep -q "^usr/share/licenses/$name/." "$manifest" || echo "$name"
+            done)
+        [ -z "$unlicensed" ] ||
+            fail "packages shipped without a license text in usr/share/licenses: $(echo "$unlicensed" | tr '\n' ' ')"
+    else
+        fail "no $manifest to check the license texts against"
+    fi
+
     pkgs=$(jq '[ .packages[] | select(.SPDXID | startswith("SPDXRef-Package-")) ] | length' "$doc")
     builders=$(jq '[ .packages[] | select(.SPDXID | startswith("SPDXRef-Builder-")) ] | length' "$doc")
     echo "  $pkgs packages, $builders build tools, $unresolved unresolved libraries, $contains CONTAINS"
