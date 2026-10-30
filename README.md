@@ -91,6 +91,14 @@ reproducible to the byte, and CI checks it. `./tools/clean.sh` gives the disk sp
 * **No passwords anywhere.** `root` and `user` have none, ssh takes keys only, and
   `tools/boot-qemu.sh` hands the guest an ephemeral key as a systemd credential, so
   `tools/ssh.sh` logs in with nothing baked into the image.
+* **Credentials through fw_cfg.** On qemu and libvirt, systemd also imports credentials
+  from fw_cfg (`opt/io.systemd.credentials/`), the channel for anything too big for the
+  kernel command line or too secret for `/proc/cmdline`, which every user can read:
+  `-fw_cfg name=opt/io.systemd.credentials/<name>,string=<value>`, or libvirt's
+  `<sysinfo type="fwcfg">`. It needs no firmware, so it works on arm64 too; inside the
+  guest the credential is `/run/credentials/@system/<name>`.
+  `QEMU_FWCFG_CREDENTIALS="name=value ..." ./tools/boot-qemu.sh` passes some. Firecracker
+  and Virtualization.framework have no fw_cfg, and take credentials on the command line.
 * **Networking** is systemd-networkd and systemd-resolved, with `ip`, `ping` and `curl`
   (OpenSSL, Mozilla's roots) in the image for using and debugging it.
 
@@ -231,7 +239,7 @@ CI runs all of them but the last:
 | `test/check-rootfs-deps.sh`, `check-symbol-versions.sh`, `check-symbol-resolution.sh` | every library a binary needs is shipped, in a version it defines, and defines every function the binary calls |
 | `test/kernel-caps.sh` | the kernel config has what containers and Kubernetes need |
 | `test/selftest.sh` | each of the checks above fails on a tree broken in the way it exists to catch |
-| `test/boot.sh`, `systemd.sh`, `verity.sh` | it boots, no unit fails, a tampered image is refused |
+| `test/boot.sh`, `systemd.sh`, `verity.sh` | it boots, no unit fails, a credential arrives through fw_cfg, a tampered image is refused |
 | `test/network.sh`, `ssh.sh` | DHCP, DNS, TLS; sshd, from the guest and from the host |
 | `test/container.sh`, `podman.sh`, `rootless.sh` | crun on the base; podman with seccomp, networking and Quadlet; rootless |
 | `test/sysext.sh` | extensions merge from both places, a wrong level and a tampered image are refused |
