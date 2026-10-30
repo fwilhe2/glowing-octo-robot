@@ -1,0 +1,15 @@
+# Data and tools nothing in the image can use.
+# nftables' OS fingerprints, for `osf`, which needs a kernel option (NFT_OSF) neither
+# arch has (packages/nftables/build.sh).
+absent etc/nftables*
+# systemd's MIME type, for a shared-mime-info database the image does not have
+# (packages/systemd/build.sh).
+absent usr/share/mime*
+# expat's command-line checker (--without-xmlwf), and gawk's bug reporter, which mails
+# (packages/expat, packages/gawk).
+absent usr/bin/xmlwf
+absent usr/bin/gawkbug
+# What those packages are here for.
+present usr/bin/nft
+present usr/lib/libexpat.so.1
+present usr/bin/gawk
