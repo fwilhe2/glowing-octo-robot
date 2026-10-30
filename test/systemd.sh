@@ -73,8 +73,16 @@ TAINT_CHECK="echo SYSTEMD'-TAINT':[\$(systemctl show -p Tainted)]"
 ROFS="SYSTEMD-ROFS:"
 ROFS_CHECK="n=0; while IFS= read -r l; do [[ \$l == *'Read-only file system'* ]] && { n=\$((n+1)); echo \"ROFS> \$l\"; }; done < <(journalctl -b --no-pager -o short); echo SYSTEMD'-ROFS':[\$n]"
 DIAGNOSE="systemctl --failed --no-pager --plain; journalctl -p err -b --no-pager -o short"
+# A credential through qemu's fw_cfg rather than the command line, on the pc profile: what
+# libvirt and qemu offer for anything too big for the command line or too secret for
+# /proc/cmdline, readable only through FW_CFG_SYSFS. Without it the credential is silently
+# not there, so nothing else would notice it go. $(< file) is a builtin; the value is not
+# in the command typed, so the echo cannot match.
+FWCFG="SYSTEMD-FWCFG:"
+FWCFG_CHECK="echo SYSTEMD'-FWCFG':[\$(< /run/credentials/@system/flfs.fwcfg-probe)]"
 
 qemu_setup
+[ "$PROFILE" != pc ] || QEMU_FWCFG_CREDENTIALS="flfs.fwcfg-probe=delivered"
 qemu_preflight
 qemu_boot
 console_login
@@ -137,6 +145,15 @@ case "$rofs" in
         fail "could not read the read-only filesystem error count (got: ${rofs:-<nothing>})"
         ;;
 esac
+
+if [ -n "${QEMU_FWCFG_CREDENTIALS:-}" ]; then
+    console_send "$FWCFG_CHECK"
+    await "$FWCFG" 30 || fail "could not read the fw_cfg credential"
+    fwcfg=$(tr -d '\r' < "$LOG" | sed -n "s/.*${FWCFG}\\[\\([^]]*\\)\\].*/\\1/p" | tail -1)
+    [ "$fwcfg" = delivered ] ||
+        fail "a credential passed through fw_cfg did not arrive (got: [${fwcfg}]) — is CONFIG_FW_CFG_SYSFS in the kernel (guest.config)?"
+    echo ">> systemd OK: a credential arrived through fw_cfg"
+fi
 
 # Partly for the pleasure of seeing it in a CI log, and partly because this is the only
 # place anything in test/ runs a binary out of usr/bin that is not already on systemd's

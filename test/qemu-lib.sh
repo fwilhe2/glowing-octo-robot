@@ -161,7 +161,7 @@ EOF
 # The root is attached read-only too, so one file can back any number of guests.
 # QEMU_NIC_ARGS replaces pc's user-mode NIC (tools/k8s-demo.sh's own segment).
 qemu_argv() {
-    local root_args devices=() display=(-nographic) nic
+    local root_args devices=() display=(-nographic) nic fwcfg=() cred
     root_args=$(cat "$(root_cmdline_file)")
     qemu_var_disk
     qemu_sysexts
@@ -175,6 +175,14 @@ qemu_argv() {
         pc)
             nic=(-nic "user,model=virtio-net-pci${QEMU_NIC_EXTRA:-}")
             [ -z "${QEMU_NIC_ARGS:-}" ] || nic=("${QEMU_NIC_ARGS[@]}")
+            # QEMU_FWCFG_CREDENTIALS: name=value pairs, separated by spaces, handed to
+            # systemd through qemu's fw_cfg rather than on the command line (FW_CFG_SYSFS
+            # in guest.config), as libvirt's <sysinfo type="fwcfg"> does. pc only, on
+            # both arches: microvm and vz stand for VMMs that have no fw_cfg. A comma in a
+            # value would have to be doubled for qemu.
+            for cred in ${QEMU_FWCFG_CREDENTIALS:-}; do
+                fwcfg+=(-fw_cfg "name=opt/io.systemd.credentials/${cred%%=*},string=${cred#*=}")
+            done
             # The order names the devices: root /dev/vda, /var /dev/vdb, then extensions.
             # All explicit -device, since qemu adds if=virtio disks after those.
             devices=(
@@ -183,6 +191,7 @@ qemu_argv() {
                 "${QEMU_VAR_DRIVE[@]}"
                 "${QEMU_SYSEXT_DRIVES[@]}"
                 "${nic[@]}"
+                "${fwcfg[@]}"
             ) ;;
         microvm)
             # Everything on the MMIO transport, which is all Firecracker has.
