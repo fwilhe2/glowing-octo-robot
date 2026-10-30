@@ -1,0 +1,25 @@
+# udev helpers and rules for hardware packages/kernel's vm.config clears on both
+# architectures: CD-ROM, MTD, cameras and other media, joysticks, sound, DRM, btrfs, IIO
+# sensors, USB autosuspend (packages/systemd/build.sh).
+absent usr/lib/udev/cdrom_id
+absent usr/lib/udev/mtd_probe
+absent usr/lib/udev/v4l_id
+absent usr/lib/udev/rules.d/60-cdrom_id.rules
+absent usr/lib/udev/rules.d/75-probe_mtd.rules
+absent usr/lib/udev/rules.d/60-persistent-storage-mtd.rules
+absent usr/lib/udev/rules.d/60-persistent-v4l.rules
+absent usr/lib/udev/rules.d/70-camera.rules
+absent usr/lib/udev/rules.d/60-persistent-media-controller.rules
+absent usr/lib/udev/rules.d/70-joystick.rules
+absent usr/lib/udev/rules.d/60-persistent-alsa.rules
+absent usr/lib/udev/rules.d/78-sound-card.rules
+absent usr/lib/udev/rules.d/60-drm.rules
+absent usr/lib/udev/rules.d/64-btrfs.rules
+absent usr/lib/udev/rules.d/60-sensor.rules
+absent usr/lib/udev/rules.d/60-autosuspend.rules
+# What a VM can present, and stays: virtio-scsi disks and their by-id links, a
+# passed-through SATA disk, virtio-input devices.
+present usr/lib/udev/scsi_id
+present usr/lib/udev/ata_id
+present usr/lib/udev/rules.d/60-persistent-storage.rules
+present usr/lib/udev/rules.d/60-input-id.rules
