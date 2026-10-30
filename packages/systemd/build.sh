@@ -61,3 +61,7 @@ systemd_opts=(
 )
 
 meson_install "${systemd_opts[@]}"
+
+# bootctl, which -Dbootloader=disabled does not take with it: it manages an EFI system
+# partition and the boot loader's variables, and a VM handed its kernel has neither.
+drop_installed bootctl

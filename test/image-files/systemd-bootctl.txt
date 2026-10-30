@@ -1,0 +1,3 @@
+# bootctl manages an EFI system partition and boot loader variables; every VMM here is
+# handed the kernel, so there is neither (packages/systemd/build.sh).
+absent usr/bin/bootctl
