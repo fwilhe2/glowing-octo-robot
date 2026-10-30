@@ -116,6 +116,11 @@ repro_tar() {
         --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime "$@"
 }
 
+# The kernel, from both flavours: every VMM is handed it from outside, and the tests and
+# tools/fetch-image.sh take it from rootfs/ or the kernel's package artifact. boot/config
+# stays for the disk image, which kubeadm reads through usr/lib/modules/<release>/config.
+rm -f boot/bzImage
+
 # ---------------------------------------------------------------------------------
 # The container flavour, as subtractions: a container gets its kernel from the host and
 # its PID 1 from the runtime. Before the trim, so the strip has less to walk.
@@ -669,6 +674,11 @@ report=/usr/local/output/rootfs-size-$flavour.txt
         echo "file $bytes ${path#"$IMAGE"/}"
     done < <(find "$IMAGE" -type f -printf '%s %p\n' | sort -rn | head -n 25)
 } > "$report"
+
+# Every path in the assembled tree, for test/check-image-files.sh: what must and must not
+# be in the image is only checkable here, for the same reason as the report above.
+LC_ALL=C find "$IMAGE" -mindepth 1 -printf '%P\n' | LC_ALL=C sort \
+    | { echo "# flavour: $flavour"; cat; } > "/usr/local/output/rootfs-files-$flavour.txt"
 
 if [ "$flavour" = erofs ]; then
     # EROFS: no write path at all, compressed, sized to its contents. On one 160 MiB tree:

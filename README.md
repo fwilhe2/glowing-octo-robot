@@ -245,6 +245,7 @@ CI runs all of them but the last:
 | `test/sysext.sh` | extensions merge from both places, a wrong level and a tampered image are refused |
 | `test/persistent-var.sh`, `vmm.sh`, `k8s.sh` | state survives on a `/var` disk; Firecracker- and VZ-shaped boots; a cluster |
 | `test/node-conformance.sh` | a node passes Kubernetes' node conformance tests |
+| `test/check-image-files.sh` | each image ships what `test/image-files/` requires, and nothing it rules out |
 | `test/oci.sh`, `rootfs-size.sh`, `vs-debian-slim.sh` | the OCI image runs; its size against the budget and against debian-slim |
 | `test/reproducible.sh <pkg>` | a package builds to the same bytes twice (CI checks the images that way itself) |
 

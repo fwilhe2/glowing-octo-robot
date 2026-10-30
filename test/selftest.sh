@@ -186,6 +186,43 @@ expect pass "kernel-caps: a config with every requirement passes" "" ./test/kern
 sed -i '/^CONFIG_USER_NS=y$/d' "$kernel/boot/config"
 expect fail "kernel-caps: a missing requirement is reported" CONFIG_USER_NS ./test/kernel-caps.sh "$kernel"
 
+# ---------------------------------------------------------------------------------
+# check-image-files.sh reads a manifest, not a tree. One rule of each kind, one of them
+# for the disk flavour only, and manifests that each break one rule.
+rules=$work/image-files
+mkdir -p "$rules"
+cat > "$rules/fixture.txt" <<'EOF'
+# fixture rules
+absent        usr/lib/gone/*
+present       usr/share/flfs/sbom.json
+present:erofs boot/config
+EOF
+# manifest <name> <flavour> <path>...: writes $work/<name>.txt
+manifest() {
+    local name=$1 flavour=$2
+    shift 2
+    { echo "# flavour: $flavour"; printf '%s\n' "$@"; } > "$work/$name.txt"
+}
+manifest good-erofs erofs usr usr/share/flfs/sbom.json boot boot/config
+manifest good-oci oci usr usr/share/flfs/sbom.json
+manifest extra erofs usr usr/share/flfs/sbom.json boot boot/config usr/lib/gone/deep/file
+manifest missing erofs usr boot boot/config usr/share/flfs/other.json
+manifest noconfig erofs usr usr/share/flfs/sbom.json
+good_erofs=$work/good-erofs.txt
+expect pass "image-files: a manifest that keeps every rule passes" "" \
+    env RULES="$rules" ./test/check-image-files.sh "$good_erofs"
+expect pass "image-files: a rule for the other flavour is not applied" "" \
+    env RULES="$rules" ./test/check-image-files.sh "$work/good-oci.txt"
+expect fail "image-files: an absent path that is there is reported" usr/lib/gone/deep/file \
+    env RULES="$rules" ./test/check-image-files.sh "$work/extra.txt"
+expect fail "image-files: a present path that is missing is reported" usr/share/flfs/sbom.json \
+    env RULES="$rules" ./test/check-image-files.sh "$work/missing.txt"
+expect fail "image-files: a flavour's own rule is applied" boot/config \
+    env RULES="$rules" ./test/check-image-files.sh "$work/noconfig.txt"
+printf 'usr\nusr/share/flfs/sbom.json\n' > "$work/manifest-unlabelled.txt"
+expect fail "image-files: a manifest that names no flavour is refused" flavour \
+    env RULES="$rules" ./test/check-image-files.sh "$work/manifest-unlabelled.txt"
+
 echo
 if [ "$failures" -gt 0 ]; then
     echo "$failures self-test(s) failed: a check above can no longer tell right from wrong."

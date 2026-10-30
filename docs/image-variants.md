@@ -270,11 +270,11 @@ table), `tools/publish-oci.sh`, `tools/fetch-image.sh`, and the output filenames
 
 Three things that are awkward or impossible today, as evidence the shape is right:
 
-- **The kernel is in the disk image.** `rootfs/boot/bzImage` is copied into the erofs — 11
-  MiB on amd64, and `test/size-budget.txt`'s accounting puts arm64's some 21 MiB above
-  that — while every boot here passes `-kernel` from outside. `drop boot` in a
-  variant is a legitimate, reviewable line — and, notably, one nobody would dare write as a
-  global change today.
+- **The kernel was in the disk image.** `rootfs/boot/bzImage` was copied into the erofs —
+  11 MiB on amd64, and `test/size-budget.txt`'s accounting puts arm64's some 21 MiB above
+  that — while every boot here passes `-kernel` from outside. It is now dropped from both
+  flavours as a global change, held by `test/image-files/kernel.txt`; a variant that does
+  want a kernel inside would be the place to put it back.
 - **`firecracker` is mostly not an image change at all.** The disk is the `erofs` disk; what
   differs is an uncompressed kernel (`vmlinux` on x86-64, `Image` on arm64),
   `CONFIG_VIRTIO_MMIO` in the shared `vm.config` fragment — cheap and harmless for qemu
