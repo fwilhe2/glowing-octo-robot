@@ -1,0 +1,10 @@
+# ncurses' form, menu and panel libraries and its C++ binding, which nothing links, and
+# the pkg-config files it put in a multiarch directory (packages/ncurses/build.sh).
+absent usr/lib/libformw.so*
+absent usr/lib/libmenuw.so*
+absent usr/lib/libpanelw.so*
+absent usr/lib/libncurses++*
+absent usr/lib/*-linux-gnu/pkgconfig/*
+# What bash, procps and the rest do link.
+present usr/lib/libncursesw.so.6
+present usr/lib/libtinfo.so.6

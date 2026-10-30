@@ -2,10 +2,14 @@
 # libtinfo.so.6. --with-termlib splits it out, --enable-widec makes it the wide one
 # (libtinfow, aliased below), and --with-versioned-syms gives it Debian's symbol versions,
 # without which every bash start prints "no version information available".
+#
+# No C++ binding and no pkg-config files: nothing here links the one, and nothing reads
+# the other — every package compiles against the builder's -dev headers, and the .pc
+# files landed in a multiarch directory the trim does not clean.
 ./configure --prefix=/usr \
   --with-shared --with-termlib --enable-widec --with-versioned-syms \
   --without-normal --without-debug --without-ada --without-tests \
-  --enable-pc-files --disable-stripping
+  --without-cxx-binding --disable-pc-files --disable-stripping
 make
 make install DESTDIR=$ROOTFS
 
@@ -21,3 +25,10 @@ ln -sfv libtinfow.so.6 "$libdir/libtinfo.so.6"
 # deletes. clear and tput stay (--without-progs would take them too). drop_installed
 # counts the dangling alias links as installed.
 drop_installed tic captoinfo infotocap infocmp toe tset reset tabs ncursesw6-config
+
+# The form, menu and panel libraries, which configure cannot leave out: nothing in the
+# image or its extensions links them (procps, bash and the rest want only ncursesw and
+# tinfo).
+for lib in formw menuw panelw; do
+    drop_installed usr/lib/lib$lib.so usr/lib/lib$lib.so.6 usr/lib/lib$lib.so.6.6
+done
