@@ -19,7 +19,7 @@ absent usr/lib/udev/rules.d/60-sensor.rules
 absent usr/lib/udev/rules.d/60-autosuspend.rules
 # What a VM can present, and stays: virtio-scsi disks and their by-id links, a
 # passed-through SATA disk, virtio-input devices.
-present usr/lib/udev/scsi_id
-present usr/lib/udev/ata_id
-present usr/lib/udev/rules.d/60-persistent-storage.rules
-present usr/lib/udev/rules.d/60-input-id.rules
+present:erofs usr/lib/udev/scsi_id
+present:erofs usr/lib/udev/ata_id
+present:erofs usr/lib/udev/rules.d/60-persistent-storage.rules
+present:erofs usr/lib/udev/rules.d/60-input-id.rules
