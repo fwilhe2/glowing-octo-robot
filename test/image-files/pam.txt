@@ -1,0 +1,18 @@
+# Configuration for PAM modules the image does not ship (the module trim in
+# image/build-rootfs.sh removes a module no pam.d file names, and now its configuration
+# with it), and two libraries nothing links: PAM's libpamc (packages/pam) and libcap's
+# libpsx (packages/libcap).
+absent usr/share/pam/environment
+absent usr/share/pam/security/access.conf
+absent usr/share/pam/security/faillock.conf
+absent usr/share/pam/security/group.conf
+absent usr/share/pam/security/limits.conf
+absent usr/share/pam/security/pam_env.conf
+absent usr/share/pam/security/pwhistory.conf
+absent usr/share/pam/security/time.conf
+absent etc/security/limits.d
+absent usr/lib/libpamc.so*
+absent usr/lib/libpsx.so*
+# pam_namespace is named by systemd's pam.d files, so it and what it reads stay.
+present:erofs usr/lib/security/pam_namespace.so
+present:erofs usr/share/pam/security/namespace.conf
