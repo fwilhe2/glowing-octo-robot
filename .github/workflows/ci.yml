@@ -283,6 +283,11 @@ jobs:
       - name: Create disk and OCI images
         run: ./tools/build-image.sh --image-only
 
+      # What must and must not be in each image (test/image-files/), from the manifests the
+      # assembly writes: a trim line or a disabled feature that quietly stopped applying.
+      - name: Check what the images contain
+        run: ./test/check-image-files.sh
+
       - name: Run the OCI image
         run: FLFS_BUILD="$GITHUB_SHA" ./test/oci.sh output/flfs-oci.tar
 
@@ -306,7 +311,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rootfs-size-${{ matrix.arch }}
-          path: output/rootfs-size-*.txt
+          path: |
+            output/rootfs-size-*.txt
+            output/rootfs-files-*.txt
 
       # The SBOM is hand-written JSON; this is where a parser exists.
       - name: Check the SBOM

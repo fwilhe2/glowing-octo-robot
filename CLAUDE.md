@@ -165,6 +165,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/vs-debian-slim.sh          # the OCI image against debian-slim, with both breakdowns
 ./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
 ./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
+./test/check-image-files.sh       # each assembled image against test/image-files/: what must and must not ship
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ./tools/boot-firecracker.sh       # the same, in Firecracker (Linux + KVM; ssh over vsock)
 ./tools/boot-vz.sh                # the same, in Virtualization.framework via vfkit (macOS)
@@ -185,6 +186,12 @@ Builds are slow (glibc, systemd and the kernel are tens of minutes); run them in
 background. Image assembly is byte-reproducible, so a refactor of `image/build-rootfs.sh`
 can be checked by building before and after with the same `FLFS_BUILD=` and comparing
 `sha256sum` of everything in `output/`.
+
+**A removal gets an `absent` line in `test/image-files/<topic>.txt`** — a meson option
+off, a configure flag, a trim line — because each is undone in silence by a version bump
+or a new default. `check-image-files.sh` holds the manifest `build-rootfs.sh` writes of
+each assembled tree (`output/rootfs-files-<flavour>.txt`; rootfs/ still has everything
+the trim removes) to those lines, and `present` lines guard what must never be trimmed.
 
 `rootfs-size.sh` checks against a budget we chose; `vs-debian-slim.sh` against the image
 somebody would otherwise use, and has no number to raise. `size-history.sh` only reports.

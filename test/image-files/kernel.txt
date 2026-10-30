@@ -1,0 +1,8 @@
+# The kernel. Every VMM is handed it from outside — qemu's -kernel, Firecracker's
+# kernel_image_path, vfkit's --kernel — so the copy packages/kernel stages in boot/ is for
+# the tests and tools/fetch-image.sh, which read it from rootfs/ and the package artifact,
+# never from an image. In the disk image it was 11 MiB on amd64 and over 30 on arm64 of
+# bytes nothing could reach. The config beside it stays: kubeadm's preflight reads it
+# through usr/lib/modules/<release>/config.
+absent        boot/bzImage
+present:erofs boot/config
