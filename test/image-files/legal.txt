@@ -1,0 +1,9 @@
+# What the image owes the people whose work it ships, and must never be trimmed: the
+# SBOM, and the license texts builder/build-package.sh copies from every package's
+# source. image/build-rootfs.sh already fails if a step of the assembly removes or
+# changes a license text, and test/check-sbom.sh that every package the SBOM names has
+# one; these are the floor under both, should either stop running.
+present usr/share/flfs/sbom.json
+present usr/share/licenses/glibc/COPYING*
+present usr/share/licenses/systemd/LICENSES/*
+present usr/share/licenses/kernel/COPYING

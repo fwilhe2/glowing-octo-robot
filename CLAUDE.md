@@ -331,6 +331,14 @@ into SPDX, since the flavours differ. `test/check-sbom.sh` parses it. Unresolved
 are `DEPENDS_ON` without `CONTAINS`, computed like `check-rootfs-deps.sh` (a library is a
 file plus its SONAME symlink).
 
+**License texts ship with every package and nothing may remove one.** After the install,
+`build-package.sh` copies each package's upstream texts (top level, `doc/`, any `LICENSES/`
+or `licenses/` directory, `debian/copyright`, and every `vendor/` dependency's) into
+`usr/share/licenses/<pkg>/`, hardlinking duplicates, and fails a package that has none;
+`packages/<pkg>/licenses/` stands in for a source with no text (`iana-etc`, `flfsfetch`).
+`build-rootfs.sh` hashes that tree before the first step and fails if any step changed it,
+and `check-sbom.sh` requires one for every package the SBOM names.
+
 **The root is EROFS on dm-verity, attached read-only.** The hash tree is appended to the
 image, and `output/rootfs.cmdline` beside it — **half of the image**, the only place the
 root hash is — carries `root=/dev/dm-0` and a `dm-mod.create=` table. No initrd: the kernel

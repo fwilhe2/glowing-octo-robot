@@ -141,6 +141,49 @@ meson_install() {
 cd /usr/local/src
 source /package-build.sh
 
+# The license texts, into usr/share/licenses/<pkg>/ under the path each has in the
+# source: `make install` puts almost none of them anywhere, and the few it does land in
+# usr/share/doc, which the image trims. Upstream's own (top level, doc/, any LICENSES/
+# directory as REUSE and the kernel lay them out, debian/copyright for Debian's tarballs)
+# and every vendored dependency's, since MIT and Apache-2.0 code linked into a Go or Rust
+# binary ships its notice with it. packages/<pkg>/licenses/ is for a source that has no
+# text to copy. Identical files are hardlinked, so a hundred copies of Apache-2.0 cost
+# one. A package with no license text at all fails here rather than ship without one.
+if [ -n "${FLFS_PKG:-}" ]; then
+    licenses=$ROOTFS/usr/share/licenses/$FLFS_PKG
+    name=( \( -iname 'copying*' -o -iname 'licen[cs]e*' -o -iname 'notice*' -o -iname 'copyright*'
+              -o -iname 'unlicense*' \) )
+    code=( \( -name '*.[ch]' -o -name '*.go' -o -name '*.rs' -o -name '*.py' -o -name '*.json'
+              -o -name '*.toml' -o -name '*.y*ml' -o -name '*.in' -o -name '*.am' -o -name '*.sh'
+              -o -name '*.pl' -o -name '*.html' -o -name '*.xml' \) )
+    found=$(cd /usr/local/src && find . -xtype f \( \
+            \( ! -path './*/*' "${name[@]}" \) \
+            -o \( \( -path './doc/*' -o -path './docs/*' \) ! -path './*/*/*' "${name[@]}" \) \
+            -o -path '*/LICENSES/*' -o -path '*/licenses/*' \
+            -o -path './debian/copyright' \
+            -o \( -path './vendor/*' "${name[@]}" \) \
+        \) ! "${code[@]}" \
+        ! -path '*/test/*' ! -path '*/tests/*' ! -path '*/testdata/*' ! -path '*/testsuite/*' \
+        | LC_ALL=C sort)
+    if [ -n "$found" ]; then
+        install -d "$licenses"
+        (cd /usr/local/src && xargs -d '\n' cp -L --parents -t "$licenses" <<< "$found")
+    fi
+    if [ -d /usr/local/licenses ]; then
+        install -d "$licenses"
+        cp -L -r /usr/local/licenses/. "$licenses"/
+    fi
+    if [ ! -d "$licenses" ] || [ -z "$(find "$licenses" -type f)" ]; then
+        echo "error: $FLFS_PKG ships no license text: none in its source, and no" >&2
+        echo "       packages/$FLFS_PKG/licenses/ to stand in for one" >&2
+        exit 1
+    fi
+    chmod -R u=rwX,go=rX "$licenses"
+    find "$licenses" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum \
+        | awk 'seen[$1]++ { print first[$1] "\t" substr($0, 67); next } { first[$1] = substr($0, 67) }' \
+        | while IFS=$'\t' read -r keep dup; do ln -f "$keep" "$dup"; done
+fi
+
 # The component record image/build-rootfs.sh turns into the SBOM: the pins ../build.sh
 # passes as FLFS_*. After the build, so only a package that installed gets one.
 if [ -n "${FLFS_PKG:-}" ]; then
