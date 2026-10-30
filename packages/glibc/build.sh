@@ -13,6 +13,15 @@ popd
 drop_installed gencat makedb iconvconfig localedef mtrace sotruss sprof pcprofiledump \
                xtrace pldd sln zic zdump tzselect
 
+# What those tools preload, and nothing else does: sotruss's audit module, pcprofiledump's
+# profiler and memusage's counter (memusage itself is not installed: it needs libgd).
+# libBrokenLocale is for programs linked with -lBrokenLocale, of which there are none.
+# libc_malloc_debug stays — MALLOC_CHECK_ needs it preloaded — and so do the compatibility
+# stubs (libpthread, libdl, librt, libutil, libanl, libnsl) that binaries built against an
+# older glibc name in NEEDED.
+drop_installed usr/lib64/audit/sotruss-lib.so usr/lib/libpcprofile.so usr/lib/libmemusage.so \
+               usr/lib/libBrokenLocale.so.1 usr/lib64/libBrokenLocale.so
+
 # nscd cannot start (it links libselinux) and nsswitch.conf does not use it. Unchecked:
 # which of its files install depends on the build.
 rm -f $ROOTFS/usr/bin/nscd

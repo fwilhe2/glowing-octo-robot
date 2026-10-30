@@ -1,0 +1,12 @@
+# Libraries only glibc's own debugging tools preload, and those tools are not shipped
+# (packages/glibc/build.sh): sotruss, pcprofiledump, memusage. And libBrokenLocale, which
+# nothing links.
+absent usr/lib64/audit/*
+absent usr/lib/libpcprofile.so
+absent usr/lib/libmemusage.so
+absent usr/lib/libBrokenLocale.so*
+absent usr/lib64/libBrokenLocale.so
+# Kept on purpose: MALLOC_CHECK_ needs this one preloaded, and binaries built against an
+# older glibc name the compatibility stubs in NEEDED.
+present usr/lib/libc_malloc_debug.so.0
+present usr/lib/libpthread.so.0
