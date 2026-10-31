@@ -81,6 +81,14 @@ ROFS_CHECK="n=0; while IFS= read -r l; do [[ \$l == *'Read-only file system'* ]]
 ERRS="SYSTEMD-ERRS:"
 ERRS_CHECK="n=0; while IFS= read -r l; do n=\$((n+1)); echo \"ERRS> \$l\"; done < <(journalctl -b -q -p err --no-pager -o short); echo SYSTEMD'-ERRS':[\$n]"
 KNOWN_JOURNAL=test/known-journal-messages.txt
+# Sysctls image/files/etc/sysctl.d sets, read back: a file systemd-sysctl could not apply
+# looks the same as one it did, but for one journal line. As /proc/sys paths, which is
+# what a builtin can read.
+SYSCTLS="kernel/kptr_restrict=1 kernel/dmesg_restrict=1 kernel/unprivileged_bpf_disabled=1
+dev/tty/legacy_tiocsti=0 fs/protected_regular=2 fs/protected_fifos=2"
+SYSCTL="SYSTEMD-SYSCTL-DONE"
+sysctl_paths=$(echo ${SYSCTLS//=[0-9]/})   # one line: it is typed at a shell
+SYSCTL_CHECK="for k in $sysctl_paths; do echo \"SYSCTL> \$k=\$(< /proc/sys/\$k)\"; done; echo SYSTEMD'-SYSCTL-DONE'"
 DIAGNOSE="systemctl --failed --no-pager --plain; journalctl -p err -b --no-pager -o short"
 # A credential through qemu's fw_cfg rather than the command line, on the pc profile: what
 # libvirt and qemu offer for anything too big for the command line or too secret for
@@ -167,6 +175,16 @@ if [ -n "$errs" ]; then
     fail "the journal has error messages (above) that $KNOWN_JOURNAL does not accept"
 fi
 echo ">> systemd OK: no errors in the journal"
+
+mark=$(console_mark)
+console_send "$SYSCTL_CHECK"
+await "$SYSCTL" 30 "$mark" || fail "could not read the sysctls back"
+got=$(tail -c "+$((mark + 1))" "$LOG" | tr -d '\r' | sed -n 's/^SYSCTL> //p')
+for want in $SYSCTLS; do
+    grep -qxF "$want" <<<"$got" ||
+        fail "sysctl ${want%=*} is $(grep "^${want%=*}=" <<<"$got" | cut -d= -f2) in the guest, image/files/etc/sysctl.d sets ${want#*=}"
+done
+echo ">> systemd OK: the image's sysctls are applied"
 
 if [ -n "${QEMU_FWCFG_CREDENTIALS:-}" ]; then
     console_send "$FWCFG_CHECK"

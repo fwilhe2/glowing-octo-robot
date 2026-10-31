@@ -1,6 +1,6 @@
 # Ideas from other image builders
 
-**Status: proposal, partly implemented.** Implemented: sections 1–4. This page collects features found
+**Status: proposal, partly implemented.** Implemented: sections 1–4, and 5's sysctls. This page collects features found
 in other immutable or minimal Linux image builders that fit this project's constraints
 (see `CLAUDE.md`), with enough detail to implement each one. Each section names where the
 idea came from, what the gap is today, how to close it, and how to verify the change.
@@ -200,6 +200,11 @@ subtractions leave behind (around line 221).
 fixtures.
 
 ## 5. Hardening sysctls and kernel arguments
+
+*Implemented:* `image/files/etc/sysctl.d/50-hardening.conf`, read back by
+`test/systemd.sh`. `kernel.kptr_restrict = 2` broke `perf probe` in `test/debug.sh` as
+predicted, so it is 1. There is no `vm.unprivileged_userfaultfd` to set (`USERFAULTFD`
+is off), and `kernel.yama.ptrace_scope` waits for `SECURITY_YAMA` in the kernel.
 
 **Inspiration:** Talos, `pkg/kernel/kspp/kspp.go` (`GetKernelParams`, the KSPP-recommended
 sysctls Talos sets on every machine) and `pkg/machinery/kernel/kernel.go` (default kernel

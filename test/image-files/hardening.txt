@@ -1,0 +1,4 @@
+# The KSPP sysctls (image/files/etc/sysctl.d/50-hardening.conf). test/systemd.sh reads a
+# few back in the guest; this keeps the file from being dropped. erofs only: a container
+# gets the host's kernel and its sysctls.
+present:erofs etc/sysctl.d/50-hardening.conf
