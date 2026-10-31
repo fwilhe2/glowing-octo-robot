@@ -35,3 +35,7 @@ readelf -d $ROOTFS/usr/lib/libnftables.so.1 | grep -q 'libjansson\.so' || {
 # input to — but a dozen files nothing here runs, and /etc is read-only on the image, so
 # nobody can adopt one by copying it either.
 rm -rf $ROOTFS/usr/share/nftables
+
+# The passive OS fingerprints `osf` matches against, which needs NFT_OSF: neither arch's
+# defconfig sets it, it defaults off, and no fragment of packages/kernel turns it on.
+drop_installed etc/nftables

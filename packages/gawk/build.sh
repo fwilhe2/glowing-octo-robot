@@ -13,3 +13,6 @@
 ./configure --prefix=/usr --disable-mpfr --with-readline=no
 make
 make install DESTDIR=$ROOTFS
+
+# gawkbug assembles a bug report and mails it; there is no mail here to send it with.
+drop_installed gawkbug

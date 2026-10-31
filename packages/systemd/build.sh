@@ -87,3 +87,7 @@ for rule in 60-cdrom_id 75-probe_mtd 60-persistent-storage-mtd 60-persistent-v4l
             60-drm 64-btrfs 60-sensor 60-autosuspend; do
     drop_installed usr/lib/udev/rules.d/$rule.rules
 done
+
+# The MIME type for systemd's own file formats, for a shared-mime-info database the image
+# does not have; meson installs it unconditionally.
+drop_installed usr/share/mime
