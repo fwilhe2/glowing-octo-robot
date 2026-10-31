@@ -131,9 +131,15 @@ qemu_ssh_setup() {
         done
     fi
 
-    rm -rf "$SSH_DIR"
-    mkdir -p -m 700 "$SSH_DIR"
-    ssh-keygen -q -t ed25519 -N '' -C "flfs-ephemeral@$(hostname)" -f "$SSH_DIR/id_ed25519"
+    # SSH_KEEP_KEY=1 keeps a key pair already in $SSH_DIR (tools/vm.sh, whose machines
+    # outlive one boot); only the config, with this boot's port, is written again.
+    if [ "${SSH_KEEP_KEY:-0}" = 1 ] && [ -f "$SSH_DIR/id_ed25519" ] && [ -f "$SSH_DIR/id_ed25519.pub" ]; then
+        chmod 700 "$SSH_DIR"
+    else
+        rm -rf "$SSH_DIR"
+        mkdir -p -m 700 "$SSH_DIR"
+        ssh-keygen -q -t ed25519 -N '' -C "flfs-ephemeral@$(hostname)" -f "$SSH_DIR/id_ed25519"
+    fi
 
     # No host key checking: the guest makes new host keys every boot, and this is a
     # loopback to a VM just started. IdentitiesOnly so an agent's keys do not exhaust
@@ -220,6 +226,8 @@ qemu_argv() {
             [ -z "${VSOCK_CID:-}" ] || devices+=(-device "vhost-vsock-pci,guest-cid=$VSOCK_CID")
             ;;
     esac
+    # QEMU_DISPLAY_ARGS replaces pc's -nographic: tools/vm.sh puts the console on a socket.
+    [ "$PROFILE" != pc ] || [ -z "${QEMU_DISPLAY_ARGS+set}" ] || display=("${QEMU_DISPLAY_ARGS[@]}")
     QEMU_ARGV=(
         "${accel[@]}" "${machine[@]}"
         -m "$MEM" -smp "$CPUS"
@@ -227,8 +235,11 @@ qemu_argv() {
         "${devices[@]}"
         -append "$root_args console=$CONSOLE init=$INIT systemd.set_credential=login.noauth:yes${QEMU_APPEND_EXTRA:-}${QEMU_VAR_APPEND:-}${QEMU_SYSEXT_APPEND:-}"
         "${display[@]}"
-        -no-reboot
     )
+    # A guest's reboot ends qemu, which is what a test waiting on it wants. QEMU_REBOOT=1
+    # restarts it in place instead, with the same command line — and so the same disks,
+    # key and credentials (tools/vm.sh).
+    [ "${QEMU_REBOOT:-0}" = 1 ] || QEMU_ARGV+=(-no-reboot)
 }
 
 # A /var disk seeded with <tree> (tools/k8s-demo.sh, test/sysext.sh). mkfs.ext4 -d records
