@@ -619,11 +619,11 @@ chmod 644 etc/passwd etc/group etc/hosts etc/profile etc/nsswitch.conf etc/ld.so
 if [ "$flavour" = erofs ]; then
     chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
               etc/systemd/system/dbus.service.d etc/systemd/journald.conf.d \
-              etc/systemd/system-preset
+              etc/systemd/resolved.conf.d etc/systemd/system-preset
     chmod 644 etc/fstab etc/hostname etc/subuid etc/subgid etc/pam.d/* etc/tmpfiles.d/{flfs-home,home,provision}.conf \
               etc/systemd/network/*.network \
               etc/systemd/system/dbus.service.d/*.conf etc/systemd/journald.conf.d/*.conf \
-              etc/systemd/system-preset/*.preset
+              etc/systemd/resolved.conf.d/*.conf etc/systemd/system-preset/*.preset
     chmod 600 etc/shadow
 fi
 
