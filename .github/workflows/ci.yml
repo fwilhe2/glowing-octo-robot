@@ -628,6 +628,46 @@ jobs:
           name: boot-console-log-${{ matrix.arch }}
           path: output/*.log
 
+  # Known vulnerabilities in what this build ships (test/cve-scan.sh), and how the count
+  # has moved over the last builds on main (test/cve-history.sh). Observing only: nothing
+  # waits on it, and it cannot fail the run.
+  cve-scan:
+    runs-on: *runner
+    needs:
+      - rootfs
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: read
+    strategy: *per-arch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # cve-history.sh labels each step by the commits between builds
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sbom-${{ matrix.arch }}
+          path: output
+
+      - name: Scan the SBOMs
+        env:
+          GRYPE_PINNED: 1
+        run: ./test/cve-scan.sh output
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cve-${{ matrix.arch }}
+          path: |
+            output/cve-summary.txt
+            output/cve/*.json
+
+      - name: CVE count over the last builds on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GRYPE_PINNED: 1
+        run: ./test/cve-history.sh ${{ matrix.arch }}
+
   # A three-node kubeadm cluster (test/k8s.sh). Its own job because it needs KVM (it
   # skips without), and nothing waits on it, since it depends on registry.k8s.io.
   k8s:

@@ -174,6 +174,8 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/vs-debian-slim.sh          # the OCI image against debian-slim, with both breakdowns
 ./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
 ./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
+./test/cve-scan.sh [dir]          # known CVEs in the SBOMs, by grype (report only; the cve-scan job)
+./test/cve-history.sh [amd64|arm64]  # the CVE count over the last builds on main, rescanned with one database, steps by update/other
 ./test/check-doc-links.sh         # relative links in the tracked markdown resolve
 ./test/check-image-files.sh       # each assembled image against test/image-files/: what must and must not ship
 ./test/check-tree-hygiene.sh <tree>  # nothing world-writable, no dangling symlink (build-rootfs.sh runs it on each flavour)

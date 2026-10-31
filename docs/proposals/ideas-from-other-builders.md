@@ -1,6 +1,6 @@
 # Ideas from other image builders
 
-**Status: proposal, partly implemented.** Implemented: sections 1–6. This page collects features found
+**Status: proposal, partly implemented.** Implemented: sections 1–6; 7 as a report. This page collects features found
 in other immutable or minimal Linux image builders that fit this project's constraints
 (see `CLAUDE.md`), with enough detail to implement each one. Each section names where the
 idea came from, what the gap is today, how to close it, and how to verify the change.
@@ -317,6 +317,31 @@ to start. With no `kernel.panic`, a panicked node hangs forever instead of reboo
 `kernel.panic` does not change how the `QEMU_DIED` tests report a panic.
 
 ## 7. An SBOM that vulnerability scanners can match
+
+*Implemented, observing only:* `CPE=` in 50 packages' `env.sh`, Go modules and Rust
+crates in the SBOM (`builder/build-package.sh`, `image/sbom.sh`), an SBOM per extension,
+and a `cve-scan` job that nothing waits on: `test/cve-scan.sh` (grype, pinned) and
+`test/cve-history.sh`, which rescans the last builds' SBOMs with one database so that a
+step in the count is the image's doing, and sums the steps by whether the updater's
+commits made them. Step 4 (`check-sbom.sh` requiring the references) is not done.
+
+Known gaps:
+
+- **No CPE yet** for cni-plugins, conmon, cri-tools, gawk, libxcrypt, netavark, nftables,
+  passt and shadow: NVD had no product under the obvious vendor:product, and the right
+  one has to be looked up by hand (NVD's keyword search). Until then their own advisories
+  are not matched; the Go and Rust ones are covered through their modules and crates.
+- **linux-tools** has none on purpose: it is the kernel's source and would count the
+  kernel's CVEs twice.
+- **No ignore list.** CPE matching reports disputed and distribution-specific advisories
+  (glibc's CVE-2019-1010022–25, openssh's CVE-2007-2768), which inflate the count by a
+  constant. Fine for a trend; an allowlist with a reason per entry, like
+  `test/known-missing-libs.txt`, is the step before the count means anything absolute.
+- **glibc fixes stay open until 2.45** (February 2027): upstream backports them to
+  `release/2.44/master` but cuts no tarball, so building from that branch is a decision
+  of its own.
+- **History before this change** is the base image only (no extension SBOMs, no
+  modules), with today's CPEs added by `cve-history.sh`.
 
 **Inspiration:** Flatcar security-triage, `src/*/sbom.py` (`SBOMIndex.from_spdx`, which
 indexes Flatcar's production SPDX SBOM by package name and version), `go_vulndb.py` and
