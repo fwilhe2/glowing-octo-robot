@@ -44,16 +44,20 @@ boots with: podman, the Kubernetes node, or neither.
 ## Quick start
 
 ```sh
-./tools/fetch-image.sh               # the latest green CI build into output/boot-image/
-./tools/boot-qemu.sh                 # boot it; Ctrl-a x to quit
-./tools/ssh.sh                       # in a second terminal: a shell as `user` (--root for root)
+./tools/vm.sh update                 # the latest green CI build into output/boot-image/
+./tools/vm.sh start                  # boot a machine that keeps its /var, in the background
+./tools/vm.sh ssh                    # a shell as `user` (--root for root)
+./tools/vm.sh stop
 
-SYSEXTS=podman ./tools/boot-qemu.sh  # the same machine, with podman
-SYSEXTS=debug ./tools/boot-qemu.sh   # with strace, perf, bpftool, tcpdump, gdbserver
-SYSEXTS="podman debug" ./tools/boot-qemu.sh  # several at once: a space-separated list
+./tools/vm.sh start dev --ext podman,debug  # another machine, with podman, strace, perf, ...
+./tools/vm.sh list                   # what there is, what runs, which image each boots
 ./tools/k8s-demo.sh up               # a three-node Kubernetes cluster (see below)
 ```
 
+`tools/vm.sh` is described under [Machines](#machines). For a throwaway boot with nothing
+kept, the console in the terminal and a new key each time, there is
+`./tools/boot-qemu.sh` (Ctrl-a x to quit) with `./tools/ssh.sh` in a second terminal;
+`SYSEXTS="podman debug" ./tools/boot-qemu.sh` attaches extensions to it.
 `./tools/boot-firecracker.sh` and `./tools/boot-vz.sh` (macOS, through vfkit) boot the same
 image in the other two VMMs. The OCI image needs no VM:
 `podman run --rm -it ghcr.io/fwilhe2/glowing-octo-robot/flfs:latest`. It has no package
@@ -84,13 +88,16 @@ reproducible to the byte, and CI checks it. `./tools/clean.sh` gives the disk sp
   every boot starts from the same bytes. To update a machine, boot it from a newer image.
 * **Or a disk for `/var`.** `systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs`
   on the kernel command line makes systemd format a blank disk on the first boot and keep
-  it from then on, growing the filesystem when the disk grows. For qemu,
-  `VAR_DISK=output/var.img VAR_SIZE=20G ./tools/boot-qemu.sh` does all of it: it creates
-  the file sparse if it is missing (4G by default) and keeps the VM's machine ID beside it.
-  Delete both to start over. `/home` and `/root` stay RAM either way.
-* **No passwords anywhere.** `root` and `user` have none, ssh takes keys only, and
-  `tools/boot-qemu.sh` hands the guest an ephemeral key as a systemd credential, so
-  `tools/ssh.sh` logs in with nothing baked into the image.
+  it from then on, growing the filesystem when the disk grows. `tools/vm.sh` gives every
+  machine one ([Machines](#machines)); for a one-off boot,
+  `VAR_DISK=output/var.img VAR_SIZE=20G ./tools/boot-qemu.sh` creates the file sparse if
+  it is missing (4G by default) and keeps the VM's machine ID beside it. `/home` and
+  `/root` stay RAM either way — which is also where rootless podman keeps its images, so
+  those are per boot; root's, in `/var/lib/containers`, are kept.
+* **No passwords anywhere.** `root` and `user` have none, ssh takes keys only, and the
+  host hands the guest a public key as a systemd credential at every boot, so ssh logs in
+  with nothing baked into the image: a new key per boot for `tools/boot-qemu.sh`, one per
+  machine for `tools/vm.sh`. At the console a username is enough.
 * **Credentials through fw_cfg.** On qemu and libvirt, systemd also imports credentials
   from fw_cfg (`opt/io.systemd.credentials/`), the channel for anything too big for the
   kernel command line or too secret for `/proc/cmdline`, which every user can read:
@@ -102,6 +109,45 @@ reproducible to the byte, and CI checks it. `./tools/clean.sh` gives the disk sp
 * **Networking** is systemd-networkd and systemd-resolved, with `ip`, `ping` and `curl`
   (OpenSSL, Mozilla's roots) in the image for using and debugging it.
 
+## Machines
+
+`./tools/vm.sh` keeps named qemu machines in `output/vms/<name>/`. Each has a `/var` disk
+of its own, a machine ID and an ssh key; the root is the image, read-only as always. So
+what is installed, pulled or configured under `/var` survives a reboot, a stop and start,
+and an image update:
+
+```sh
+./tools/vm.sh start dev --ext podman --mem 4096 --size 20G   # create and boot it
+./tools/vm.sh ssh dev --root podman pull docker.io/library/nginx
+./tools/vm.sh ssh dev --root systemctl reboot   # back in seconds: same disk, key and image
+./tools/vm.sh update && ./tools/vm.sh restart dev   # a new image under the same /var
+./tools/vm.sh info dev                          # where it is, what it boots, what waits
+```
+
+* **Names.** Every command takes the machine's name first, and leaves it out for the
+  default machine, `flfs`. The name is also the guest's hostname.
+* **Options stick.** `--image`, `--ext`, `--mem` and `--cpus` on `start` (or `run`) are
+  remembered, so a plain `start dev` boots it the way it last booted. `--ext a,b`
+  replaces the extension list and `--no-ext` clears it.
+* **The image.** `--image local` boots this checkout's build (`./tools/build-image.sh`),
+  `--image ci` the one `./tools/vm.sh update` fetched, and `--image <dir>` any directory
+  laid out like that one. A new machine takes `local` if there is a build. Every start
+  copies the image into the machine's directory if its source changed, and says so with
+  both root hashes. So a rebuild or a fetch never changes a disk under a running guest,
+  and the update takes effect at the next start, not at a reboot.
+* **Background or foreground.** `start` daemonizes qemu and waits until ssh answers.
+  Closing the terminal does not stop the machine. `console` attaches to its serial
+  console (Ctrl-] detaches; it needs `socat`), and `stop` powers it off cleanly.
+  `run` is the same machine in the foreground, with the console in the terminal
+  (Ctrl-a x). Either way the console is logged to `console.log`, and the previous boot's
+  to `console.log.1`.
+* **The disk.** `snapshot dev [name]` and `restore dev name` copy the `/var` disk while
+  the machine is stopped (reflinks where the filesystem has them). `resize dev 40G` grows
+  it, and the guest grows its filesystem at the next boot. `rm dev` deletes the machine.
+  `./tools/clean.sh` leaves machines alone; only `--vms` deletes them.
+* **ssh from anything.** `ssh -F output/vms/<name>/ssh/config flfs` is what `vm.sh ssh`
+  runs, so `scp`, `sftp` and `rsync -e` take the same `-F`.
+
 ## System extensions
 
 Software is added to a machine without changing its image: an extension is an EROFS
@@ -111,8 +157,9 @@ does not orphan them. A machine gets them in one of two ways:
 
 * **Attached by the VMM**, the way the root is: a read-only disk per image, verified by
   dm-verity from a table on the kernel command line and mounted where systemd-sysext
-  looks. One file serves any number of VMs. `SYSEXTS=podman`, `SYSEXTS=kubernetes` or
-  `SYSEXTS=debug` does this in `test/qemu-lib.sh`, and with it `tools/boot-qemu.sh`.
+  looks. One file serves any number of VMs. `./tools/vm.sh start --ext podman` does this,
+  as does `SYSEXTS=podman` (or `kubernetes`, or `debug`) for `test/qemu-lib.sh` and
+  `tools/boot-qemu.sh`.
 * **Installed on the `/var` disk**, in `/var/lib/extensions` and `/var/lib/confexts`.
   This way is not verified yet: it would need libcryptsetup (#191).
 

@@ -166,6 +166,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
 ./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
 ./test/check-image-files.sh       # each assembled image against test/image-files/: what must and must not ship
+./tools/vm.sh start|ssh|stop|list|run|console|update|snapshot [name] ...  # named machines that keep /var
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ./tools/boot-firecracker.sh       # the same, in Firecracker (Linux + KVM; ssh over vsock)
 ./tools/boot-vz.sh                # the same, in Virtualization.framework via vfkit (macOS)
@@ -366,6 +367,15 @@ container). **A package that writes `/etc` at boot breaks the image**, seen only
 ships an empty `/etc/machine-id` for PID 1 to bind-mount a per-boot id over, and `/` at
 0555 so tmpfiles does not try to `fchmod` it. The journal catalogue is compiled at boot by
 `systemd-journal-catalog-update` (`/var` starts empty), not here.
+
+**`tools/vm.sh` machines are state, images are copies.** `output/vms/<name>/` holds the
+`/var` disk, machine ID and an ssh key made once (`SSH_KEEP_KEY=1` to `qemu_ssh_setup`).
+Each start copies the image there when its source changed, because qemu reads the root
+for the whole boot and a rebuild must not write under it. qemu is `-daemonize`d with a
+pidfile, so no shell owns it; `running` checks that the pid's command line names the
+machine's disk. Its sockets are in `$XDG_RUNTIME_DIR`, because a socket path is limited
+to 108 bytes. `QEMU_REBOOT=1` (no `-no-reboot`) and `QEMU_DISPLAY_ARGS` are the
+`qemu_argv` hooks it uses; every test still exits on a guest reboot.
 
 `test/boot.sh` runs `/bin/bash` as PID 1; the others boot systemd. `test/systemd.sh` asserts
 `running` (no failed unit) and no taint. **All boots go through `test/qemu-lib.sh`**, which

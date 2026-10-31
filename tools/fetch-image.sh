@@ -74,7 +74,7 @@ fi
 # Into $OUT only once everything is downloaded, so a failed fetch leaves the previous
 # image as it was rather than a new rootfs beside an old kernel: the image and the kernel
 # arguments that carry its dm-verity root hash, the kernel, the extensions, and the run
-# they came from.
+# they came from (tools/vm.sh shows it).
 cp "$tmp/rootfs/rootfs.erofs" "$tmp/rootfs/rootfs.cmdline" "$OUT/"
 cp "$tmp/kernel/rootfs/boot/bzImage" "$OUT/bzImage"
 if [ "$have_extensions" = 1 ]; then
@@ -87,7 +87,7 @@ echo
 echo "Downloaded into $OUT/:"
 ls -la "$OUT/rootfs.erofs" "$OUT/rootfs.cmdline" "$OUT/bzImage" "$OUT"/extensions/*.raw "$OUT"/confexts/*.raw 2>/dev/null || true
 if [ "$ARCH" = "$host_arch" ]; then
-    echo "Boot it with: ./tools/boot-qemu.sh"
+    echo "Boot it with: ./tools/vm.sh start, or ./tools/boot-qemu.sh"
 else
     echo "Boot it with: ARCH=$ARCH ./tools/boot-qemu.sh"
 fi

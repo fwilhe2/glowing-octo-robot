@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Boot the fetched rootfs + kernel in QEMU (serial console in this terminal).
+# Boot the fetched rootfs + kernel in QEMU (serial console in this terminal), once: by
+# default nothing is kept, and the ssh key is gone with qemu. For a machine that keeps its
+# /var and its key across reboots and image updates, see tools/vm.sh.
 #
 # Overrides:
 #   ARCH     amd64 or arm64          (default the host's own architecture)
