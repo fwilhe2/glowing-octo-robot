@@ -571,13 +571,16 @@ cmd_resize() {
 }
 
 cmd_rm() {
-    local yes=0
-    [ "${1:-}" != --yes ] || { yes=1; shift; }
-    select_vm "${1:?usage: ./tools/vm.sh rm NAME [SNAPSHOT]}"
-    if [ -n "${2:-}" ]; then
-        [ -d "$DIR/snapshots/$2" ] || die "'$NAME' has no snapshot '$2'"
-        rm -rf "${DIR:?}/snapshots/$2"
-        say "deleted snapshot '$2' of '$NAME'"
+    local yes=0 a args=()
+    for a in "$@"; do
+        case "$a" in --yes|-y) yes=1 ;; -*) die "rm: unknown option $a" ;; *) args+=("$a") ;; esac
+    done
+    [ "${#args[@]}" -ge 1 ] && [ "${#args[@]}" -le 2 ] || die "usage: ./tools/vm.sh rm NAME [SNAPSHOT] [--yes]"
+    select_vm "${args[0]}"
+    if [ -n "${args[1]:-}" ]; then
+        [ -d "$DIR/snapshots/${args[1]}" ] || die "'$NAME' has no snapshot '${args[1]}'"
+        rm -rf "${DIR:?}/snapshots/${args[1]}"
+        say "deleted snapshot '${args[1]}' of '$NAME'"
         return
     fi
     require_stopped
