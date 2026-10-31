@@ -1,6 +1,6 @@
 # Ideas from other image builders
 
-**Status: proposal, partly implemented.** Implemented: sections 1–4, and 5's sysctls. This page collects features found
+**Status: proposal, partly implemented.** Implemented: sections 1–4 and 6, and 5's sysctls. This page collects features found
 in other immutable or minimal Linux image builders that fit this project's constraints
 (see `CLAUDE.md`), with enough detail to implement each one. Each section names where the
 idea came from, what the gap is today, how to close it, and how to verify the change.
@@ -266,6 +266,10 @@ command line from `rootfs.cmdline` and `test/qemu-lib.sh` carries no hardening a
 and `test/k8s.sh` all pass. `test/debug.sh` is the one most likely to notice.
 
 ## 6. Limits that containers and Kubernetes need
+
+*Implemented:* `image/files/etc/sysctl.d/50-containers.conf`, read back by
+`test/systemd.sh`. A sysrq crash with `kernel.panic = 10` still ends the test as "the
+guest died". `kernel.pid_max` was already raised by systemd's own `50-pid-max.conf`.
 
 **Inspiration:** Talos,
 `internal/app/machined/pkg/controllers/runtime/kernel_param_defaults.go` (around lines
