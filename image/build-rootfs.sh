@@ -425,11 +425,84 @@ if [ -d usr/share/terminfo ]; then
 fi
 # ---------------------------------------------------------------------------------
 
-# Local additions from extra/ (tools/build-image.sh; absent in CI): after the trim, which
-# does not get to decide about them, and before ldconfig. Not in the SBOM.
-if [ -d /extra ] && [ -n "$(ls -A /extra)" ]; then
-    echo "extra: overlaying $(find /extra -type f | wc -l) file(s) from extra/"
-    cp -a /extra/. .
+# Local additions, mounted at /extra only when tools/build-image.sh is given --extra DIR
+# (never in CI): after the trim, which does not get to decide about them, and before
+# ldconfig. They are listed in the build output, in output/extra-files-<flavour>.txt and
+# in the SBOM (SPDXRef-LocalExtra), and they may only add: everything that guards the
+# image ran before this point or reads what this would change, so an overlay is refused
+#   - outside usr/, etc/ and opt/ (the rest is a mount point, or replaced below)
+#   - over any path the build installed, or through a symlink the image has there
+#   - under authentication, privilege, boot-time and provenance configuration
+#     ($extra_protected), even where this flavour has no file to replace
+#   - setuid, setgid, or with file capabilities, or anything but files, dirs and links
+extra_manifest=
+extra_protected="etc/passwd etc/group etc/shadow etc/gshadow etc/subuid etc/subgid
+    etc/sudoers etc/sudoers.d etc/pam.d usr/lib/pam.d etc/security usr/lib/security
+    usr/share/pam etc/ssh etc/systemd usr/lib/systemd etc/tmpfiles.d usr/lib/tmpfiles.d
+    etc/sysusers.d usr/lib/sysusers.d etc/sysctl.d usr/lib/sysctl.d etc/udev usr/lib/udev
+    etc/credstore etc/credstore.encrypted usr/lib/credstore etc/containers
+    etc/ld.so.conf etc/ld.so.conf.d etc/ld.so.preload etc/ld.so.cache etc/nsswitch.conf
+    etc/os-release usr/lib/os-release etc/machine-id etc/fstab
+    usr/share/flfs usr/share/licenses usr/lib/modules"
+if [ -d /extra ]; then
+    set +x
+    if [ -z "$(ls -A /extra)" ]; then
+        echo "error: --extra names an empty directory" >&2
+        exit 1
+    fi
+    extra_refused=$(
+        find /extra -mindepth 1 -name '*[^[:graph:]]*' -printf '%P: a name with spaces or control characters\n'
+        find /extra -mindepth 1 -printf '%P\n' | LC_ALL=C sort | while IFS= read -r rel; do
+            src=/extra/$rel
+            case "$rel" in
+                usr|etc|opt|usr/*|etc/*|opt/*) ;;
+                *) echo "$rel: only usr/, etc/ and opt/ can be added to"; continue ;;
+            esac
+            for p in $extra_protected; do
+                case "$rel" in
+                    "$p"|"$p"/*) echo "$rel: $p is security-sensitive; change it in image/files or a package"
+                                 continue 2 ;;
+                esac
+            done
+            if [ -L "$src" ] || [ -f "$src" ]; then
+                if [ -e "$rel" ] || [ -L "$rel" ]; then
+                    echo "$rel: replaces a file the build installed"
+                elif [ ! -L "$src" ]; then
+                    [ -z "$(find "$src" -perm /6000)" ] || echo "$rel: setuid or setgid"
+                    [ -z "$(getcap "$src")" ] || echo "$rel: carries file capabilities"
+                fi
+            elif [ -d "$src" ]; then
+                if [ -L "$rel" ] || { [ -e "$rel" ] && [ ! -d "$rel" ]; }; then
+                    echo "$rel: the image has a symlink or file there, not a directory"
+                fi
+            else
+                echo "$rel: not a file, directory or symlink"
+            fi
+        done
+    )
+    if [ -n "$extra_refused" ]; then
+        echo "error: refusing the --extra overlay:" >&2
+        echo "$extra_refused" | sed 's/^/       /' >&2
+        exit 1
+    fi
+    # What is added, one line each: the content hash, or the link target.
+    extra_manifest=/tmp/extra-files.txt
+    (cd /extra && find . -mindepth 1 ! -type d -printf '%P\n' | LC_ALL=C sort | while IFS= read -r rel; do
+        if [ -L "$rel" ]; then
+            echo "symlink $rel -> $(readlink "$rel")"
+        else
+            echo "sha256:$(sha256sum < "$rel" | cut -c1-64) $rel"
+        fi
+    done) > "$extra_manifest"
+    echo "extra: overlaying $(wc -l < "$extra_manifest") path(s) from --extra:"
+    sed 's/^/extra:   /' "$extra_manifest"
+    # tar, not cp -a: --no-overwrite-dir keeps the image's own directories' modes (cp -a
+    # would give /usr the mode of extra/usr), and everything added is root's.
+    tar -C /extra --owner=0 --group=0 --numeric-owner -cf - . | tar -xf - --no-overwrite-dir
+    cp "$extra_manifest" "/usr/local/output/extra-files-$flavour.txt"
+    set -x
+else
+    rm -f "/usr/local/output/extra-files-$flavour.txt"
 fi
 
 # Last step that touches libraries: ld.so.cache indexes what is there now.
@@ -606,7 +679,7 @@ image_name="flfs-$flavour-$oci_arch"
     printf '  "name": "%s",\n' "$(jstr "$image_name")"
     # Unique per document, and derived rather than random so it is reproducible.
     printf '  "documentNamespace": "https://github.com/fwilhe2/glowing-octo-robot/spdx/%s-%s",\n' \
-        "$(jstr "$image_name")" "$(cat "$components"/* | sha256sum | cut -c1-16)"
+        "$(jstr "$image_name")" "$(cat "$components"/* $extra_manifest | sha256sum | cut -c1-16)"
     printf '  "creationInfo": {\n'
     printf '    "created": "%s",\n' "$created"
     printf '    "creators": [ "Tool: flfs-build-rootfs", "Organization: github.com/fwilhe2/glowing-octo-robot" ]\n'
@@ -673,6 +746,22 @@ image_name="flfs-$flavour-$oci_arch"
         printf '    }'
     done
 
+    # Files a --extra overlay added: built elsewhere, so no provenance beyond their
+    # paths and hashes, which the comment carries. Absent from every normal build.
+    if [ -n "$extra_manifest" ]; then
+        printf ',\n    {\n'
+        printf '      "SPDXID": "SPDXRef-LocalExtra",\n'
+        printf '      "name": "local-extra",\n'
+        printf '      "versionInfo": "%s",\n' "$(sha256sum < "$extra_manifest" | cut -c1-16)"
+        printf '      "downloadLocation": "NOASSERTION",\n'
+        printf '      "filesAnalyzed": false,\n'
+        printf '      "licenseConcluded": "NOASSERTION",\n'
+        printf '      "licenseDeclared": "NOASSERTION",\n'
+        printf '      "copyrightText": "NOASSERTION",\n'
+        printf '      "comment": "%s"\n' "$(jstr "Overlaid from a local directory by tools/build-image.sh --extra, not built here: $(paste -sd ';' "$extra_manifest" | sed 's/;/; /g')")"
+        printf '    }'
+    fi
+
     # Libraries a shipped binary needs and the image lacks: DEPENDS_ON without CONTAINS.
     # The same construction as test/check-rootfs-deps.sh, over the assembled tree. A
     # library is a file plus its SONAME symlink, so both count as provided.
@@ -721,6 +810,10 @@ image_name="flfs-$flavour-$oci_arch"
                 "$(spdxid "$b")" "$id"
         fi
     done
+
+    if [ -n "$extra_manifest" ]; then
+        printf ',\n    { "spdxElementId": "SPDXRef-Image", "relationshipType": "CONTAINS", "relatedSpdxElement": "SPDXRef-LocalExtra" }'
+    fi
 
     for lib in $missing; do
         [ -n "$lib" ] || continue

@@ -20,12 +20,23 @@
 # because everything else compiles against it; the rest follow in alphabetical order,
 # which is fine since CI builds them independently against a glibc-only sysroot too.
 #
-# ADDITIONAL FILES: anything under extra/ (gitignored, create it yourself) is copied over
-# the assembled image as-is, for both flavours. Lay it out like the target filesystem:
+# ADDITIONAL FILES, opt-in per build: --extra DIR copies DIR over both assembled images,
+# laid out like the target filesystem. extra/ is gitignored for the purpose, but nothing
+# reads it unless named, and CI never does:
+#
+#     ./tools/build-image.sh --image-only --extra extra
 #
 #     extra/usr/bin/my-static-strace
 #     extra/etc/motd
-#     extra/root/.bashrc
+#     extra/etc/profile.d/local.sh
+#
+# Every path added is printed, written to output/extra-files-<flavour>.txt with its hash,
+# and named in the SBOM (SPDXRef-LocalExtra). An overlay can only add: it is refused if it
+# would replace anything the build installed, write outside usr/, etc/ or opt/, touch
+# authentication, privilege, boot-time or provenance configuration (PAM, ssh, systemd,
+# tmpfiles, sysctl, accounts, the loader's, /etc/containers, usr/share/flfs and licenses;
+# the list is in image/build-rootfs.sh), or carry setuid, setgid or file capabilities.
+# Those changes belong in image/files or a package, where review sees them.
 #
 # Extra *software* built from source belongs in packages/ instead, like any other package:
 # once it has an env.sh + build.sh, this script picks it up automatically.
@@ -35,7 +46,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tools/lib.sh
 
-clean=0 image_only=0 allow_unresolved=0 flavours="erofs oci" skip="" only=""
+clean=0 image_only=0 allow_unresolved=0 flavours="erofs oci" skip="" only="" extra=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --clean)      clean=1 ;;
@@ -44,6 +55,7 @@ while [ $# -gt 0 ]; do
         --flavour)    flavours="${2:?--flavour needs erofs or oci}"; shift ;;
         --skip)       skip="${2:?--skip needs a comma-separated list}"; shift ;;
         --only)       only="${2:?--only needs a comma-separated list}"; shift ;;
+        --extra)      extra="${2:?--extra needs a directory}"; shift ;;
         -h|--help)    sed -n '2,/^set -e/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
     esac
@@ -53,6 +65,14 @@ done
 for f in $flavours; do
     case "$f" in erofs|oci) ;; *) echo "error: unknown flavour '$f'" >&2; exit 2 ;; esac
 done
+
+extra_mount=()
+if [ -n "$extra" ]; then
+    [ -d "$extra" ] || { echo "error: --extra $extra is not a directory" >&2; exit 2; }
+    extra_mount=(--volume "$(cd "$extra" && pwd)":/extra:ro)
+elif [ -n "$(ls -A extra 2>/dev/null)" ]; then
+    echo "note: extra/ is not empty and is NOT overlaid; pass --extra extra to use it" >&2
+fi
 
 if [ "$clean" = 1 ]; then
     echo "==> removing staging/, rootfs/ and extensions/"
@@ -99,7 +119,7 @@ if ! ./test/check-rootfs-deps.sh rootfs; then
 fi
 
 echo "==> assembling images"
-mkdir -p output extra
+mkdir -p output
 # Rebuilt every time: image/files is COPYed into it, so a stale image ships a stale /etc.
 podman build -q -t rootfs-builder -f image/Containerfile .
 
@@ -110,7 +130,7 @@ for f in $flavours; do
         -e FLFS_BUILD="$build" \
         -e SOURCE_DATE_EPOCH="$FLFS_SOURCE_DATE_EPOCH" \
         --volume "$PWD/rootfs":/usr/local/src:ro \
-        --volume "$PWD/extra":/extra:ro \
+        "${extra_mount[@]}" \
         --volume "$PWD/output":/usr/local/output \
         rootfs-builder /usr/local/bin/build-rootfs.sh "$f"
 done

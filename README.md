@@ -100,8 +100,20 @@ Useful variants:
 
 Build products are written under `output/`; package staging is under `staging/`, with the
 merged filesystem under `rootfs/`. The default clean removes rebuildable output but keeps
-source downloads and VM disks; see `./tools/clean.sh --help` for options. Files placed under
-the git-ignored `extra/` directory are copied into each assembled image. Software built
+source downloads and VM disks; see `./tools/clean.sh --help` for options.
+
+To add local files to an image, name a directory laid out like the target filesystem
+(the git-ignored `extra/` is there for it) with `--extra`; nothing is overlaid otherwise:
+
+```sh
+./tools/build-image.sh --image-only --extra extra
+```
+
+The overlay may only add files under `usr/`, `etc/` or `opt/`. It is refused if it would
+replace an installed file, touch security-sensitive configuration (accounts, PAM, ssh,
+systemd, tmpfiles, sysctl, the loader, `/etc/containers`), or carry setuid, setgid or file
+capabilities. Each added path is printed, listed with its hash in
+`output/extra-files-<flavour>.txt`, and named in the SBOM as `local-extra`. Software built
 from source should be added as a package instead.
 
 For build details, see the [documentation index](docs/README.md).

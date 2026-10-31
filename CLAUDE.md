@@ -309,6 +309,12 @@ and status format). A package that sets `CFLAGS` wholesale drops both sysroot an
 passwords**: `shadow` is all `*` and the build fails on a hash; the console takes the
 `login.noauth` credential, ssh takes keys only.
 
+**`extra/` is opt-in** (`build-image.sh --extra DIR`, never in CI) and runs after the
+setuid, shadow and trim steps, so `build-rootfs.sh` holds it to its own rules: add-only,
+under `usr/`, `etc/`, `opt/`, nothing in `$extra_protected`, no setuid or capabilities,
+and recorded in `output/extra-files-<flavour>.txt` and the SBOM. Without it, the bytes are
+the same as before it existed.
+
 **The container flavour is subtractions from the disk image, in one block**: the kernel,
 systemd (its tree, udev, PAM/NSS modules, and every binary whose `NEEDED` names
 `libsystemd-shared`, found by `readelf`), PAM (broken without `/etc/pam.d` anyway), agetty,

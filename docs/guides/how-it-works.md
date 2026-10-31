@@ -64,7 +64,10 @@ configuration and SBOM data, then writes the requested image format:
 - `oci`: `output/flfs-oci.tar`, an OCI archive of userspace without the kernel or systemd.
 
 Staged extensions are assembled into `output/extensions/` and `output/confexts/`.
-Untracked files in the git-ignored `extra/` directory are copied into both image formats.
+With `--extra DIR` (never in CI), files from that directory are added to both image formats
+after the trim. The overlay is additive only and refuses security-sensitive paths, setuid
+files and file capabilities; the paths it adds are printed, written to
+`output/extra-files-<flavour>.txt`, and recorded in the SBOM as `SPDXRef-LocalExtra`.
 
 ## Checks and CI
 
