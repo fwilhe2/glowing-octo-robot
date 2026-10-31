@@ -20,5 +20,6 @@ VENDOR_TARBALL="libpcap-${LIBPCAP_VERSION}.tar.xz"
 VENDOR_URL="https://www.tcpdump.org/release/${VENDOR_TARBALL}"
 VENDOR_SHA256="68fa62cffb974f4275641ce14c2e2d75739251f30e00e6a0900903b247d76a03"
 LICENSE="BSD-3-Clause"
+CPE="cpe:2.3:a:tcpdump:tcpdump:${VERSION}:*:*:*:*:*:*:*"
 # In the debug system extension (docs/guides/debugging.md).
 EXTENSION=debug

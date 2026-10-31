@@ -19,4 +19,5 @@ SHA256="6f213700dbf96b5cc4499ca70cb15ecd69c09f405b06785bb4a1a10b572b6276"
 # ping and clockdiff descend from the 4.3BSD original; arping and tracepath are Alexey
 # Kuznetsov's and are GPL. See LICENSE, which lists it per program.
 LICENSE="BSD-3-Clause AND GPL-2.0-or-later"
+CPE="cpe:2.3:a:iputils_project:iputils:${VERSION}:*:*:*:*:*:*:*"
 UPSTREAM_GITHUB="iputils/iputils"

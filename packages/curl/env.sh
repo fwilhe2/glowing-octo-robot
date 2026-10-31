@@ -13,3 +13,4 @@ SHA256="8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5"
 # shape as X11. SPDX gives it an identifier of its own because the text is not quite
 # either of them.
 LICENSE="curl"
+CPE="cpe:2.3:a:haxx:curl:${VERSION}:*:*:*:*:*:*:*"

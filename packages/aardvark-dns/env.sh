@@ -10,6 +10,7 @@ VENDOR_TARBALL="aardvark-dns-v${VERSION}-vendor.tar.gz"
 VENDOR_URL="https://github.com/containers/aardvark-dns/releases/download/v${VERSION}/${VENDOR_TARBALL}"
 VENDOR_SHA256="6e6366828d4cd2ccf3cfe07657d8aba083045605696b4f74967c2c8340f51500"
 LICENSE="Apache-2.0"
+CPE="cpe:2.3:a:containers:aardvark-dns:${VERSION}:*:*:*:*:*:*:*"
 # In the podman system extension, not the image (EXTENSION, see build.sh): the base keeps
 # the container runtime — the kernel, crun, conmon — and an engine is loaded on demand
 # (docs/guides/sysext.md, #192).

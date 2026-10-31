@@ -21,3 +21,4 @@ SHA256="5c1789d290bba048a6135ed1ab81b0402dd0fb528d1f1421765c42b1fc3d6289"
 # emit the /usr/lib/tc/*.dist data, the same way a perl configure never reaches the
 # image. rdma/ is `GPL-2.0 OR Linux-OpenIB`, a choice, and this takes the GPL half.
 LICENSE="GPL-2.0-only AND GPL-2.0-or-later AND BSD-3-Clause"
+CPE="cpe:2.3:a:iproute2_project:iproute2:${VERSION}:*:*:*:*:*:*:*"

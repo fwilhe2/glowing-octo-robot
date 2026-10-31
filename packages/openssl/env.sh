@@ -30,6 +30,7 @@ TARBALL="$PACKAGE.tar.gz"
 URL="https://github.com/openssl/openssl/releases/download/${PACKAGE}/${TARBALL}"
 SHA256="603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"
 LICENSE="Apache-2.0"
+CPE="cpe:2.3:a:openssl:openssl:${VERSION}:*:*:*:*:*:*:*"
 UPSTREAM_GITHUB="openssl/openssl"
 # Tags are openssl-3.5.7; the ancient ones are OpenSSL_1_1_1w and never survive the
 # numeric filter in tools/upstream.sh.

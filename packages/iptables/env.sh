@@ -24,3 +24,4 @@ SHA256="1afcd33da9e8f913ace6a2126788162e207e26f5d5e29c6573c0e581ffc58b99"
 # kernel UAPI headers it vendors under include/linux carry Linux-syscall-note and are
 # only compiled against.
 LICENSE="GPL-2.0-only AND GPL-2.0-or-later"
+CPE="cpe:2.3:a:netfilter:iptables:${VERSION}:*:*:*:*:*:*:*"

@@ -5,6 +5,7 @@ URL="https://ftp.fau.de/gnu/glibc/${TARBALL}"
 MIRRORS="https://ftp.gnu.org/gnu/glibc/${TARBALL}"
 SHA256="1217fc41ac7fb1f310c8c32b9c6c009cc769398d4b367b6aa57be0bb3ea8c1ef"
 LICENSE="LGPL-2.1-or-later AND GPL-2.0-or-later"
+CPE="cpe:2.3:a:gnu:glibc:${VERSION}:*:*:*:*:*:*:*"
 # glibc is what every other package is then compiled against, so it is the one package
 # that has to build against the builder image's own libc.
 NO_SYSROOT=1

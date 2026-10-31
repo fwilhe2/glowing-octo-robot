@@ -15,6 +15,7 @@ MIRRORS="https://ftp.gnu.org/gnu/gcc/${PACKAGE}/${TARBALL}"
 SHA256="e6738e29597f733270731aa90600f37ffdc045079dfc27ec7e8192cc81085c3e"
 # Only libgcc and libstdc++ ship, and both carry the runtime library exception.
 LICENSE="GPL-3.0-or-later WITH GCC-exception-3.1"
+CPE="cpe:2.3:a:gnu:gcc:${VERSION}:*:*:*:*:*:*:*"
 # Releases live one directory per version, so the listing to scrape is the parent.
 UPSTREAM_INDEX="https://ftp.fau.de/gnu/gcc/"
 UPSTREAM_REGEX='gcc-([0-9]+(\.[0-9]+)*)/'

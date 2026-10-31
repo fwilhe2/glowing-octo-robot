@@ -10,5 +10,6 @@ TARBALL="$PACKAGE.tar.xz"
 URL="https://ftp.gnu.org/gnu/gdb/${TARBALL}"
 SHA256="cd9fc3fe2b47743840e42c1592d3d87f8302eb18639c0b8b4ba0898002e2348f"
 LICENSE="GPL-3.0-or-later"
+CPE="cpe:2.3:a:gnu:gdb:${VERSION}:*:*:*:*:*:*:*"
 # In the debug system extension (docs/guides/debugging.md).
 EXTENSION=debug

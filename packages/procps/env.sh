@@ -16,4 +16,5 @@ SHA256="9d2021f47a4501c667862c9942a92d1953694b21d11bcd1702e83eb594e3d67d"
 # share; top alone still carries the older "Library General Public License" text, version
 # 2 or any later version.
 LICENSE="GPL-2.0-or-later AND LGPL-2.1-or-later AND LGPL-2.0-or-later"
+CPE="cpe:2.3:a:procps-ng_project:procps-ng:${VERSION}:*:*:*:*:*:*:*"
 UPSTREAM_INDEX="https://sourceforge.net/projects/procps-ng/files/Production/"

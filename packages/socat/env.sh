@@ -9,5 +9,6 @@ TARBALL="$PACKAGE.tar.gz"
 URL="http://www.dest-unreach.org/socat/download/${TARBALL}"
 SHA256="06602ffd591e98c75b3dc1d66f0f19136cc666b0b2d95caad987d6ab2cb28097"
 LICENSE="GPL-2.0-only"
+CPE="cpe:2.3:a:dest-unreach:socat:${VERSION}:*:*:*:*:*:*:*"
 # In the debug system extension (docs/guides/debugging.md).
 EXTENSION=debug

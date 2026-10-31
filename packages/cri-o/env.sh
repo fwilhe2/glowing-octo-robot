@@ -12,6 +12,7 @@ TARBALL="$PACKAGE.tar.gz"
 URL="https://github.com/cri-o/cri-o/archive/refs/tags/v${VERSION}.tar.gz"
 SHA256="21569cbd5c50cc16d78d788761588c95c2d80ad2b03d14e0c0afd347f83eb6a6"
 LICENSE="Apache-2.0"
+CPE="cpe:2.3:a:kubernetes:cri-o:${VERSION}:*:*:*:*:*:*:*"
 EXTENSION=kubernetes
 UPSTREAM_GITHUB="cri-o/cri-o"
 UPSTREAM_SED='s/^v//'
