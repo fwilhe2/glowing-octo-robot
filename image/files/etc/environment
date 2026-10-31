@@ -1,0 +1,3 @@
+# KEY=VALUE lines for systemd's user managers, through
+# usr/lib/environment.d/99-environment.conf, which links here. Empty, as Debian and
+# Fedora ship it; a confext can supply one with something in it.

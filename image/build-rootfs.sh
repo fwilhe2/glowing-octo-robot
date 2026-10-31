@@ -614,7 +614,7 @@ rm -rf usr/share/flfs/capabilities
 
 chown -R root:root etc
 
-chmod 644 etc/passwd etc/group etc/hosts etc/profile etc/nsswitch.conf etc/ld.so.conf
+chmod 644 etc/passwd etc/group etc/hosts etc/profile etc/nsswitch.conf etc/ld.so.conf etc/environment
 
 if [ "$flavour" = erofs ]; then
     chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
