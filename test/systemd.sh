@@ -72,13 +72,14 @@ TAINT_CHECK="echo SYSTEMD'-TAINT':[\$(systemctl show -p Tainted)]"
 # above; journalctl --grep would need pcre2, which systemd is built without.
 ROFS="SYSTEMD-ROFS:"
 ROFS_CHECK="n=0; while IFS= read -r l; do [[ \$l == *'Read-only file system'* ]] && { n=\$((n+1)); echo \"ROFS> \$l\"; }; done < <(journalctl -b --no-pager -o short); echo SYSTEMD'-ROFS':[\$n]"
-# A daemon can log a critical error and carry on, and the boot is still `running`. So the
-# boot's journal at priority crit and above has to be empty, but for what
+# A daemon can log an error and carry on, and the boot is still `running`. So the boot's
+# journal at priority err and above has to be empty, but for what
 # test/known-journal-messages.txt accepts (filtered here on the host, where grep is). -q,
 # so an empty journal prints nothing rather than "-- No entries --". From
-# podman-machine-os, whose image test requires the same.
-CRIT="SYSTEMD-CRIT:"
-CRIT_CHECK="n=0; while IFS= read -r l; do n=\$((n+1)); echo \"CRIT> \$l\"; done < <(journalctl -b -q -p crit --no-pager -o short); echo SYSTEMD'-CRIT':[\$n]"
+# podman-machine-os, whose image test requires the same of crit; err is stricter, and
+# was empty when it was turned on.
+ERRS="SYSTEMD-ERRS:"
+ERRS_CHECK="n=0; while IFS= read -r l; do n=\$((n+1)); echo \"ERRS> \$l\"; done < <(journalctl -b -q -p err --no-pager -o short); echo SYSTEMD'-ERRS':[\$n]"
 KNOWN_JOURNAL=test/known-journal-messages.txt
 DIAGNOSE="systemctl --failed --no-pager --plain; journalctl -p err -b --no-pager -o short"
 # A credential through qemu's fw_cfg rather than the command line, on the pc profile: what
@@ -155,17 +156,17 @@ case "$rofs" in
 esac
 
 mark=$(console_mark)
-console_send "$CRIT_CHECK"
-await "$CRIT" 60 "$mark" || fail "could not read the journal's critical messages"
+console_send "$ERRS_CHECK"
+await "$ERRS" 60 "$mark" || fail "could not read the journal's error messages"
 # The allowlist without its comments and blank lines; an empty one matches nothing.
 known=$(grep -vE '^[[:space:]]*(#|$)' "$KNOWN_JOURNAL" || true)
-crit=$(tail -c "+$((mark + 1))" "$LOG" | tr -d '\r' | sed -n 's/^CRIT> //p' |
+errs=$(tail -c "+$((mark + 1))" "$LOG" | tr -d '\r' | sed -n 's/^ERRS> //p' |
        { if [ -n "$known" ]; then grep -vE -e "$known"; else cat; fi; } || true)
-if [ -n "$crit" ]; then
-    printf '%s\n' "$crit" | sed 's/^/   /'
-    fail "the journal has critical messages (above) that $KNOWN_JOURNAL does not accept"
+if [ -n "$errs" ]; then
+    printf '%s\n' "$errs" | sed 's/^/   /'
+    fail "the journal has error messages (above) that $KNOWN_JOURNAL does not accept"
 fi
-echo ">> systemd OK: no critical messages in the journal"
+echo ">> systemd OK: no errors in the journal"
 
 if [ -n "${QEMU_FWCFG_CREDENTIALS:-}" ]; then
     console_send "$FWCFG_CHECK"

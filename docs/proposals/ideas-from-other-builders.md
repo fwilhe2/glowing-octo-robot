@@ -81,8 +81,8 @@ a few runs are clean.
 ## 2. Fail on critical journal messages
 
 *Implemented:* `CRIT_CHECK` in `test/systemd.sh`, against
-`test/known-journal-messages.txt`, which starts empty: a KVM boot logged nothing at
-`crit`, nor at `err`.
+`test/known-journal-messages.txt`, which starts empty. It checks `-p err` (step 4) since
+the commit after it: a KVM boot logged nothing at either priority.
 
 **Inspiration:** podman-machine-os, `verify/image_test.go`, the test *"should have zero
 critical error messages journalctl"* (around line 150), which runs

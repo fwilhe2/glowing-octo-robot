@@ -110,8 +110,8 @@ image/            how the staging tree becomes an image, disk or OCI: Containerf
                   build-rootfs.sh, and files/ — the /etc the image ships; and
                   build-extension.sh, how a tree becomes a system extension for it
 test/             everything CI runs to verify a build, plus known-missing-libs.txt,
-                  known-journal-messages.txt and size-budget.txt; qemu-lib.sh is the boot harness the qemu
-                  tests and tools/boot-qemu.sh all source
+                  known-journal-messages.txt and size-budget.txt; qemu-lib.sh is the
+                  boot harness the qemu tests and tools/boot-qemu.sh all source
 tools/            local conveniences and maintenance, not part of a build — except
                   lib.sh, the helpers build.sh, tools/ and test/ all source
 docs/             design notes; each says at the top whether it is implemented.
@@ -400,15 +400,17 @@ to 108 bytes. `QEMU_REBOOT=1` (no `-no-reboot`) and `QEMU_DISPLAY_ARGS` are the
 `qemu_argv` hooks it uses; every test still exits on a guest reboot.
 
 `test/boot.sh` runs `/bin/bash` as PID 1; the others boot systemd. `test/systemd.sh` asserts
-`running` (no failed unit), no taint and no critical journal message. **All boots go through `test/qemu-lib.sh`**, which
-`tools/boot-qemu.sh` sources too, so debugging a CI failure boots the same machine.
-**Every boot's console is held to `CONSOLE_BAD`** (kernel warnings, oopses, segfaults,
-emergency mode) when the test ends without having failed; a test that provokes one on
-purpose names it in `CONSOLE_BAD_EXEMPT`. `QEMU_PROFILE=microvm|vz` gives Firecracker's
-or Virtualization.framework's devices (`test/vmm.sh`). `tools/boot-vz.sh` runs on macOS: what it uses from `qemu-lib.sh` and
-`lib.sh` stays within bash 3.2 and BSD tools. **`await` only matches output after the mark
-it is given** — matching the whole transcript once typed the password into the username
-prompt, so suspect the handshake before `shadow` when a login fails.
+`running` (no failed unit), no taint and nothing at `err` or above in the journal.
+**All boots go through `test/qemu-lib.sh`**, which `tools/boot-qemu.sh` sources too, so
+debugging a CI failure boots the same machine. **Every boot's console is held to
+`CONSOLE_BAD`** (kernel warnings, oopses, segfaults, emergency mode) when the test ends
+without having failed; a test that provokes one on purpose names it in
+`CONSOLE_BAD_EXEMPT`. `QEMU_PROFILE=microvm|vz` gives Firecracker's or
+Virtualization.framework's devices (`test/vmm.sh`). `tools/boot-vz.sh` runs on macOS:
+what it uses from `qemu-lib.sh` and `lib.sh` stays within bash 3.2 and BSD tools.
+**`await` only matches output after the mark it is given** — matching the whole
+transcript once typed the password into the username prompt, so suspect the handshake
+before `shadow` when a login fails.
 
 - **D-Bus** is dbus-daemon; logind crash-loops without it. Sessions need `pam_systemd.so`
   (systemd `-Dpam=enabled`).
