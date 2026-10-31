@@ -223,6 +223,29 @@ printf 'usr\nusr/share/flfs/sbom.json\n' > "$work/manifest-unlabelled.txt"
 expect fail "image-files: a manifest that names no flavour is refused" flavour \
     env RULES="$rules" ./test/check-image-files.sh "$work/manifest-unlabelled.txt"
 
+# ---------------------------------------------------------------------------------
+# check-doc-links.sh: a relative link to a file that is not there, beside every kind of
+# link it must not follow — external, anchor-only, with a fragment or a title, and one
+# inside a code fence that only looks like a link.
+docs=$work/docs-good
+mkdir -p "$docs/docs/guides"
+echo '# top' > "$docs/README.md"
+cat > "$docs/docs/guides/a.md" <<'EOF'
+See [the top](../../README.md), [b](b.md#section "B"), [site](https://example.com/x),
+[here](#local) and [root-relative](/README.md).
+
+```sh
+echo "[not a link](missing-in-fence.md)"
+```
+EOF
+echo '## section' > "$docs/docs/guides/b.md"
+expect pass "doc-links: a tree whose links all resolve passes" "" \
+    ./test/check-doc-links.sh "$docs"
+cp -a "$docs" "$work/docs-broken"
+echo 'Moved: [old guide](old-guide.md).' >> "$work/docs-broken/docs/guides/b.md"
+expect fail "doc-links: a link to a missing file is reported" old-guide.md \
+    ./test/check-doc-links.sh "$work/docs-broken"
+
 echo
 if [ "$failures" -gt 0 ]; then
     echo "$failures self-test(s) failed: a check above can no longer tell right from wrong."

@@ -165,6 +165,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/vs-debian-slim.sh          # the OCI image against debian-slim, with both breakdowns
 ./test/size-history.sh [amd64|arm64]  # both flavours against the last dozen builds on main
 ./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
+./test/check-doc-links.sh         # relative links in the tracked markdown resolve
 ./test/check-image-files.sh       # each assembled image against test/image-files/: what must and must not ship
 ./tools/vm.sh start|ssh|stop|list|run|console|update|snapshot [name] ...  # named machines that keep /var
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
@@ -520,9 +521,13 @@ touching assembly:
 
 ## CI
 
-`.github/workflows/ci.yml`: `builder`/`sources` → `glibc` (and `kernel`) → `build` matrix →
-`rootfs` → `boot`, `reproducible` → `publish-oci`, with `k8s` and `node-conformance` beside
-them gating nothing.
+`.github/workflows/ci.yml`: `changes` → `builder`/`sources` → `glibc` (and `kernel`) →
+`build` matrix → `rootfs` → `boot`, `reproducible` → `publish-oci`, with `k8s` and
+`node-conformance` beside them gating nothing. **Every push runs it**: `changes` skips the
+build when every changed file is `docs/**` or a root `*.md` (anything it cannot tell
+builds), `docs` (`test/check-doc-links.sh`) always runs, and **`result` is the one check
+to require** — it fails on any failed or cancelled job and on a wanted build that did not
+boot. A new gating job goes in its `needs:`.
 Each package job uses `.github/actions/build-package`, which stages a glibc-only sysroot so
 each artifact holds only its own files. Its cache key hashes the build scripts, glibc's
 `env.sh` and `build.sh` (every package compiles against them), the package's `env.sh`,

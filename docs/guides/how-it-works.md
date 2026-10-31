@@ -73,6 +73,10 @@ files and file capabilities; the paths it adds are printed, written to
 
 CI prepares the inputs, builds glibc and the kernel, builds package artifacts for each
 architecture, merges them, assembles both image formats, and runs static and boot checks.
+Every push runs the workflow. A push that changes only `docs/**` or root `*.md` files skips
+the image build and gets the `docs` job, which checks that relative links resolve; the
+`result` job reports one status for either case and is the check to require in branch
+protection.
 The main branch also publishes the OCI image. A scheduled fresh build checks that pinned
 inputs can still be fetched and rebuilt.
 

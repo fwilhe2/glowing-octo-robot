@@ -1,13 +1,11 @@
 name: CI
 on:
-  # Prose-only pushes are skipped: nothing here reads a markdown file. Only the root
-  # *.md, not **.md, because image/files is copied into the image. A docs-only pull
-  # request therefore gets no check from this workflow; if checks ever become required,
-  # this has to become a per-job `if:` instead.
+  # Every push runs this workflow, so every commit gets the same checks to require: the
+  # `changes` job decides whether the image has to be built at all, and `result` is the
+  # one status that sums the rest up (see both, below). A push touching only prose —
+  # docs/** and the root *.md, never **.md, since image/files is copied into the image —
+  # runs the `docs` check and skips the build, in seconds.
   push:
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
   workflow_dispatch:
     inputs:
       fresh:
@@ -37,7 +35,57 @@ permissions:
 # The builder and sources jobs are the only ones that reach the internet. Both images are
 # tagged by content hash (tools/image-tags.sh): an existing tag is pulled, not rebuilt.
 jobs:
+  # Whether this push changes anything the build reads. `false` only for a push whose
+  # every changed file is docs/** or a root *.md, compared with the commit before it (a
+  # new branch: with main). Anything it cannot tell — another event, a compare that fails
+  # or lists 300 files (the API's cap), no files at all — builds.
+  changes:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    outputs:
+      build: ${{ steps.diff.outputs.build }}
+    steps:
+      - name: Classify the changed files
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          build=true
+          if [ "$EVENT" = push ]; then
+            base=$BEFORE
+            case "$base" in ''|0000000000000000000000000000000000000000) base=$DEFAULT_BRANCH ;; esac
+            if files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$base...$GITHUB_SHA" --jq '.files[].filename'); then
+              count=$(printf '%s' "$files" | grep -c . || true)
+              echo "$count file(s) changed against $base"
+              if [ "$count" -gt 0 ] && [ "$count" -lt 300 ] &&
+                 ! printf '%s\n' "$files" | grep -qvE '^(docs/.*|[^/]*\.md)$'; then
+                build=false
+              fi
+            fi
+          fi
+          echo "build=$build" | tee -a "$GITHUB_OUTPUT"
+          if [ "$build" = false ]; then
+            echo "Documentation only: the image build is skipped, \`docs\` checks the change." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # The check every commit gets, a documentation-only one included: links between the
+  # markdown files resolve. Seconds, and nothing built.
+  docs:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - run: ./test/check-doc-links.sh
+
   builder:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     runs-on: &runner ${{ matrix.arch == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
     permissions:
       contents: read
@@ -68,6 +116,8 @@ jobs:
 
   # Once for both architectures: the tarballs are the same bytes either way.
   sources:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -665,6 +715,46 @@ jobs:
             output/node-conformance/
             output/node-conformance-console.log
           if-no-files-found: ignore
+
+  # The one status to require in branch protection: whatever this push needed passed.
+  # The per-job, per-arch checks come and go with the matrix and are skipped for
+  # documentation, and a skipped job satisfies a required check, so requiring them would
+  # be both brittle and vacuous. This fails if any job it names failed or was cancelled,
+  # and passes when the build was skipped by `changes` and `docs` passed. k8s and
+  # node-conformance gate nothing, as before; publish-oci is a deployment, not a check.
+  result:
+    runs-on: ubuntu-26.04
+    if: always()
+    needs:
+      - changes
+      - docs
+      - builder
+      - sources
+      - glibc
+      - kernel
+      - build
+      - rootfs
+      - reproducible
+      - boot
+    permissions: {}
+    steps:
+      - name: Sum up the jobs this push needed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          BUILD: ${{ needs.changes.outputs.build }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key')
+          if [ -n "$bad" ]; then
+            echo "failed: $(echo $bad)" >&2
+            exit 1
+          fi
+          # A build that was wanted has to have run, not merely not failed.
+          if [ "$BUILD" = true ] && [ "$(echo "$RESULTS" | jq -r '.boot.result')" != success ]; then
+            echo "the build was needed, and boot did not succeed" >&2
+            exit 1
+          fi
+          [ "$(echo "$RESULTS" | jq -r '.changes.result')" = success ] || { echo "changes did not run" >&2; exit 1; }
 
   # Both architectures as one manifest list, so one job once both exist. After boot: the
   # OCI image is the same userspace as the disk. Only on main, because `latest` has one
