@@ -1,8 +1,9 @@
 # defconfig + kvm_guest.config, then fragments that say what the kernel is for (container,
-# k8s, guest, rootfs, trace) and one that takes defconfig's hardware back out (vm). Built
-# natively, so `make defconfig` picks the arch from `uname -m`. The fragments are heredocs
-# because only this file is bind-mounted into the builder. kvm_guest.config's x86-only
-# symbols (PARAVIRT and friends) are skipped with a warning on arm64, which is harmless.
+# k8s, guest, rootfs, kspp, trace) and one that takes defconfig's hardware back out
+# (vm). Built natively, so `make defconfig` picks the arch from `uname -m`. The fragments
+# are heredocs because only this file is bind-mounted into the builder. kvm_guest.config's
+# x86-only symbols (PARAVIRT and friends) are skipped with a warning on arm64, which is
+# harmless.
 #
 # Reproducible: without these kbuild stamps date, user, host and a per-tree build counter
 # into `uname -v`. SOURCE_DATE_EPOCH comes from build.sh.
@@ -164,6 +165,23 @@ CONFIG_DM_INIT=y
 CONFIG_DM_VERITY=y
 EOF
 make rootfs.config
+
+# Hardening, from the Kernel Self Protection Project's recommendations as Talos and
+# LinuxKit follow them. In the config rather than on the command line, which the host
+# supplies and can change. Not named hardening.config: that is upstream's own fragment,
+# in kernel/configs/ and again per arch, and `make hardening.config` merges all of them.
+#   SECURITY_YAMA: ptrace limited to a process's descendants (kernel.yama.ptrace_scope,
+#     image/files/etc/sysctl.d/50-hardening.conf). CONFIG_LSM already lists it.
+#   INIT_ON_ALLOC_DEFAULT_ON: zero every allocation, so stale kernel memory never leaks
+#     into a new one (init_on_alloc=1).
+#   SLAB_MERGE_DEFAULT off: a cache of its own per object type, so an overflow in one
+#     cannot reach another type's objects (slab_nomerge).
+cat > kernel/configs/kspp.config <<'EOF'
+CONFIG_SECURITY_YAMA=y
+CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y
+# CONFIG_SLAB_MERGE_DEFAULT is not set
+EOF
+make kspp.config
 
 # What the debug extension's tracers attach to (docs/guides/debugging.md); an extension can add
 # programs, never kernel features. Kprobes and uprobes, and the syscall tracepoints
@@ -589,7 +607,7 @@ make vm.config
 #     does not have yet goes in with the bump);
 #   - everything the additive fragments turn on is =y;
 #   - nothing cleared came back =y.
-fragments=(kernel/configs/{container,rootfs,k8s,guest,trace}.config)
+fragments=(kernel/configs/{container,rootfs,k8s,guest,trace,kspp}.config)
 unapplied=""
 
 kconfig_symbols=$(find . -name 'Kconfig*' -not -path './Documentation/*' -print0 \
@@ -611,7 +629,8 @@ while read -r sym; do
     if grep -qx "$sym=y" .config; then
         unapplied="$unapplied  $sym  (cleared, came back =y)"$'\n'
     fi
-done < <(sed -n 's/^# \(CONFIG_[A-Z0-9_]*\) is not set$/\1/p' kernel/configs/container.config kernel/configs/vm.config)
+done < <(sed -n 's/^# \(CONFIG_[A-Z0-9_]*\) is not set$/\1/p' kernel/configs/container.config \
+             kernel/configs/kspp.config kernel/configs/vm.config)
 
 if [ -n "$unapplied" ]; then
     echo "error: config fragments did not apply as written:" >&2

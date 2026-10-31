@@ -85,7 +85,7 @@ KNOWN_JOURNAL=test/known-journal-messages.txt
 # looks the same as one it did, but for one journal line. As /proc/sys paths, which is
 # what a builtin can read.
 SYSCTLS="kernel/kptr_restrict=1 kernel/dmesg_restrict=1 kernel/unprivileged_bpf_disabled=1
-dev/tty/legacy_tiocsti=0 fs/protected_regular=2 fs/protected_fifos=2
+kernel/yama/ptrace_scope=1 dev/tty/legacy_tiocsti=0 fs/protected_regular=2 fs/protected_fifos=2
 fs/inotify/max_user_instances=8192 vm/max_map_count=262144 fs/aio-max-nr=1048576 kernel/panic=10"
 SYSCTL="SYSTEMD-SYSCTL-DONE"
 sysctl_paths=$(printf '%s\n' $SYSCTLS | cut -d= -f1 | tr '\n' ' ')   # one line: it is typed at a shell
