@@ -31,64 +31,33 @@ dm-verity verified. Extensions installed under `/var` are not verified.
 
 ## Quick start
 
-Fetch the latest successful CI image, start a persistent QEMU machine, and connect over SSH:
+On Linux, with QEMU and an authenticated GitHub CLI (`gh`), fetch the latest image and start
+the default VM with Podman:
 
 ```sh
 ./tools/vm.sh update
-./tools/vm.sh start
+./tools/vm.sh start --image ci --ext podman
+```
+
+Connect as the unprivileged `user` account, then run a rootless container:
+
+```sh
 ./tools/vm.sh ssh
-./tools/vm.sh stop
+podman run --rm docker.io/library/alpine:latest echo hello from flfs
 ```
 
-`update` runs `tools/fetch-image.sh`, which checks every downloaded file against the
-`bundle-<arch>` manifest the same CI run wrote (run, commit, SHA-256 per file) and replaces
-`output/boot-image/` only once all of it matches; a failed fetch leaves the previous image.
+The VM keeps its `/var` data when stopped. Exit the shell and stop it with
+`./tools/vm.sh stop`. Commands use the default machine automatically; `vm.sh` verifies
+downloaded images before installing them. See [Machines](#machines) to manage more VMs.
 
-Attach extensions when starting a machine:
-
-```sh
-./tools/vm.sh start dev --ext podman,debug
-./tools/vm.sh ssh dev
-```
-
-For a disposable interactive QEMU boot, use `./tools/boot-qemu.sh`; set
-`SYSEXTS="podman debug"` to attach extensions. `tools/boot-firecracker.sh` and
-`tools/boot-vz.sh` boot the same image with Firecracker and vfkit, respectively; vfkit
-requires macOS on Apple silicon. To run the OCI image directly:
-
-```sh
-podman run --rm -it ghcr.io/fwilhe2/glowing-octo-robot/flfs:latest
-```
-
-The OCI image has no package manager. See [`examples/nginx`](examples/nginx/README.md) for
-an example image built on top of it.
-
-See [Machines](#machines) for persistent VM commands and [System extensions](#system-extensions)
-for attaching or building extensions.
-
-## Demo
-
-A short tour on a throwaway machine, about a minute with KVM: the read-only, dm-verity
-root; the image's identity; the podman extension attached to the running machine with
-`systemd-sysext`; and a container run from the guest's own `bash`, offline.
-
-```sh
-./tools/build-image.sh     # or ./tools/fetch-image.sh, for CI's image and extensions
-./tools/demo.sh            # boot a fresh `demo` machine and walk through it
-./tools/vm.sh ssh demo     # look around afterwards
-./tools/demo.sh reset      # delete the machine and its /var
-```
-
-It needs what `tools/vm.sh` needs (QEMU, an ssh client, KVM to be quick) and an image with
-`extensions/podman.raw`. Every run starts by resetting, so it always shows the same thing.
-Nothing is added to the image: the demo is a `tools/vm.sh` machine named `demo`.
+The published OCI image can also run under Podman or Docker. It has no package manager;
+see [`examples/nginx`](examples/nginx/README.md) for an image built on top of flfs.
 
 ## Host requirements
 
 The project builds and publishes `amd64` and `arm64` images. Building from source requires
-Podman; fetching CI artifacts requires the GitHub CLI (`gh`). QEMU boots can run with or
-without KVM, though KVM is recommended for performance. Firecracker requires Linux and KVM;
-vfkit requires macOS on Apple silicon. The Kubernetes demo requires KVM and about 8 GB of
+Podman; fetching CI images requires an authenticated GitHub CLI (`gh`). QEMU runs with or
+without KVM, though KVM is recommended. The Kubernetes demo requires KVM and about 8 GB of
 RAM.
 
 ## Build
@@ -119,19 +88,15 @@ Build products are written under `output/`; package staging is under `staging/`,
 merged filesystem under `rootfs/`. The default clean removes rebuildable output but keeps
 source downloads and VM disks; see `./tools/clean.sh --help` for options.
 
-To add local files to an image, name a directory laid out like the target filesystem
-(the git-ignored `extra/` is there for it) with `--extra`; nothing is overlaid otherwise:
+To add local files, pass a directory laid out like the target filesystem with `--extra`:
 
 ```sh
 ./tools/build-image.sh --image-only --extra extra
 ```
 
-The overlay may only add files under `usr/`, `etc/` or `opt/`. It is refused if it would
-replace an installed file, touch security-sensitive configuration (accounts, PAM, ssh,
-systemd, tmpfiles, sysctl, the loader, `/etc/containers`), or carry setuid, setgid or file
-capabilities. Each added path is printed, listed with its hash in
-`output/extra-files-<flavour>.txt`, and named in the SBOM as `local-extra`. Software built
-from source should be added as a package instead.
+Only new files under `usr/`, `etc/`, or `opt/` are accepted; security-sensitive paths and
+privileged files are rejected. Added files are listed in build output, a hash manifest, and
+the SBOM. Add software built from source as a package.
 
 For build details, see the [documentation index](docs/README.md).
 
@@ -142,24 +107,22 @@ For build details, see the [documentation index](docs/README.md).
 - **Ephemeral state by default:** `/var`, `/tmp`, and `/run` are tmpfs. A VM can attach a
   disk for `/var`; systemd formats a blank disk and grows its filesystem when the disk is
   enlarged.
-- **SSH keys only:** accounts have no passwords and sshd accepts keys. The VM tools pass a
-  public key as a systemd credential at boot. `tools/vm.sh` keeps a key per machine;
-  `tools/boot-qemu.sh` generates a key for each boot.
+- **SSH keys only:** accounts have no passwords and sshd accepts keys. `vm.sh` creates and
+  keeps a key for each VM.
 - **Networking:** systemd-networkd and systemd-resolved provide guest networking. The base
   includes `ip`, `ping`, and `curl` for inspection and connectivity checks.
 
-QEMU can pass systemd credentials through fw_cfg. See
-[Debugging](docs/guides/debugging.md) for credential and console details.
+See [Debugging](docs/guides/debugging.md) for console and log details.
 
 ## Machines
 
-`tools/vm.sh` manages named QEMU machines under `output/vms/<name>/`. Each machine has its
-own `/var` disk, machine ID, SSH key, and copy of the image. Image updates are picked up on
-the next start, not on a guest reboot.
+`tools/vm.sh` manages QEMU machines under `output/vms/`. Each has its own `/var` disk,
+machine ID, SSH key, and image. The default machine is `flfs`; add a name when you want
+more than one. Image updates are picked up on the next start.
 
 ```sh
 ./tools/vm.sh start dev --ext podman --mem 4096 --size 20G
-./tools/vm.sh ssh dev --root podman pull docker.io/library/nginx
+./tools/vm.sh ssh dev podman run --rm docker.io/library/alpine:latest echo hello
 ./tools/vm.sh snapshot dev before-change
 ./tools/vm.sh stop dev
 ./tools/vm.sh update
@@ -167,17 +130,15 @@ the next start, not on a guest reboot.
 ./tools/vm.sh list
 ```
 
-Commands default to the machine named `flfs`. `start` runs QEMU in the background; `run`
-runs it in the foreground. `console` attaches to the serial console, `stop` shuts down the
-guest, `resize` grows its `/var` disk, and `restore` restores a snapshot. Use
-`./tools/vm.sh --help` for command syntax. See [Debugging](docs/guides/debugging.md) for
-consoles and logs.
+`ssh` runs as the unprivileged `user` by default; use `--root` for administration. `stop`
+keeps the machine and its data. `snapshot`, `restore`, and `resize` manage its `/var` disk.
+Use `./tools/vm.sh --help` for commands.
 
 ## System extensions
 
 Extensions add software to a machine without rebuilding the base. The repository provides
 `podman`, `kubernetes`, and `debug` extensions. Attach one or more at boot with
-`--ext podman,debug` in `vm.sh`, or set `SYSEXTS="podman debug"` for `boot-qemu.sh`.
+`--ext podman,debug` when starting a VM.
 
 Podman includes Quadlet and rootless container support. The Kubernetes extension includes
 kubelet, kubeadm, kubectl, CRI-O, crictl, and CNI plugins. A Kubernetes node needs persistent

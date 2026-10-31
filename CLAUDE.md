@@ -6,6 +6,13 @@ A **pragmatic, automated Linux From Scratch**: source tarballs in, a bootable
 `output/rootfs.erofs` and a container image out. `README.md` is the user-facing
 documentation; this file covers what is easy to get wrong when changing things.
 
+## Documentation style
+
+Keep the README concise and practical. Match its existing tone: short paragraphs, clear
+headings, and commands where useful. Add only what users need to act; avoid repeated
+background, implementation detail, and lengthy rationale. Prefer updating an existing
+section over adding one. Keep deeper technical explanations in the relevant guide.
+
 ## What this is, and what it is not
 
 The goal is a **minimal but genuinely useful general-purpose Linux stack**, built from
