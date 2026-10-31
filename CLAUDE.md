@@ -348,12 +348,15 @@ Extensions are verified the same way (`<name>.dm-verity`, joined to the root's t
 `qemu_sysexts`); `image/files/etc/udev/rules.d/10-dm-init.rules` names dm-init's devices,
 without which systemd waits on them forever.
 
-**Everything writable is RAM** — `/var` (a `var.mount` unit), `/home`, `/root`, `/tmp` — and
-the image ships those mount points empty, so anything needed there is made at boot
-(tmpfiles, `StateDirectory=`). sshd's privsep directory is `/usr/share/empty.sshd` and its
-host keys `/var/lib/sshd`, made every boot. **`/var` can be a disk, chosen by the VM**: a
+**Everything writable is RAM** — `/var` (a `var.mount` unit), `/tmp` — and the image ships
+those mount points empty, so anything needed there is made at boot (tmpfiles,
+`StateDirectory=`). sshd's privsep directory is `/usr/share/empty.sshd` and its host keys
+`/var/lib/sshd`, made every boot. **`/var` can be a disk, chosen by the VM**: a
 `systemd.mount-extra=` on the command line generates a `var.mount` that outranks the
 image's (`VAR_DISK=` in `test/qemu-lib.sh`, which also passes a persistent machine ID).
+**`/home` and `/root` are symlinks to `var/home` and `var/roothome`**, as on ostree
+systems, so they are wherever `/var` is, with no mount of their own to order;
+`tmpfiles.d/flfs-home.conf` makes the targets. The OCI flavour keeps them as directories.
 
 **First boot happens in `build-rootfs.sh`, because `/etc` is read-only.** The units that
 write `/etc` are `ConditionNeedsUpdate=/etc` and skip, which is right only if the result is
@@ -410,9 +413,11 @@ prompt, so suspect the handshake before `shadow` when a login fails.
   package installs its scaffolding into `DESTDIR`, never into `image/files`, which ships
   whatever was built. `make install-nokeys`, never `install`. openssh's configure runs a
   version check against the wrong libcrypto, hence `--without-openssl-header-check`.
-  **The login key is a per-boot credential** (`qemu_ssh_setup`), and `sshd_config`'s
-  `Match User root` reads it from `/run/credentials`, because tmpfiles' copy is written
-  only if missing.
+  **The login key is a per-boot credential** (`qemu_ssh_setup`), and `sshd_config` never
+  reads it from a home, where tmpfiles' copy is written only if missing and so, on a
+  `/var` disk, would be the first boot's forever: root's `Match` block reads
+  `/run/credentials`, everyone else `/run/ssh-authorized-keys/%u`, a copy readable by
+  the user sshd reads it as.
 - **crun** is the runtime: podman's default, the smallest. Built with seccomp
   (`packages/libseccomp`, checked on the binary: without it profiles are silently ignored).
   **Never `--disable-bpf`**: the cgroup v2 device controller is a BPF program, and every

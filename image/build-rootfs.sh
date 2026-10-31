@@ -58,8 +58,8 @@ mkdir -p {mnt,opt,proc,srv,sys}
 mkdir -p var/{lib,lock,log,spool}
 install -d -m 0750 root
 # `user`'s home, for the container: nothing would create it on login. The disk image
-# mounts a tmpfs over /home and tmpfiles.d/flfs-home.conf makes it there. Numeric, since
-# 1000 is a name only in the /etc being shipped.
+# replaces home and root with symlinks into /var (below), and tmpfiles.d/flfs-home.conf
+# makes the homes there. Numeric, since 1000 is a name only in the /etc being shipped.
 install -d -m 0700 home/user
 chown 1000:1000 home/user
 install -d -m 1777 tmp
@@ -513,8 +513,28 @@ UNIT
     mkdir -p usr/lib/systemd/system/local-fs.target.wants
     ln -sfn ../var.mount usr/lib/systemd/system/local-fs.target.wants/var.mount
 
-    # Anything under the mount points would be invisible; tmpfiles makes what is needed.
-    find var home root -mindepth 1 -delete
+    # Anything under the mount point would be invisible; tmpfiles makes what is needed.
+    find var -mindepth 1 -delete
+
+    # /home and /root live in /var, as on ostree systems: RAM with /var, and kept with it
+    # when /var is a disk, with no mount of their own to order against /var's.
+    # tmpfiles.d/flfs-home.conf makes var/home and var/roothome at every boot. Relative,
+    # so the links resolve inside a mounted copy of the image too.
+    rm -rf home root
+    ln -s var/home home
+    ln -s var/roothome root
+    # systemd's own lines for the two paths (home.conf's `Q /home`, provision.conf's
+    # `d- /root`) want directories and say at every boot that a link is not one. Same-named
+    # files in /etc replace them, made from systemd's without those lines, so whatever else
+    # a version bump puts in them still applies; a bump that moves the lines fails here.
+    for conf in home provision; do
+        grep -Ev '^[^#[:space:]]+[[:space:]]+/(home|root)[[:space:]]' \
+            "usr/lib/tmpfiles.d/$conf.conf" > "etc/tmpfiles.d/$conf.conf"
+        if cmp -s "usr/lib/tmpfiles.d/$conf.conf" "etc/tmpfiles.d/$conf.conf"; then
+            echo "error: no /home or /root line left to drop in usr/lib/tmpfiles.d/$conf.conf" >&2
+            exit 1
+        fi
+    done
 fi
 
 rm -rf usr/share/flfs/capabilities
@@ -527,7 +547,7 @@ if [ "$flavour" = erofs ]; then
     chmod 755 etc/systemd/system etc/systemd/network etc/pam.d \
               etc/systemd/system/dbus.service.d etc/systemd/journald.conf.d \
               etc/systemd/system-preset
-    chmod 644 etc/fstab etc/hostname etc/subuid etc/subgid etc/pam.d/* etc/tmpfiles.d/flfs-home.conf \
+    chmod 644 etc/fstab etc/hostname etc/subuid etc/subgid etc/pam.d/* etc/tmpfiles.d/{flfs-home,home,provision}.conf \
               etc/systemd/network/*.network \
               etc/systemd/system/dbus.service.d/*.conf etc/systemd/journald.conf.d/*.conf \
               etc/systemd/system-preset/*.preset

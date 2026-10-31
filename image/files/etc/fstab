@@ -7,15 +7,14 @@
 # there is no fsck pass because there is nothing a boot could have left inconsistent.
 /dev/dm-0    /       erofs   ro                                0   0
 
-# Everything a running machine writes, in RAM and gone at the next boot. The image ships
-# these directories empty; what has to be in them is created at boot by systemd-tmpfiles
-# (and by StateDirectory= for units that ask), never copied from the image. /tmp is
-# systemd's own tmp.mount and /run is PID 1's, so neither appears here.
+# Nothing else is mounted here. /tmp is systemd's own tmp.mount and /run is PID 1's.
 #
-# /var is not here either, because it is the one that can be persistent. Its tmpfs is
-# /usr/lib/systemd/system/var.mount (image/build-rootfs.sh), a fallback rather than a
-# rule: a `systemd.mount-extra=<disk>:/var:...` on the kernel command line generates a
-# var.mount of its own, which outranks /usr/lib, and the same line here would outrank
-# both — and could not be taken back by a VM that has no disk.
-tmpfs        /home   tmpfs   mode=0755,nosuid,nodev            0   0
-tmpfs        /root   tmpfs   mode=0700,nosuid,nodev            0   0
+# /var is in RAM unless the VM gives it a disk, and is a unit rather than a line here:
+# /usr/lib/systemd/system/var.mount (image/build-rootfs.sh) is a fallback, not a rule. A
+# `systemd.mount-extra=<disk>:/var:...` on the kernel command line generates a var.mount
+# of its own, which outranks /usr/lib, and the same line here would outrank both — and
+# could not be taken back by a VM that has no disk. The image ships /var empty; what has
+# to be in it is created at boot by systemd-tmpfiles (and StateDirectory=).
+#
+# /home and /root are symlinks to var/home and var/roothome, as on ostree systems, so they
+# are RAM or disk with /var and need no line of their own.

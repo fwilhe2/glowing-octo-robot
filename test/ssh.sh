@@ -157,8 +157,8 @@ done
 
 echo ">> ssh from the host OK: the ephemeral key was accepted through the boot credential"
 
-# And tools/ssh.sh's default, `user`, through the copy flfs-home.conf made of the same
-# credential. The runtime directory is the point: it is what rootless podman needs and
+# And tools/ssh.sh's default, `user`, through the copy of the same credential
+# flfs-home.conf made in /run/ssh-authorized-keys. The runtime directory is the point: it is what rootless podman needs and
 # what `su user` from a root session does not give it, so the answer has to name
 # /run/user/1000, not merely the account.
 out=$(SSH_DIR="$SSH_DIR" tools/ssh.sh -o ConnectTimeout=10 \
