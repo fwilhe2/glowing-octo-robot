@@ -1,7 +1,9 @@
 /*
  * flfsfetch - the summary neofetch prints, for a system that will never have neofetch.
  *
- * Everything here comes from uname(2), the environment, /proc and /sys. There is no
+ * Everything here comes from uname(2), getifaddrs(3), the environment, /proc, /sys and
+ * a few files systemd leaves in /run and /usr (resolved's servers, merged extensions).
+ * Nothing is executed and nothing is asked over D-Bus. There is no
  * dependency beyond glibc, which is the point twice over: nothing has to be packaged to
  * make it build, and test/check-rootfs-deps.sh has nothing to report about the result.
  *
@@ -15,19 +17,27 @@
  *     exists where there is a device tree, and /proc/cpuinfo names the CPU on x86 but
  *     not on arm64.
  */
+#include <arpa/inet.h>
+#include <dirent.h>
+#include <ifaddrs.h>
+#include <mntent.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <pwd.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/sysmacros.h>
 #include <sys/utsname.h>
 #include <unistd.h>
 
 #define VAL_MAX  192
 #define KEY_MAX  16
-#define MAX_INFO 24
+#define MAX_INFO 28
 
 /* Set from main() once, so every printf below can stay unconditional. */
 static const char *c_logo = "";
@@ -329,6 +339,288 @@ static void add_header(void)
 	add("", "%s", sep);
 }
 
+/*
+ * The last /proc/self/mounts entry for a mount point, which is the one on top: a sysext
+ * merge mounts an overlay over /usr without unmounting what was there. Zero if found.
+ */
+static int find_mount(const char *dir, char *fsname, size_t fsn, char *type, size_t tn,
+		      int *ro)
+{
+	FILE *f = setmntent("/proc/self/mounts", "re");
+	struct mntent *m;
+	int found = -1;
+
+	if (!f)
+		return -1;
+	while ((m = getmntent(f))) {
+		if (strcmp(m->mnt_dir, dir) != 0)
+			continue;
+		snprintf(fsname, fsn, "%s", m->mnt_fsname);
+		snprintf(type, tn, "%s", m->mnt_type);
+		*ro = hasmntopt(m, "ro") != NULL;
+		found = 0;
+	}
+	endmntent(f);
+	return found;
+}
+
+/* /proc/cmdline, whole. Zero on success. */
+static int read_cmdline(char *buf, size_t n)
+{
+	FILE *f = fopen("/proc/cmdline", "re");
+	size_t got;
+
+	if (!f)
+		return -1;
+	got = fread(buf, 1, n - 1, f);
+	fclose(f);
+	buf[got] = '\0';
+	return got ? 0 : -1;
+}
+
+/*
+ * The root's verity table, out of dm-mod.create= (rootfs.cmdline). The table itself is
+ * only readable through /dev/mapper/control, which is root's, and this runs as anyone;
+ * the command line is world-readable and is where the table came from. The root is the
+ * device named "root" — extensions' tables are joined to it with ';' (qemu_sysexts) —
+ * and its root hash is the ninth field after "verity":
+ *
+ *   verity <version> <data dev> <hash dev> <data bs> <hash bs> <blocks> <hash start>
+ *          <algorithm> <root hash> <salt>
+ *
+ * That hash is the image's identity, to the bit: os-release has no build number, and
+ * two images with the same hash are the same image.
+ */
+static int root_hash(char *out, size_t n)
+{
+	char buf[4096];
+
+	if (read_cmdline(buf, sizeof buf) != 0)
+		return -1;
+	char *dm = strstr(buf, "dm-mod.create=");
+	if (!dm)
+		return -1;
+	dm += strlen("dm-mod.create=");
+	if (*dm == '"')
+		dm++;
+	char *end = strpbrk(dm, ";\"");
+	if (end)
+		*end = '\0';
+	if (strncmp(dm, "root,", 5) != 0)
+		return -1;
+	char *v = strstr(dm, " verity ");
+	if (!v)
+		return -1;
+
+	char *save, *tok = strtok_r(v, " ", &save);
+	for (int i = 0; tok && i < 9; i++)
+		tok = strtok_r(NULL, " ", &save);
+	if (!tok || strspn(tok, "0123456789abcdef") != strlen(tok))
+		return -1;
+	snprintf(out, n, "%s", tok);
+	return 0;
+}
+
+/*
+ * The OCI flavour runs on whatever the engine gives it, usually an overlay, and none of
+ * the disk image's arrangement applies. podman writes the first, docker the second, and
+ * systemd-nspawn and others set $container for PID 1, which only PID 1 sees.
+ */
+static int in_container(void)
+{
+	return access("/run/.containerenv", F_OK) == 0 || access("/.dockerenv", F_OK) == 0;
+}
+
+/*
+ * Whether / is on a device-mapper device. Not by name: the mount table says /dev/root
+ * for whatever the kernel mounted from root=, so the device number is the only honest
+ * answer, and sysfs has a dm/ directory under exactly the block devices that are dm's.
+ */
+static int root_is_dm(void)
+{
+	struct stat st;
+	char path[64];
+
+	if (stat("/", &st) != 0)
+		return 0;
+	snprintf(path, sizeof path, "/sys/dev/block/%u:%u/dm", major(st.st_dev),
+		 minor(st.st_dev));
+	return access(path, F_OK) == 0;
+}
+
+static void add_root(void)
+{
+	char fsname[VAL_MAX], type[32];
+	int ro;
+
+	if (find_mount("/", fsname, sizeof fsname, type, sizeof type, &ro) != 0)
+		return;
+	if (in_container()) {
+		add("Root", "%s, %s (container)", type, ro ? "read-only" : "writable");
+		return;
+	}
+	/* Verity is claimed only when the root actually is a device-mapper device: a
+	 * dm-mod.create= on the command line says what was built, not what was mounted. */
+	char hash[VAL_MAX];
+
+	if (root_is_dm() && root_hash(hash, sizeof hash) == 0)
+		add("Root", "%s, %s, dm-verity", type, ro ? "read-only" : "writable");
+	else
+		add("Root", "%s on %s, %s", type, fsname, ro ? "read-only" : "writable");
+}
+
+/* Twelve hex digits, as git abbreviates: enough to tell builds apart at a glance. The
+ * full hash is in /proc/cmdline for anyone who needs to compare it with rootfs.cmdline. */
+static void add_image(void)
+{
+	char hash[VAL_MAX];
+
+	if (in_container() || !root_is_dm())
+		return;
+	if (root_hash(hash, sizeof hash) == 0)
+		add("Image", "%.12s (verity root hash)", hash);
+}
+
+/*
+ * Every IPv4 address on an interface that is up, other than loopback: the one thing
+ * needed before ssh, and the quickest answer to "did networkd do its job". IPv6 link-local
+ * addresses are skipped as noise; a global IPv6 address is shown like an IPv4 one.
+ */
+static void add_network(void)
+{
+	struct ifaddrs *ifa, *i;
+	char out[VAL_MAX] = "";
+	size_t len = 0;
+
+	if (getifaddrs(&ifa) != 0)
+		return;
+	for (int family = 0; family < 2; family++) {
+		for (i = ifa; i; i = i->ifa_next) {
+			char addr[INET6_ADDRSTRLEN];
+			int af = family ? AF_INET6 : AF_INET;
+			int prefix = 0;
+
+			if (!i->ifa_addr || i->ifa_addr->sa_family != af)
+				continue;
+			if (!(i->ifa_flags & IFF_UP) || (i->ifa_flags & IFF_LOOPBACK))
+				continue;
+			if (af == AF_INET) {
+				struct sockaddr_in *a = (struct sockaddr_in *)i->ifa_addr;
+				struct sockaddr_in *m = (struct sockaddr_in *)i->ifa_netmask;
+
+				inet_ntop(AF_INET, &a->sin_addr, addr, sizeof addr);
+				if (m)
+					prefix = __builtin_popcount(m->sin_addr.s_addr);
+			} else {
+				struct sockaddr_in6 *a = (struct sockaddr_in6 *)i->ifa_addr;
+				struct sockaddr_in6 *m = (struct sockaddr_in6 *)i->ifa_netmask;
+
+				if (IN6_IS_ADDR_LINKLOCAL(&a->sin6_addr))
+					continue;
+				inet_ntop(AF_INET6, &a->sin6_addr, addr, sizeof addr);
+				for (int b = 0; m && b < 16; b++)
+					prefix += __builtin_popcount(m->sin6_addr.s6_addr[b]);
+			}
+			int w = snprintf(out + len, sizeof out - len, "%s%s %s/%d",
+					 len ? ", " : "", i->ifa_name, addr, prefix);
+			if (w < 0 || (size_t)w >= sizeof out - len)
+				goto done;
+			len += (size_t)w;
+		}
+	}
+done:
+	freeifaddrs(ifa);
+	if (len)
+		add("Network", "%s", out);
+}
+
+/*
+ * The servers resolved actually uses, which is what DHCP handed networkd — not
+ * /etc/resolv.conf, which points at resolved's stub (127.0.0.53) and so says nothing.
+ */
+static void add_dns(void)
+{
+	char line[256], out[VAL_MAX] = "";
+	size_t len = 0;
+	FILE *f = fopen("/run/systemd/resolve/resolv.conf", "re");
+
+	if (!f)
+		return;
+	while (fgets(line, sizeof line, f)) {
+		char addr[INET6_ADDRSTRLEN + 1];
+
+		if (sscanf(line, "nameserver %46s", addr) != 1)
+			continue;
+		int w = snprintf(out + len, sizeof out - len, "%s%s", len ? ", " : "", addr);
+		if (w < 0 || (size_t)w >= sizeof out - len)
+			break;
+		len += (size_t)w;
+	}
+	fclose(f);
+	if (len)
+		add("DNS", "%s", out);
+}
+
+/*
+ * Where state lives is the one thing about this image a user most needs to know before
+ * they install something: /var is tmpfs unless the VM handed it a disk with
+ * systemd.mount-extra=, and /home and /root are symlinks into it, so everything written
+ * outside /tmp and /run goes where /var goes.
+ */
+static void add_state(void)
+{
+	char fsname[VAL_MAX], type[32];
+	int ro;
+
+	if (find_mount("/var", fsname, sizeof fsname, type, sizeof type, &ro) != 0) {
+		/* No mount of its own: /var is the root's, as in a container. */
+		if (find_mount("/", fsname, sizeof fsname, type, sizeof type, &ro) == 0)
+			add("State", "/var on the root (%s)", ro ? "read-only" : "writable");
+		return;
+	}
+	if (!strcmp(type, "tmpfs"))
+		add("State", "in memory (/var is tmpfs, lost at shutdown)");
+	else
+		add("State", "persistent (/var is %s on %s%s)", type, fsname,
+		    ro ? ", read-only" : "");
+}
+
+/*
+ * A merged system extension leaves its extension-release file under /usr, so the
+ * directory lists exactly what is merged now — not what is on disk waiting to be.
+ */
+static int is_extension_release(const struct dirent *e)
+{
+	return strncmp(e->d_name, "extension-release.", 18) == 0;
+}
+
+static void add_extensions(void)
+{
+	struct dirent **list;
+	char out[VAL_MAX] = "";
+	size_t len = 0;
+	/* alphasort, because readdir's order is the filesystem's and the same set of
+	 * extensions should print the same way every boot. */
+	int n = scandir("/usr/lib/extension-release.d", &list, is_extension_release, alphasort);
+
+	if (n < 0)
+		return;
+	for (int i = 0; i < n; i++) {
+		int w = len >= sizeof out ? -1 :
+			snprintf(out + len, sizeof out - len, "%s%s", len ? ", " : "",
+				 list[i]->d_name + 18);
+
+		if (w >= 0 && (size_t)w < sizeof out - len)
+			len += (size_t)w;
+		else
+			len = sizeof out;
+		free(list[i]);
+	}
+	free(list);
+	if (len && out[0])
+		add("Extensions", "%s", out);
+}
+
 /* neofetch's colour bar, in a form that survives a C-locale console: background colours
  * behind spaces rather than block-drawing characters. */
 static void print_swatch(int pad)
@@ -388,6 +680,12 @@ int main(int argc, char **argv)
 	}
 	if (read_line("/proc/1/comm", buf, sizeof buf) == 0)
 		add("Init", "%s", buf);
+	add_image();
+	add_root();
+	add_state();
+	add_extensions();
+	add_network();
+	add_dns();
 	add_uptime();
 	add_load();
 	add_cpu();
