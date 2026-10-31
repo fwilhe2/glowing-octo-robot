@@ -19,5 +19,7 @@ Guides describe current behavior. Proposals describe work that is not implemente
 - [Releases](proposals/release.md): versioned VM artifacts and OCI tags.
 - [Build reproduction and patches](proposals/reproducing-a-build.md): archive the recipe
   and support downstream source patches.
+- [Ideas from other builders](proposals/ideas-from-other-builders.md): checks, hardening
+  and SBOM features adapted from Talos, LinuxKit, Flatcar and podman-machine-os.
 
 Host architecture and tool requirements are summarized in the [project README](../README.md#host-requirements).
