@@ -22,5 +22,5 @@ VENDOR_TARBALL="libtraceevent-${LIBTRACEEVENT_VERSION}.tar.gz"
 VENDOR_URL="https://git.kernel.org/pub/scm/libs/libtrace/libtraceevent.git/snapshot/${VENDOR_TARBALL}"
 VENDOR_SHA256="3bc19dd940914260ba591b5276723bf84bb43f82c7c3d4267622bee4d016ea55"
 LICENSE="GPL-2.0-only AND (LGPL-2.1-only OR BSD-2-Clause) AND LGPL-2.1-only"
-# In the debug system extension (docs/debugging.md).
+# In the debug system extension (docs/guides/debugging.md).
 EXTENSION=debug

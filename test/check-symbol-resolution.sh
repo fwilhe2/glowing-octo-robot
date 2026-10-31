@@ -2,7 +2,7 @@
 # Report binaries that call a function none of the libraries they load defines.
 #
 # The third of the library checks, and the one that holds the builder coupling to
-# account (docs/linking.md). test/check-rootfs-deps.sh asks "is libfoo.so.N in the tree?",
+# account (docs/guides/linking.md). test/check-rootfs-deps.sh asks "is libfoo.so.N in the tree?",
 # test/check-symbol-versions.sh asks "does it define the symbol *versions* the binary
 # wants?" — and that second question only exists for libraries that version their
 # symbols. glib, json-c, pcre2, jansson and libnftnl do not: a binary compiled against
@@ -195,6 +195,6 @@ echo
 echo "Each of these calls a function that no library in its NEEDED closure defines, and"
 echo "will fail with 'undefined symbol' when the call is first made. The usual cause is a"
 echo "header from builder/deps.txt newer than the library packages/ ships: bump ours to"
-echo "at least sid's (docs/linking.md). A plugin that expects its host program to"
+echo "at least sid's (docs/guides/linking.md). A plugin that expects its host program to"
 echo "provide the symbol is not a bug; add it to test/known-unresolved-symbols.txt."
 exit 1

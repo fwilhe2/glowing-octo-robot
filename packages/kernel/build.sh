@@ -90,7 +90,7 @@ CONFIG_NETFILTER_XT_NAT=y
 EOF
 make container.config
 
-# What a Kubernetes node needs on top (docs/sysext.md). With modules off, a feature a pod
+# What a Kubernetes node needs on top (docs/guides/sysext.md). With modules off, a feature a pod
 # expects of the host kernel is in here or nowhere.
 #   NFT_NUMGEN, NFT_REJECT  kube-proxy's nftables mode: endpoint choice, no-endpoint reject
 #   NF_CT_NETLINK  kube-proxy flushes stale UDP conntrack (else DNS to a restarted CoreDNS
@@ -165,7 +165,7 @@ CONFIG_DM_VERITY=y
 EOF
 make rootfs.config
 
-# What the debug extension's tracers attach to (docs/debugging.md); an extension can add
+# What the debug extension's tracers attach to (docs/guides/debugging.md); an extension can add
 # programs, never kernel features. Kprobes and uprobes, and the syscall tracepoints
 # `perf trace` is built on. Not FUNCTION_TRACER (fentry/fexit): it costs every machine
 # size, and nothing uses it yet.

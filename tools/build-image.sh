@@ -101,7 +101,7 @@ done
 
 # And the system extensions, from what packages with EXTENSION= in their env.sh staged
 # into extensions/<name>/: a sysext and a confext each, in output/extensions/ and
-# output/confexts/ (docs/sysext.md).
+# output/confexts/ (docs/guides/sysext.md).
 for ext in extensions/*/; do
     [ -d "$ext" ] || continue
     name=$(basename "$ext")

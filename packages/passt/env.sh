@@ -15,7 +15,7 @@ SHA256="aa75616cc43925f0bd6c05bcfbbaecd77397c03d7bd23591b34ef535be5dfcdc"
 LICENSE="GPL-2.0-or-later AND BSD-3-Clause"
 # In the podman system extension, not the image (EXTENSION, see build.sh): the base keeps
 # the container runtime — the kernel, crun, conmon — and an engine is loaded on demand
-# (docs/sysext.md, #192).
+# (docs/guides/sysext.md, #192).
 EXTENSION=podman
 UPSTREAM_INDEX="https://passt.top/passt/refs/tags"
 UPSTREAM_REGEX='passt-([0-9]{4}_[0-9]{2}_[0-9]{2}\.[0-9a-f]{7})\.tar'

@@ -23,7 +23,7 @@ ln -sfn usr/lib  "$ROOTFS/lib64"
 # Compile and link against our glibc rather than the builder's, so binaries do not ask
 # for symbol versions only sid has. --sysroot points the default paths at ours, and the
 # builder's directories are appended after it (-idirafter, trailing -L) so every other
-# header and library is still Debian's. docs/linking.md has the long version.
+# header and library is still Debian's. docs/guides/linking.md has the long version.
 if [ -n "${SYSROOT:-}" ]; then
     multiarch=$(gcc -print-multiarch)
 

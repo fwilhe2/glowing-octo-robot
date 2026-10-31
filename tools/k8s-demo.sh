@@ -9,7 +9,7 @@
 #     ./tools/k8s-demo.sh ps                  # the guests: running or not, ports, memory
 #     ./tools/k8s-demo.sh down                # power everything off and delete its state
 #
-# Kubernetes comes as the image's kubernetes system extension (docs/sysext.md): kubelet,
+# Kubernetes comes as the image's kubernetes system extension (docs/guides/sysext.md): kubelet,
 # kubeadm, kubectl, CRI-O and the CNI plugins built from source by packages/ with
 # EXTENSION=kubernetes, assembled into a sysext and a confext by tools/build-image.sh. The
 # image itself is unchanged. Both extension images are attached to every node the way the
@@ -128,7 +128,7 @@ b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
 #
 # slirp itself cannot be on the segment — a hub floods, slirp sees the SYNs between nodes,
 # tries the same connections on the host's network and resets them — which is why the
-# router is a guest and not qemu's NAT (docs/sysext.md, "The demo's network").
+# router is a guest and not qemu's NAT (docs/guides/sysext.md, "The demo's network").
 boot_router() {
     local n lan socket service segment=()
 

@@ -12,7 +12,7 @@
 #   flfs-hello   sysext   a unit started by Upholds= from a multi-user.target drop-in,
 #                         which reads a file the confext ships into /run; and a second
 #                         unit enabled the ordinary way, by a .wants link, which is only
-#                         reported (docs/sysext.md: a link merged during sysinit should
+#                         reported (docs/guides/sysext.md: a link merged during sysinit should
 #                         miss the boot transaction)
 #   flfs-hello   confext  /etc/flfs-hello.conf
 #   flfs-wrong   sysext   built for SYSEXT_LEVEL=0, and so never merged

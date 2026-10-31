@@ -1,6 +1,6 @@
 #!/bin/bash
 # Turn a directory tree into system and configuration extension images for this image
-# (docs/sysext.md). Runs in the image-assembly container, like build-rootfs.sh, so that
+# (docs/guides/sysext.md). Runs in the image-assembly container, like build-rootfs.sh, so that
 # an extension is laid out by the same mkfs.erofs with the same reproducibility flags as
 # the root it is merged over. The tree is mounted at /usr/local/src and never written to.
 #

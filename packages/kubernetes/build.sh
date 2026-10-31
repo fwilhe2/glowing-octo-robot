@@ -58,7 +58,7 @@ Wants=network-online.target crio.service
 After=network-online.target crio.service
 
 [Service]
-ExecStartPre=/usr/bin/bash -c '[ "$(stat -f -c %%T /var)" != tmpfs ] || { echo "kubelet: /var is a tmpfs, and a node needs a disk for it (docs/sysext.md)" >&2; exit 78; }'
+ExecStartPre=/usr/bin/bash -c '[ "$(stat -f -c %%T /var)" != tmpfs ] || { echo "kubelet: /var is a tmpfs, and a node needs a disk for it (docs/guides/sysext.md)" >&2; exit 78; }'
 Environment="KUBELET_KUBECONFIG_ARGS=--bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubelet.conf --kubeconfig=/etc/kubernetes/kubelet.conf"
 Environment="KUBELET_CONFIG_ARGS=--config=/var/lib/kubelet/config.yaml"
 EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env

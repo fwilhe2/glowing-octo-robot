@@ -36,7 +36,7 @@ source test/qemu-lib.sh
 
 ROOTFS="${1:-${ROOTFS:-output/rootfs.erofs}}"
 KERNEL="${2:-${KERNEL:-rootfs/boot/bzImage}}"
-# podman is a system extension (docs/sysext.md), attached as a read-only disk the way the
+# podman is a system extension (docs/guides/sysext.md), attached as a read-only disk the way the
 # root is: extensions/podman.raw next to the image (qemu_sysexts in test/qemu-lib.sh).
 SYSEXTS="${SYSEXTS:-podman}"
 INIT="${INIT:-/usr/lib/systemd/systemd}"

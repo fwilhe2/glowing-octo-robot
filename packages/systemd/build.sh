@@ -34,7 +34,7 @@ systemd_opts=(
     -Dnss-mymachines=disabled -Dportabled=false
     -Dmountfsd=false -Dnsresourced=false
 
-    # How software is added to the immutable image (docs/sysext.md). Verity is set up by
+    # How software is added to the immutable image (docs/guides/sysext.md). Verity is set up by
     # the kernel (dm-init), so no libcryptsetup.
     -Dsysext=true
 
