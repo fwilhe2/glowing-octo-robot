@@ -109,8 +109,8 @@ builder/          how a package is compiled: the one builder image, deps.txt (it
 image/            how the staging tree becomes an image, disk or OCI: Containerfile,
                   build-rootfs.sh, and files/ — the /etc the image ships; and
                   build-extension.sh, how a tree becomes a system extension for it
-test/             everything CI runs to verify a build, plus known-missing-libs.txt
-                  and size-budget.txt; qemu-lib.sh is the boot harness the qemu
+test/             everything CI runs to verify a build, plus known-missing-libs.txt,
+                  known-journal-messages.txt and size-budget.txt; qemu-lib.sh is the boot harness the qemu
                   tests and tools/boot-qemu.sh all source
 tools/            local conveniences and maintenance, not part of a build — except
                   lib.sh, the helpers build.sh, tools/ and test/ all source
@@ -400,7 +400,7 @@ to 108 bytes. `QEMU_REBOOT=1` (no `-no-reboot`) and `QEMU_DISPLAY_ARGS` are the
 `qemu_argv` hooks it uses; every test still exits on a guest reboot.
 
 `test/boot.sh` runs `/bin/bash` as PID 1; the others boot systemd. `test/systemd.sh` asserts
-`running` (no failed unit) and no taint. **All boots go through `test/qemu-lib.sh`**, which
+`running` (no failed unit), no taint and no critical journal message. **All boots go through `test/qemu-lib.sh`**, which
 `tools/boot-qemu.sh` sources too, so debugging a CI failure boots the same machine.
 **Every boot's console is held to `CONSOLE_BAD`** (kernel warnings, oopses, segfaults,
 emergency mode) when the test ends without having failed; a test that provokes one on

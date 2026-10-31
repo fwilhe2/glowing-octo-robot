@@ -1,6 +1,6 @@
 # Ideas from other image builders
 
-**Status: proposal, partly implemented.** Implemented: section 1. This page collects features found
+**Status: proposal, partly implemented.** Implemented: sections 1 and 2. This page collects features found
 in other immutable or minimal Linux image builders that fit this project's constraints
 (see `CLAUDE.md`), with enough detail to implement each one. Each section names where the
 idea came from, what the gap is today, how to close it, and how to verify the change.
@@ -79,6 +79,10 @@ on, but start without it if CI's slow TCG boots produce false positives, and add
 a few runs are clean.
 
 ## 2. Fail on critical journal messages
+
+*Implemented:* `CRIT_CHECK` in `test/systemd.sh`, against
+`test/known-journal-messages.txt`, which starts empty: a KVM boot logged nothing at
+`crit`, nor at `err`.
 
 **Inspiration:** podman-machine-os, `verify/image_test.go`, the test *"should have zero
 critical error messages journalctl"* (around line 150), which runs

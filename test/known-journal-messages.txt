@@ -1,0 +1,8 @@
+# Journal messages at priority crit or above that test/systemd.sh accepts on a booted
+# image: one extended regular expression per line, matched anywhere in a line of
+# `journalctl -b -p crit -o short`, with a comment above each saying why it is accepted.
+#
+# This is a backlog, like test/known-missing-libs.txt, not a place to file new messages
+# to make a test pass: a critical message is fixed in the package or the image that
+# logs it, and an entry here needs an argument that it is harmless. Delete the line once
+# the message is gone.
