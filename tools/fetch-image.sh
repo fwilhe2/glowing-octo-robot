@@ -53,26 +53,35 @@ RUN="${ROOTFS_RUN:-$(gh run list -R "$REPO" --workflow ci.yml --status success -
 
 echo ">> rootfs ($ARCH): $REPO run $RUN (artifact: rootfs.erofs-$ARCH)"
 gh run download "$RUN" -R "$REPO" -n "rootfs.erofs-$ARCH" -D "$tmp/rootfs"
-# The image and the kernel arguments that carry its dm-verity root hash.
-cp "$tmp/rootfs/rootfs.erofs" "$tmp/rootfs/rootfs.cmdline" "$OUT/"
 
 # The kernel package artifact rather than the assembled rootfs one: it is a tar, so the
 # bzImage comes out byte-for-byte, and it is the same artifact the CI boot job uses.
 echo ">> kernel ($ARCH): $REPO run $RUN (artifact: package-kernel-$ARCH)"
 gh run download "$RUN" -R "$REPO" -n "package-kernel-$ARCH" -D "$tmp/kernel"
 tar xf "$tmp/kernel/kernel.tar" -C "$tmp/kernel" rootfs/boot/bzImage
-cp "$tmp/kernel/rootfs/boot/bzImage" "$OUT/bzImage"
 
 # The system extensions built in the same run (docs/sysext.md), laid out next to the
 # image as tools/build-image.sh lays them out next to its own: extensions/ and confexts/.
 # Optional — a run from before they existed has none, and only tools/k8s-demo.sh wants one.
 echo ">> extensions ($ARCH): $REPO run $RUN (artifact: extensions-$ARCH)"
+have_extensions=0
 if gh run download "$RUN" -R "$REPO" -n "extensions-$ARCH" -D "$tmp/extensions" 2>/dev/null; then
-    rm -rf "$OUT/extensions" "$OUT/confexts"
-    cp -r "$tmp/extensions"/. "$OUT/"
+    have_extensions=1
 else
     echo "   (none in this run)"
 fi
+
+# Into $OUT only once everything is downloaded, so a failed fetch leaves the previous
+# image as it was rather than a new rootfs beside an old kernel: the image and the kernel
+# arguments that carry its dm-verity root hash, the kernel, the extensions, and the run
+# they came from.
+cp "$tmp/rootfs/rootfs.erofs" "$tmp/rootfs/rootfs.cmdline" "$OUT/"
+cp "$tmp/kernel/rootfs/boot/bzImage" "$OUT/bzImage"
+if [ "$have_extensions" = 1 ]; then
+    rm -rf "$OUT/extensions" "$OUT/confexts"
+    cp -r "$tmp/extensions"/. "$OUT/"
+fi
+echo "$RUN" > "$OUT/ci-run"
 
 echo
 echo "Downloaded into $OUT/:"
