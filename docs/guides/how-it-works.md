@@ -52,7 +52,9 @@ the next merge replaces them.
 `tools/build-image.sh` builds packages, merges their staging trees, and runs
 `image/build-rootfs.sh` in the pinned image-assembly container. Use
 `./tools/build-image.sh --image-only` to skip package builds and reassemble the existing
-merged trees.
+merged trees. Before assembling, it runs `test/check-rootfs-deps.sh rootfs` and stops on an
+unresolved library, as CI's `rootfs` job does; `--allow-unresolved` downgrades that to a
+warning for exploring a partial tree, and is never used in CI.
 
 Assembly copies `rootfs/`, adds files from `image/files/`, trims build-only files, generates
 configuration and SBOM data, then writes the requested image format:

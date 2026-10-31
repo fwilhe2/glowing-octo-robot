@@ -7,6 +7,12 @@
 #     ./tools/build-image.sh --flavour erofs # only one of erofs / oci
 #     ./tools/build-image.sh --skip kernel,systemd   # leave packages out of this run
 #     ./tools/build-image.sh --only strace   # build just these packages, then the images
+#     ./tools/build-image.sh --allow-unresolved   # assemble despite missing libraries (see below)
+#
+# Before assembling, test/check-rootfs-deps.sh must pass on rootfs/, as it must in CI's
+# rootfs job: a binary needing a library the image does not ship starts nowhere, and an
+# image that boots far enough to show it is a slow way to find out. --allow-unresolved
+# turns that failure back into a warning, for a look at a half-built tree; never in CI.
 #
 # Packages are built one after another. Each installs into its own staging/<pkg>/, so
 # they no longer race on a shared tree, but every build ends by re-merging rootfs/ from
@@ -29,11 +35,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tools/lib.sh
 
-clean=0 image_only=0 flavours="erofs oci" skip="" only=""
+clean=0 image_only=0 allow_unresolved=0 flavours="erofs oci" skip="" only=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --clean)      clean=1 ;;
         --image-only) image_only=1 ;;
+        --allow-unresolved) allow_unresolved=1 ;;
         --flavour)    flavours="${2:?--flavour needs erofs or oci}"; shift ;;
         --skip)       skip="${2:?--skip needs a comma-separated list}"; shift ;;
         --only)       only="${2:?--only needs a comma-separated list}"; shift ;;
@@ -80,7 +87,16 @@ if [ ! -e rootfs/usr/lib/libc.so.6 ]; then
 fi
 
 echo "==> checking the staging tree"
-./test/check-rootfs-deps.sh rootfs || echo "warning: unresolved libraries (see above)" >&2
+if ! ./test/check-rootfs-deps.sh rootfs; then
+    if [ "$allow_unresolved" = 1 ]; then
+        echo "warning: unresolved libraries (see above); assembling anyway (--allow-unresolved)" >&2
+    else
+        echo "error: unresolved libraries (see above): build the package that ships them, or" >&2
+        echo "       configure the dependency out (CLAUDE.md, 'the three things that break" >&2
+        echo "       silently'). --allow-unresolved assembles anyway, for a look only." >&2
+        exit 1
+    fi
+fi
 
 echo "==> assembling images"
 mkdir -p output extra
