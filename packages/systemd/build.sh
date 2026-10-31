@@ -58,6 +58,9 @@ systemd_opts=(
     -Dpolkit=disabled -Dsmack=false -Dima=false -Dipe=false -Dapparmor=disabled
 
     -Dtests=false
+
+    # Macros for building rpm packages against systemd; there is no rpm.
+    -Drpmmacrosdir=no
 )
 
 meson_install "${systemd_opts[@]}"

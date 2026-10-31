@@ -1,0 +1,16 @@
+# What only a compiler or a package build reads, and there is neither here. The trim in
+# image/build-rootfs.sh removes them generically; these are the ones that slipped past it
+# before, so a trim rule that stops matching is a named failure.
+# The names -lfoo resolves (libfoo.so) and glibc's linker scripts; libelf-0.197.so is a
+# real library, which the [!0-9] keeps out of the pattern.
+absent usr/lib/lib*[!0-9].so
+absent usr/lib64/lib*.so
+# pkg-config files in a multiarch directory (ncurses put six there).
+absent usr/lib/*-linux-gnu/*
+# Headers outside usr/include (dbus' arch header) and rpm macros (systemd: -Drpmmacrosdir=no).
+absent usr/include*
+absent usr/lib/*/include*
+absent usr/lib/rpm*
+# What the loader does use.
+present usr/lib/libc.so.6
+present usr/lib/libelf-0.197.so
