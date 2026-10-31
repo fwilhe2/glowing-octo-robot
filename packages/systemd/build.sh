@@ -65,3 +65,25 @@ meson_install "${systemd_opts[@]}"
 # bootctl, which -Dbootloader=disabled does not take with it: it manages an EFI system
 # partition and the boot loader's variables, and a VM handed its kernel has neither.
 drop_installed bootctl
+
+# udev helpers and rules for hardware the kernel cannot have: each subsystem below is
+# cleared by packages/kernel's vm.config on both architectures, and that build fails if
+# one comes back. No meson switch exists for any of them. What a VM can still present
+# stays — virtio-scsi disks (scsi_id, and ata_id for a passed-through SATA disk),
+# virtio-input (the input, mouse and touchpad rules), gpio-keys on arm64, DMI.
+#   ATAPI/SCSI CD-ROM (BLK_DEV_SR)  cdrom_id, 60-cdrom_id
+#   MTD                             mtd_probe, 75-probe_mtd, 60-persistent-storage-mtd
+#   media (MEDIA_SUPPORT)           v4l_id, 60-persistent-v4l, 70-camera,
+#                                   60-persistent-media-controller
+#   INPUT_JOYSTICK                  70-joystick
+#   SOUND                           60-persistent-alsa, 78-sound-card
+#   DRM                             60-drm
+#   BTRFS_FS                        64-btrfs
+#   IIO                             60-sensor
+#   USB_SUPPORT, with hwdb off      60-autosuspend
+drop_installed usr/lib/udev/cdrom_id usr/lib/udev/mtd_probe usr/lib/udev/v4l_id
+for rule in 60-cdrom_id 75-probe_mtd 60-persistent-storage-mtd 60-persistent-v4l 70-camera \
+            60-persistent-media-controller 70-joystick 60-persistent-alsa 78-sound-card \
+            60-drm 64-btrfs 60-sensor 60-autosuspend; do
+    drop_installed usr/lib/udev/rules.d/$rule.rules
+done
