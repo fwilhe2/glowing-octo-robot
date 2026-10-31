@@ -198,6 +198,7 @@ if [ -n "${FLFS_PKG:-}" ]; then
         # `if`, not `&&`: a false && list would fail the group under set -e.
         if [ -n "${FLFS_URL:-}" ];    then printf 'url=%s\n'    "$FLFS_URL";    fi
         if [ -n "${FLFS_SHA256:-}" ]; then printf 'sha256=%s\n' "$FLFS_SHA256"; fi
+        if [ -n "${FLFS_CPE:-}" ];    then printf 'cpe=%s\n'    "$FLFS_CPE";    fi
     } > "$components/$FLFS_PKG"
     # Vendored dependencies are a component of their own, with their own checksum.
     if [ -n "${FLFS_VENDOR_URL:-}" ]; then
@@ -210,5 +211,32 @@ if [ -n "${FLFS_PKG:-}" ]; then
             printf 'url=%s\n'     "$FLFS_VENDOR_URL"
             printf 'sha256=%s\n'  "${FLFS_VENDOR_SHA256:-}"
         } > "$components/$FLFS_PKG-vendor"
+    fi
+
+    # What a Go or Rust program compiled in, as purls, one per line in
+    # usr/share/flfs/modules/<pkg>: the SBOM lists each as a package its program
+    # CONTAINS, which is what a vulnerability scanner matches advisories against — most of
+    # them, for this image, are about a module or crate rather than a program.
+    #   Go: each binary's build info (`go version -m`, which reads it without running
+    #   anything), its modules after replacements, and its toolchain as stdlib.
+    #   Rust: what the build links, from `cargo tree` over the normal dependency edges —
+    #   not Cargo.lock, which also lists build and dev dependencies that never ship.
+    modules=$(
+        find "$ROOTFS" -type f -perm -u+x -print0 | xargs -0 -r -n1 go version -m 2>/dev/null |
+            awk -F'\t' '
+                # "<file>: go1.25.3" heads each binary; a "=>" line replaces the dep above it.
+                /^[^\t].*: go[0-9]/ { flush(); sub(/.*: go/, ""); print "pkg:golang/stdlib@" $0; next }
+                $2 == "dep" { flush(); dep = $3 "@" $4; next }
+                $2 == "=>"  { dep = $3 "@" $4; next }
+                function flush() { if (dep != "") print "pkg:golang/" dep; dep = "" }
+                END { flush() }'
+        if [ -f "$CARGO_HOME/config.toml" ]; then
+            (cd /usr/local/src && cargo tree --offline --locked -e normal --prefix none --format '{p}' 2>/dev/null) |
+                awk '$2 ~ /^v[0-9]/ && $3 !~ /^\(\// { print "pkg:cargo/" $1 "@" substr($2, 2) }'
+        fi
+    )
+    if [ -n "$modules" ]; then
+        install -d "$ROOTFS/usr/share/flfs/modules"
+        LC_ALL=C sort -u <<< "$modules" > "$ROOTFS/usr/share/flfs/modules/$FLFS_PKG"
     fi
 fi

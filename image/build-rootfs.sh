@@ -665,13 +665,9 @@ fi
 
 created=$(date -u -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y-%m-%dT%H:%M:%SZ)
 
-# JSON string escaping, applied to every value.
-jstr() {
-    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g' -e 's/\r/\\r/g'
-}
-
-# SPDX identifiers may only contain letters, digits, '.' and '-'.
-spdxid() { printf '%s' "$1" | tr -c 'A-Za-z0-9.-' '-'; }
+# jstr, spdxid and the package and relationship loops, shared with build-extension.sh.
+source /usr/local/bin/sbom.sh
+modules="$IMAGE/usr/share/flfs/modules"
 
 image_name="flfs-$flavour-$oci_arch"
 
@@ -703,52 +699,10 @@ image_name="flfs-$flavour-$oci_arch"
     printf '      "primaryPackagePurpose": "OPERATING_SYSTEM"\n'
     printf '    }'
 
-    for record in "$components"/*; do
-        name= version= license= origin= url= sha256=
-        while IFS='=' read -r key value; do
-            case "$key" in
-                name) name=$value ;; version) version=$value ;; license) license=$value ;;
-                origin) origin=$value ;;
-                url) url=$value ;; sha256) sha256=$value ;;
-            esac
-        done < "$record"
-        [ -n "$name" ] || continue
+    sbom_component_packages "$components"
+    sbom_module_packages "$modules"
 
-        printf ',\n    {\n'
-        printf '      "SPDXID": "SPDXRef-Package-%s",\n' "$(spdxid "$name")"
-        printf '      "name": "%s",\n' "$(jstr "$name")"
-        printf '      "versionInfo": "%s",\n' "$(jstr "$version")"
-        if [ "$origin" = local ]; then
-            printf '      "downloadLocation": "git+https://github.com/fwilhe2/glowing-octo-robot",\n'
-        else
-            printf '      "downloadLocation": "%s",\n' "$(jstr "$url")"
-        fi
-        printf '      "filesAnalyzed": false,\n'
-        if [ -n "$sha256" ]; then
-            printf '      "checksums": [ { "algorithm": "SHA256", "checksumValue": "%s" } ],\n' "$(jstr "$sha256")"
-        fi
-        printf '      "externalRefs": [ { "referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:generic/%s@%s" } ],\n' \
-            "$(jstr "$name")" "$(jstr "$version")"
-        printf '      "licenseConcluded": "NOASSERTION",\n'
-        printf '      "licenseDeclared": "%s",\n' "$(jstr "${license:-NOASSERTION}")"
-        printf '      "copyrightText": "NOASSERTION"\n'
-        printf '    }'
-    done
-
-    # The builder image, the one build input env.sh does not describe.
-    builders=$(awk -F= '$1 == "builder" && $2 != "" { print $2 }' "$components"/* | sort -u)
-    for b in $builders; do
-        printf ',\n    {\n'
-        printf '      "SPDXID": "SPDXRef-Builder-%s",\n' "$(spdxid "$b")"
-        printf '      "name": "%s",\n' "$(jstr "${b%%:*}")"
-        printf '      "versionInfo": "%s",\n' "$(jstr "${b##*:}")"
-        printf '      "downloadLocation": "%s",\n' "$(jstr "$b")"
-        printf '      "filesAnalyzed": false,\n'
-        printf '      "licenseConcluded": "NOASSERTION",\n'
-        printf '      "licenseDeclared": "NOASSERTION",\n'
-        printf '      "copyrightText": "NOASSERTION"\n'
-        printf '    }'
-    done
+    sbom_builder_packages "$components"
 
     # Files a --extra overlay added: built elsewhere, so no provenance beyond their
     # paths and hashes, which the comment carries. Absent from every normal build.
@@ -803,17 +757,7 @@ image_name="flfs-$flavour-$oci_arch"
     printf '  "relationships": [\n'
     printf '    { "spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": "SPDXRef-Image" }'
 
-    for record in "$components"/*; do
-        name=$(awk -F= '$1 == "name" { print $2 }' "$record")
-        [ -n "$name" ] || continue
-        id="SPDXRef-Package-$(spdxid "$name")"
-        printf ',\n    { "spdxElementId": "SPDXRef-Image", "relationshipType": "CONTAINS", "relatedSpdxElement": "%s" }' "$id"
-        b=$(awk -F= '$1 == "builder" { print $2 }' "$record")
-        if [ -n "$b" ]; then
-            printf ',\n    { "spdxElementId": "SPDXRef-Builder-%s", "relationshipType": "BUILD_TOOL_OF", "relatedSpdxElement": "%s" }' \
-                "$(spdxid "$b")" "$id"
-        fi
-    done
+    sbom_component_relationships SPDXRef-Image "$components" "$modules"
 
     if [ -n "$extra_manifest" ]; then
         printf ',\n    { "spdxElementId": "SPDXRef-Image", "relationshipType": "CONTAINS", "relatedSpdxElement": "SPDXRef-LocalExtra" }'
@@ -828,7 +772,7 @@ image_name="flfs-$flavour-$oci_arch"
     printf '}\n'
 } > "$sbom"
 
-rm -rf "$components"
+rm -rf "$components" "$modules"
 
 cp "$sbom" "/usr/local/output/sbom-$flavour.json"
 echo "sbom: $(wc -c < "$sbom") bytes, $(grep -c '"SPDXID"' "$sbom") elements"

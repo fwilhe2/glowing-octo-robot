@@ -116,6 +116,7 @@ component_env=(
     --env "FLFS_PKG=$PKG"
     --env "FLFS_VERSION=$VERSION"
     --env "FLFS_LICENSE=${LICENSE:-NOASSERTION}"
+    --env "FLFS_CPE=${CPE:-}"
     --env "FLFS_BUILDER=$BUILDER"
     --env "SOURCE_DATE_EPOCH=$FLFS_SOURCE_DATE_EPOCH"
 )

@@ -350,7 +350,12 @@ lines and the kernel's `vm.config`.
 **The SBOM is generated, not scanned** (there is no package database): `build.sh` passes
 each package's pins as `FLFS_*`, `build-package.sh` writes a record into the staging tree
 after a successful install, and `build-rootfs.sh` turns the records in the *assembled* tree
-into SPDX, since the flavours differ. `test/check-sbom.sh` parses it. Unresolved libraries
+into SPDX, since the flavours differ. `test/check-sbom.sh` parses it. A package's `CPE=` (NVD's
+name for it) becomes a `cpe23Type` reference, and the Go modules and Rust crates a program
+compiled in (`go version -m`, `cargo tree -e normal`, recorded by `build-package.sh` in
+`usr/share/flfs/modules/`) become packages it `CONTAINS`: those two are what scanners match.
+`image/sbom.sh` is shared with `build-extension.sh`, which writes `sbom-ext-<name>.json`.
+Unresolved libraries
 are `DEPENDS_ON` without `CONTAINS`, computed like `check-rootfs-deps.sh` (a library is a
 file plus its SONAME symlink).
 
