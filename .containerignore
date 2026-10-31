@@ -8,3 +8,7 @@
 *
 !builder
 !image
+# image/Containerfile's one file from test/, which build-rootfs.sh runs.
+!test
+test/*
+!test/check-tree-hygiene.sh

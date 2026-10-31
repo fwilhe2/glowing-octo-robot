@@ -627,6 +627,10 @@ if [ "$flavour" = erofs ]; then
     chmod 600 etc/shadow
 fi
 
+# Nothing anyone may write, and no symlink to nothing; test/check-tree-hygiene.sh, copied
+# in beside this script.
+check-tree-hygiene.sh "$IMAGE"
+
 du -sh "$IMAGE"
 
 # ---------------------------------------------------------------------------------

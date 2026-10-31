@@ -224,6 +224,45 @@ expect fail "image-files: a manifest that names no flavour is refused" flavour \
     env RULES="$rules" ./test/check-image-files.sh "$work/manifest-unlabelled.txt"
 
 # ---------------------------------------------------------------------------------
+# check-tree-hygiene.sh: a tree with every kind of link it must accept — relative and
+# absolute, through a linked directory, into the boot-time filesystems — and a sticky
+# world-writable directory; then copies broken one way each. The absolute link's target
+# is one the host has too (/usr/bin/env), so a check that resolves against the host's
+# root instead of the tree passes the dangling fixture and fails here.
+hyg=$work/hygiene-good
+mkdir -p "$hyg/usr/bin" "$hyg/usr/lib/real" "$hyg/etc" "$hyg/tmp"
+touch "$hyg/usr/bin/tool" "$hyg/usr/lib/real/libx.so.1"
+chmod 1777 "$hyg/tmp"
+ln -s tool "$hyg/usr/bin/alias"
+ln -s /usr/bin/tool "$hyg/usr/bin/absolute"
+ln -s real "$hyg/usr/lib/dir"
+ln -s ../lib/dir/libx.so.1 "$hyg/usr/bin/through-dir"
+ln -s /run/systemd/resolve/stub-resolv.conf "$hyg/etc/resolv.conf"
+ln -s /dev/null "$hyg/etc/masked.service"
+ln -s var/home "$hyg/home"
+expect pass "tree-hygiene: a tree with only resolvable links and a sticky /tmp passes" "" \
+    ./test/check-tree-hygiene.sh "$hyg"
+
+cp -a "$hyg" "$work/hygiene-file"
+chmod 666 "$work/hygiene-file/usr/bin/tool"
+expect fail "tree-hygiene: a world-writable file is reported" usr/bin/tool \
+    ./test/check-tree-hygiene.sh "$work/hygiene-file"
+cp -a "$hyg" "$work/hygiene-dir"
+mkdir -m 777 "$work/hygiene-dir/usr/share"
+chmod 777 "$work/hygiene-dir/usr/share"
+expect fail "tree-hygiene: a world-writable directory without the sticky bit is reported" usr/share \
+    ./test/check-tree-hygiene.sh "$work/hygiene-dir"
+cp -a "$hyg" "$work/hygiene-dangling"
+ln -s /usr/bin/env "$work/hygiene-dangling/usr/bin/host-only"
+expect fail "tree-hygiene: an absolute link to a path only the host has is reported" usr/bin/host-only \
+    ./test/check-tree-hygiene.sh "$work/hygiene-dangling"
+cp -a "$hyg" "$work/hygiene-loop"
+ln -s b "$work/hygiene-loop/usr/bin/a"
+ln -s a "$work/hygiene-loop/usr/bin/b"
+expect fail "tree-hygiene: a symlink loop is reported" "usr/bin/a" \
+    ./test/check-tree-hygiene.sh "$work/hygiene-loop"
+
+# ---------------------------------------------------------------------------------
 # check-doc-links.sh: a relative link to a file that is not there, beside every kind of
 # link it must not follow — external, anchor-only, with a fragment or a title, and one
 # inside a code fence that only looks like a link.

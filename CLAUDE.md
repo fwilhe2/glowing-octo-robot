@@ -175,6 +175,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
 ./test/check-doc-links.sh         # relative links in the tracked markdown resolve
 ./test/check-image-files.sh       # each assembled image against test/image-files/: what must and must not ship
+./test/check-tree-hygiene.sh <tree>  # nothing world-writable, no dangling symlink (build-rootfs.sh runs it on each flavour)
 ./test/oci-trim.sh [output]       # what the OCI image leaves out of the disk image, and a deps check on its layer
 ./tools/vm.sh start|ssh|stop|list|run|console|update|snapshot [name] ...  # named machines that keep /var
 ./tools/demo.sh [reset]           # a fresh `demo` vm.sh machine: verity root, identity, sysext attach, a container
@@ -533,7 +534,9 @@ touching assembly:
 - Two packages installing one file fail `merge-staging.sh`; fix the package, never the
   order.
 - **Nothing is setuid**: util-linux is `--disable-makeinstall-setuid` and the assembly fails
-  on any setuid or setgid file. CI unpacks with `tar xpf`.
+  on any setuid or setgid file, and through `test/check-tree-hygiene.sh` (copied into the
+  assembly image, so `.containerignore` lets it in) on a world-writable path or a
+  dangling symlink. CI unpacks with `tar xpf`.
 - mtimes in `rootfs/` do not matter: assembly clamps them.
 
 ## CI

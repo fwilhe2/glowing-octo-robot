@@ -1,6 +1,6 @@
 # Ideas from other image builders
 
-**Status: proposal, partly implemented.** Implemented: sections 1–3. This page collects features found
+**Status: proposal, partly implemented.** Implemented: sections 1–4. This page collects features found
 in other immutable or minimal Linux image builders that fit this project's constraints
 (see `CLAUDE.md`), with enough detail to implement each one. Each section names where the
 idea came from, what the gap is today, how to close it, and how to verify the change.
@@ -155,6 +155,12 @@ right fix is `LLMNR=no` and `MulticastDNS=no` in a `resolved.conf.d` drop-in und
 `image/files/etc/systemd/`, not an allowlist entry.
 
 ## 4. More checks on the assembled tree
+
+*Implemented:* `test/check-tree-hygiene.sh`, run by `image/build-rootfs.sh` on both
+flavours and covered by `test/selftest.sh`. Rather than a list of links that may dangle,
+it does not judge a target under `dev`, `proc`, `sys`, `run`, `tmp` or `var`, which ship
+empty. It found one real dangling link, systemd's `environment.d` link to
+`/etc/environment`, now shipped empty.
 
 **Inspiration:** Flatcar mantle, `kola/tests/misc/files.go` (`cl.filesystem`, around line
 36): subtests `deadlinks`, `suid`, `sgid`, `writablefiles`, `writabledirs` and
