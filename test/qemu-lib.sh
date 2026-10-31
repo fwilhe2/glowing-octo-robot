@@ -26,6 +26,15 @@ LOGIN_USER="${LOGIN_USER:-root}"
 # What a guest looks like on its way out. Matched by await and by test/boot.sh's own loop.
 QEMU_DIED='Kernel panic|Attempted to kill init|Requesting system (poweroff|reboot)'
 
+# What must never appear on a console, whatever the test is about: a guest that logs one
+# of these usually keeps running, so nothing else would fail. Matched over the whole log
+# when a boot ends without the test having failed (cleanup, below). A test that provokes
+# one on purpose sets CONSOLE_BAD_EXEMPT to an extended regex of the lines it expects.
+# From Flatcar's kola, which runs the same kind of list over every test's console.
+CONSOLE_BAD='Oops:|BUG: |WARNING: CPU: [0-9]+ PID: [0-9]+ at |general protection fault|'\
+'Call Trace:|segfault at |=11/SEGV|[Cc]ore dump|EXT4-fs error|Remounting filesystem read-only|'\
+'device-mapper: verity: .* is corrupted|You are in emergency mode|Starting Emergency Shell'
+
 # ARCH defaults to the host's. QEMU_PROFILE picks the machine's shape, approximating the
 # VMMs the kernel is built for by the devices they give a guest:
 #
@@ -329,12 +338,18 @@ qemu_boot() {
     "$QEMU" "${QEMU_ARGV[@]}" < "$console" > "$LOG" 2>&1 &
     qemu_pid=$!
 
+    # Also called by hand between boots (test/vmm.sh, test/sysext.sh). $? is the status
+    # the script is exiting with, or the last command's on a call by hand (a trap that
+    # runs something first passes it as $1): only a boot that has not already failed is
+    # held to the console check, so a failure reports its own reason first.
     cleanup() {
+        local rc=${1:-$?}
         { exec 3>&-; } 2>/dev/null || true
         kill "$qemu_pid" 2>/dev/null || true
         wait "$qemu_pid" 2>/dev/null || true
         rm -rf "$work"
         [ -z "${QEMU_SSH_DIR:-}" ] || rm -rf "$QEMU_SSH_DIR"
+        [ "$rc" != 0 ] || console_check
     }
     trap cleanup EXIT
 
@@ -360,6 +375,19 @@ fail() {
     [ -n "${DIAGNOSE:-}" ] && { console_send "$DIAGNOSE" 2>/dev/null || true; sleep 5; }
     echo ">> last 80 lines of the console:" >&2
     tail -80 "$LOG" >&2
+    exit 1
+}
+
+# The $CONSOLE_BAD lines in $LOG, minus $CONSOLE_BAD_EXEMPT; exits 1 naming them. Not
+# through fail: the guest is gone by now, so there is nothing to DIAGNOSE.
+console_check() {
+    local bad
+    bad=$(tr -d '\r' < "$LOG" | grep -aE "$CONSOLE_BAD" |
+          { if [ -n "${CONSOLE_BAD_EXEMPT:-}" ]; then grep -avE "$CONSOLE_BAD_EXEMPT"; else cat; fi; } || true)
+    [ -n "$bad" ] || return 0
+    echo ">> ${TEST_NAME:-boot} test FAILED: the console shows a kernel warning, a crash or an emergency shell (CONSOLE_BAD in test/qemu-lib.sh):" >&2
+    printf '%s\n' "$bad" | head -10 | sed 's/^/   /' >&2
+    echo ">> the whole console is in $LOG" >&2
     exit 1
 }
 

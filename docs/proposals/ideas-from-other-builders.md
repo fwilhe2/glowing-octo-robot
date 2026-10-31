@@ -1,6 +1,6 @@
 # Ideas from other image builders
 
-**Status: proposal.** Nothing here is implemented. This page collects features found
+**Status: proposal, partly implemented.** Implemented: section 1. This page collects features found
 in other immutable or minimal Linux image builders that fit this project's constraints
 (see `CLAUDE.md`), with enough detail to implement each one. Each section names where the
 idea came from, what the gap is today, how to close it, and how to verify the change.
@@ -23,6 +23,11 @@ larger. Section 10 feeds the [macOS container host](container-host.md) proposal,
 section 11 records what was considered and rejected, so it is not proposed again.
 
 ## 1. Scan every boot's console for kernel and crash messages
+
+*Implemented:* `CONSOLE_BAD` and `console_check` in `test/qemu-lib.sh`. `test/verity.sh`
+also exempts the panic's `Call Trace:`, and `test/sysext.sh`'s tampered boot the emergency
+mode its failed mount ends in. `Call Trace:` is in the list from the start: KVM boots of
+every qemu test were clean with it.
 
 **Inspiration:** Flatcar mantle, `kola/harness.go` (the `consoleChecks` list, around
 line 115). kola runs a list of regular expressions over the console of *every* test,

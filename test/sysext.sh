@@ -114,7 +114,7 @@ qemu_seed_var_disk "$VAR_DISK" 1G "$scratch/var"
 qemu_setup
 qemu_preflight
 qemu_boot
-trap 'cleanup; rm -rf "$scratch" $toys' EXIT
+trap 'rc=$?; rm -rf "$scratch" $toys; cleanup $rc' EXIT
 console_login
 
 OK="SYSEXT-OK"
@@ -144,8 +144,11 @@ cleanup
 trap 'rm -rf "$scratch" $toys' EXIT
 LOG="${LOG%.log}-tampered.log"
 VAR_DISK= SYSEXTS=flfs-tampered
+# The corruption is the point, and the extension's mount-extra= is a mount the boot
+# requires, so it ends in emergency mode.
+CONSOLE_BAD_EXEMPT='device-mapper: verity|emergency mode|Emergency Shell'
 qemu_boot
-trap 'cleanup; rm -rf "$scratch" $toys' EXIT
+trap 'rc=$?; rm -rf "$scratch" $toys; cleanup $rc' EXIT
 CORRUPT='device-mapper: verity.*(corrupted|verification failed)'
 await "$CORRUPT" 180 || fail "a tampered extension was read without dm-verity objecting"
 echo ">> sysext OK: a tampered extension is refused by dm-verity, as the root is"

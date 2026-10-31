@@ -402,8 +402,10 @@ to 108 bytes. `QEMU_REBOOT=1` (no `-no-reboot`) and `QEMU_DISPLAY_ARGS` are the
 `test/boot.sh` runs `/bin/bash` as PID 1; the others boot systemd. `test/systemd.sh` asserts
 `running` (no failed unit) and no taint. **All boots go through `test/qemu-lib.sh`**, which
 `tools/boot-qemu.sh` sources too, so debugging a CI failure boots the same machine.
-`QEMU_PROFILE=microvm|vz` gives Firecracker's or Virtualization.framework's devices
-(`test/vmm.sh`). `tools/boot-vz.sh` runs on macOS: what it uses from `qemu-lib.sh` and
+**Every boot's console is held to `CONSOLE_BAD`** (kernel warnings, oopses, segfaults,
+emergency mode) when the test ends without having failed; a test that provokes one on
+purpose names it in `CONSOLE_BAD_EXEMPT`. `QEMU_PROFILE=microvm|vz` gives Firecracker's
+or Virtualization.framework's devices (`test/vmm.sh`). `tools/boot-vz.sh` runs on macOS: what it uses from `qemu-lib.sh` and
 `lib.sh` stays within bash 3.2 and BSD tools. **`await` only matches output after the mark
 it is given** — matching the whole transcript once typed the password into the username
 prompt, so suspect the handshake before `shadow` when a login fails.

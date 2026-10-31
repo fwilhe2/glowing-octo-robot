@@ -41,6 +41,9 @@ new=$(( old ^ 0xff ))
 printf "\\x$(printf '%02x' "$new")" | dd of="$ROOTFS" bs=1 seek=0 count=1 conv=notrunc status=none
 echo ">> flipped byte 0 of a copy of $ORIGINAL ($old -> $new)"
 
+# The corruption is the point, so its report is no reason to fail, and neither is the
+# stack the kernel prints with its panic over the root it then cannot mount.
+CONSOLE_BAD_EXEMPT='device-mapper: verity|Call Trace:'
 qemu_boot
 
 # What the kernel says when a block fails its hash, and what a shell would print.
