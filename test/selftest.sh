@@ -186,6 +186,21 @@ expect pass "kernel-caps: a config with every requirement passes" "" ./test/kern
 sed -i '/^CONFIG_USER_NS=y$/d' "$kernel/boot/config"
 expect fail "kernel-caps: a missing requirement is reported" CONFIG_USER_NS ./test/kernel-caps.sh "$kernel"
 
+# kernel-parity.sh: two configs that differ only in what may differ (OF, a symbol only
+# one arch defines), then a pair that differs in a feature, and in a string value.
+parity=$work/parity
+mkdir -p "$parity"
+printf '%s\n' CONFIG_INET_DIAG=y CONFIG_OF=y 'CONFIG_LSM="yama,bpf"' CONFIG_ARM64_ONLY=y > "$parity/arm64"
+printf '%s\n' CONFIG_INET_DIAG=y '# CONFIG_OF is not set' 'CONFIG_LSM="yama,bpf"' CONFIG_X86_ONLY=y > "$parity/amd64"
+expect pass "kernel-parity: configs that differ only where an arch may pass" "" \
+    ./test/kernel-parity.sh "$parity/amd64" "$parity/arm64"
+sed 's/^CONFIG_INET_DIAG=y$/# CONFIG_INET_DIAG is not set/' "$parity/amd64" > "$parity/amd64-nodiag"
+expect fail "kernel-parity: a feature one arch lacks is reported" CONFIG_INET_DIAG \
+    ./test/kernel-parity.sh "$parity/amd64-nodiag" "$parity/arm64"
+sed 's/^CONFIG_LSM=.*/CONFIG_LSM="selinux,yama,bpf"/' "$parity/amd64" > "$parity/amd64-lsm"
+expect fail "kernel-parity: a value that differs is reported" CONFIG_LSM \
+    ./test/kernel-parity.sh "$parity/amd64-lsm" "$parity/arm64"
+
 # ---------------------------------------------------------------------------------
 # check-image-files.sh reads a manifest, not a tree. One rule of each kind, one of them
 # for the disk flavour only, and manifests that each break one rule.

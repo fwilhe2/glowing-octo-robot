@@ -147,6 +147,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/check-symbol-resolution.sh rootfs  # undefined symbols nothing in a binary's NEEDED closure defines
 ./tools/header-skew.sh            # builder -dev headers vs the libraries we ship (report)
 ./test/kernel-caps.sh rootfs            # kernel config vs what a container needs
+./test/kernel-parity.sh <amd64> <arm64>  # the two arches' kernel configs agree (configs or trees)
 ./test/kernel-config-diff.sh <old> <new> [src]  # what a kernel build turned on or off
 ./test/check-licenses.sh                # every package declares a DFSG-free license
 ./test/selftest.sh                      # the static checks above fail on broken fixture trees, and pass on a good one
@@ -499,15 +500,25 @@ reloads PID 1, so one that should start at boot needs `UpheldBy=` as well as `Wa
 
 `packages/kernel/build.sh` is `defconfig` + `kvm_guest.config` + fragments written as
 heredocs (only `build.sh` is mounted): `container.config`, `k8s.config`, `guest.config`,
-`rootfs.config`, `trace.config`, and `vm.config`, which takes defconfig's hardware back out
-and is merged last. **`CONFIG_MODULES` is off**: everything is built in, so with modules off
+`rootfs.config`, `kspp.config`, `trace.config`, `vm.config`, which takes defconfig's
+hardware back out, and `parity.config`, merged last. A fragment's name must not be one
+upstream uses (`hardening.config` is, per arch too, and `make` merges them all).
+**`CONFIG_MODULES` is off**: everything is built in, so with modules off
 kconfig resolves every tristate to `y` or `n` — and on arm64 an explicit `=m` becomes `y`,
 which is why `vm.config` names so much arm64 board support.
 
 - **A fragment line that cannot be applied is dropped in silence**, so `build.sh` checks
   after `make vm.config`: everything the additive fragments turn on is `=y`, nothing
   cleared came back `=y`, and every named symbol is defined by some Kconfig (a rename
-  upstream fails the build). When clearing something, expect to clear what *selects* it.
+  upstream fails the build). When clearing something, expect to clear what *selects* it
+  — and a clear only takes if nothing selects the symbol *at that merge*: a selector a
+  later fragment turns off leaves the symbol on, which is why `parity.config` is last.
+- **Both arches have the same features** (`test/kernel-parity.sh`, the `kernel-parity`
+  job): their defconfigs disagree about much that is not the architecture's, and
+  `parity.config` decides it once. A new difference fails the job; hardware goes in
+  `vm.config`, the arch's own internals in the script's allowlist. `kernel/configs` can be
+  resolved for either arch without a compile by sourcing `build.sh` with `make` and
+  `uname -m` shimmed, which is how a change to it is tried for arm64 on an amd64 host.
 - **Each `iptables -m`/`-j` an engine uses is a kernel symbol of its own**, and a missing one
   fails at runtime (*revision 0 not supported*). No legacy `IP_NF_*`: iptables is
   iptables-nft through `NFT_COMPAT`. `test/kernel-caps.sh` holds the kernel to the list.

@@ -1,9 +1,9 @@
 # defconfig + kvm_guest.config, then fragments that say what the kernel is for (container,
-# k8s, guest, rootfs, kspp, trace) and one that takes defconfig's hardware back out
-# (vm). Built natively, so `make defconfig` picks the arch from `uname -m`. The fragments
-# are heredocs because only this file is bind-mounted into the builder. kvm_guest.config's
-# x86-only symbols (PARAVIRT and friends) are skipped with a warning on arm64, which is
-# harmless.
+# k8s, guest, rootfs, kspp, trace), one that takes defconfig's hardware back out (vm), and
+# one that makes both arches agree (parity). Built natively, so `make defconfig` picks the
+# arch from `uname -m`. The fragments are heredocs because only this file is bind-mounted
+# into the builder. kvm_guest.config's x86-only symbols (PARAVIRT and friends) are skipped
+# with a warning on arm64, which is harmless.
 #
 # Reproducible: without these kbuild stamps date, user, host and a per-tree build counter
 # into `uname -v`. SOURCE_DATE_EPOCH comes from build.sh.
@@ -113,6 +113,7 @@ CONFIG_NETFILTER_XT_MATCH_COMMENT=y
 CONFIG_DUMMY=y
 EOF
 make k8s.config
+
 
 # The VMMs' virtual hardware, beyond kvm_guest.config's qemu PCI devices.
 #   Firecracker: no PCI, virtio-mmio devices named on the command line, PVH boot of a
@@ -598,8 +599,176 @@ cat > kernel/configs/vm.config <<'EOF'
 # CONFIG_EFI_VARS_PSTORE is not set
 # CONFIG_MEMTEST is not set
 # CONFIG_LEGACY_PTYS is not set
+# Firmware hardware-error reporting and RAS (arm64's defconfig): no hardware to report
+# on. Then the rest of the boards' leftovers on arm64 — Qualcomm firmware, every crypto
+# engine (Amlogic, HiSilicon, CryptoCell: CRYPTO_HW is their menu), aux displays, keypads, SRAM, GPU tracing — and parallel SCSI, serial
+# mice and odd serial cards on amd64.
+# CONFIG_ACPI_APEI is not set
+# CONFIG_ACPI_HMAT is not set
+# CONFIG_PCIEAER is not set
+# CONFIG_MEMORY_FAILURE is not set
+# CONFIG_RAS is not set
+# CONFIG_QCOM_SCM is not set
+# CONFIG_QCOM_PAS is not set
+# CONFIG_CRYPTO_HW is not set
+# CONFIG_AUXDISPLAY is not set
+# CONFIG_INPUT_MATRIXKMAP is not set
+# CONFIG_SRAM is not set
+# CONFIG_TRACE_GPU_MEM is not set
+# CONFIG_THERMAL_EMULATION is not set
+# CONFIG_THERMAL_NETLINK is not set
+# CONFIG_RAID_ATTRS is not set
+# CONFIG_SCSI_SAS_ATTRS is not set
+# CONFIG_SCSI_SPI_ATTRS is not set
+# CONFIG_SCSI_CONSTANTS is not set
+# CONFIG_SCSI_PROC_FS is not set
+# CONFIG_SERIAL_8250_16550A_VARIANTS is not set
+# CONFIG_SERIAL_NONSTANDARD is not set
+# CONFIG_SERIO_SERPORT is not set
 EOF
 make vm.config
+
+# What defconfig gives one architecture and not the other, decided once for both: a
+# feature userspace can see is the same on amd64 and arm64. Hardware and the arch's own
+# internals (ACPI, IOMMU defaults, clocks, pinctrl) still follow the arch; arm64's
+# leftover boards are vm.config's. test/kernel-parity.sh holds the two configs to it.
+#
+# Merged after vm.config, last: a clear only takes if nothing selects the symbol at the
+# time, and before vm.config amd64's BLK_DEV_IO_TRACE and SELinux still select RELAY and
+# NETWORK_SECMARK, which vm.config's clears then leave behind on their own.
+cat > kernel/configs/parity.config <<'EOF'
+# ss reads sockets through sock_diag; without it, it falls back to parsing /proc/net.
+CONFIG_INET_DIAG=y
+CONFIG_INET_UDP_DIAG=y
+
+# Policy routing (`ip rule`) and ECMP routes: CNIs (Cilium, Calico), WireGuard setups.
+CONFIG_IP_ADVANCED_ROUTER=y
+CONFIG_IP_MULTIPLE_TABLES=y
+CONFIG_IP_ROUTE_MULTIPATH=y
+# No multicast routing.
+# CONFIG_IP_MROUTE is not set
+
+# macvlan and VLAN networks (podman, the CNI plugins), VLAN-aware bridges.
+CONFIG_MACVLAN=y
+CONFIG_VLAN_8021Q=y
+CONFIG_BRIDGE_VLAN_FILTERING=y
+
+# tc: the ingress qdisc, flower and basic classifiers, drop and redirect actions — what
+# CNIs and `tc` users build traffic steering from.
+CONFIG_NET_SCH_INGRESS=y
+CONFIG_NET_CLS_BASIC=y
+CONFIG_NET_CLS_FLOWER=y
+CONFIG_NET_ACT_GACT=y
+CONFIG_NET_ACT_MIRRED=y
+# tc's extended matches, and the cgroup v1 net_cls/net_prio controllers: cgroup v2 only.
+# CONFIG_NET_EMATCH is not set
+# CONFIG_NET_CLS_CGROUP is not set
+# CONFIG_CGROUP_NET_CLASSID is not set
+# CONFIG_CGROUP_NET_PRIO is not set
+
+# Conntrack events (`conntrack -E`, CNIs watching flows).
+CONFIG_NF_CONNTRACK_EVENTS=y
+# No connection-tracking helpers: they parse FTP, IRC and SIP payloads in the kernel, for
+# protocols nothing here speaks. No SECMARK: there is no SELinux.
+# CONFIG_NF_CONNTRACK_FTP is not set
+# CONFIG_NF_CONNTRACK_IRC is not set
+# CONFIG_NF_CONNTRACK_SIP is not set
+# CONFIG_NETWORK_SECMARK is not set
+# The iptables vocabulary rules are written in: `-m state`, MSS clamping for overlay
+# MTUs, NFLOG.
+CONFIG_NETFILTER_XT_MATCH_STATE=y
+CONFIG_NETFILTER_XT_TARGET_TCPMSS=y
+CONFIG_NETFILTER_NETLINK_LOG=y
+CONFIG_NETFILTER_XT_TARGET_NFLOG=y
+
+# IPsec ESP and its policy match: the encrypted modes of Cilium, Calico and flannel,
+# strongSwan. Not AH, which authenticates without encrypting and nothing uses.
+CONFIG_XFRM_USER=y
+CONFIG_INET_ESP=y
+CONFIG_INET6_ESP=y
+CONFIG_NETFILTER_XT_MATCH_POLICY=y
+# CONFIG_INET6_AH is not set
+
+# TCP: SYN cookies under a SYN flood, MD5 signatures (BGP: Calico, MetalLB), and a choice
+# of congestion control (cubic stays the default).
+CONFIG_SYN_COOKIES=y
+CONFIG_TCP_MD5SIG=y
+CONFIG_TCP_CONG_ADVANCED=y
+
+# cgroup v2's io.cost, io.latency and io.prio (systemd's IOWeight=,
+# IODeviceLatencyTargetSec=, IOSchedulingClass=). No BFQ: virtio queues run without a
+# scheduler.
+CONFIG_BLK_CGROUP_IOCOST=y
+CONFIG_BLK_CGROUP_IOLATENCY=y
+CONFIG_BLK_CGROUP_IOPRIO=y
+# CONFIG_IOSCHED_BFQ is not set
+
+# Huge pages for whoever asks with madvise (databases want them, and most warn about
+# always), fanotify, per-task delay accounting (iotop), the LSM network hooks a BPF LSM
+# program attaches to.
+CONFIG_TRANSPARENT_HUGEPAGE=y
+CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y
+CONFIG_FANOTIFY=y
+CONFIG_TASK_DELAY_ACCT=y
+CONFIG_SECURITY_NETWORK=y
+CONFIG_CORE_DUMP_DEFAULT_ELF_HEADERS=y
+# Desktop and big-iron behaviour a VM has no use for: autogrouping by session, NUMA
+# balancing, the proc connector, configfs, NBD, pstore, crypto through netlink.
+# CONFIG_SCHED_AUTOGROUP is not set
+# CONFIG_NUMA_BALANCING is not set
+# CONFIG_CONNECTOR is not set
+# CONFIG_CONFIGFS_FS is not set
+# CONFIG_BLK_DEV_NBD is not set
+# CONFIG_PSTORE is not set
+# CONFIG_CRYPTO_USER is not set
+# CONFIG_CRYPTO_USER_API_RNG is not set
+# CONFIG_RELAY is not set
+# CONFIG_FANOTIFY_ACCESS_PERMISSIONS is not set
+# CONFIG_FW_LOADER_USER_HELPER is not set
+# CONFIG_BSD_PROCESS_ACCT_V3 is not set
+# CONFIG_CGROUP_MISC is not set
+
+# Up to 512 vCPUs (amd64's default stops at 64, and the rest of a bigger VM's would sit
+# idle), one size of kernel log, one list of security modules in one order.
+CONFIG_NR_CPUS=512
+CONFIG_LOG_BUF_SHIFT=18
+CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,ipe,bpf"
+
+# One timer frequency and one preemption model: amd64's defaults, lazy preemption with
+# `preempt=` on the command line to change it.
+CONFIG_HZ_1000=y
+CONFIG_PREEMPT_LAZY=y
+CONFIG_PREEMPT_DYNAMIC=y
+
+# ip6tables' -m ipv6header, verbose route logging, LOG for ARP and IPv4 (amd64's).
+CONFIG_IP6_NF_MATCH_IPV6HEADER=y
+CONFIG_IP_ROUTE_VERBOSE=y
+CONFIG_NF_LOG_ARP=y
+CONFIG_NF_LOG_IPV4=y
+# No kernel RARP autoconfiguration (`ip=` stays), no codepages without a filesystem
+# that uses them, and no congestion control but cubic that nobody chose.
+# CONFIG_IP_PNP_RARP is not set
+# CONFIG_NLS_ASCII is not set
+# CONFIG_NLS_UTF8 is not set
+# CONFIG_TCP_CONG_BIC is not set
+# CONFIG_TCP_CONG_HTCP is not set
+# CONFIG_TCP_CONG_WESTWOOD is not set
+# Generic crypto arm64's defconfig adds for its boards' drivers: legacy and national
+# ciphers and hashes, key agreement, compression through the crypto API (EROFS selects
+# DEFLATE only for hardware-accelerated decompression, which is off).
+# CONFIG_CRYPTO_DES is not set
+# CONFIG_CRYPTO_MD5 is not set
+# CONFIG_CRYPTO_SM3 is not set
+# CONFIG_CRYPTO_SM4_GENERIC is not set
+# CONFIG_CRYPTO_SHA3 is not set
+# CONFIG_CRYPTO_XTS is not set
+# CONFIG_CRYPTO_CHACHA20 is not set
+# CONFIG_CRYPTO_DH is not set
+# CONFIG_CRYPTO_ECDH is not set
+# CONFIG_CRYPTO_DEFLATE is not set
+# CONFIG_CRYPTO_ZSTD is not set
+EOF
+make parity.config
 
 # Check the fragments took, because olddefconfig drops what it cannot apply in silence:
 #   - every symbol named is defined by some Kconfig, so a rename upstream fails here
@@ -607,7 +776,7 @@ make vm.config
 #     does not have yet goes in with the bump);
 #   - everything the additive fragments turn on is =y;
 #   - nothing cleared came back =y.
-fragments=(kernel/configs/{container,rootfs,k8s,guest,trace,kspp}.config)
+fragments=(kernel/configs/{container,rootfs,k8s,parity,guest,trace,kspp}.config)
 unapplied=""
 
 kconfig_symbols=$(find . -name 'Kconfig*' -not -path './Documentation/*' -print0 \
@@ -630,7 +799,7 @@ while read -r sym; do
         unapplied="$unapplied  $sym  (cleared, came back =y)"$'\n'
     fi
 done < <(sed -n 's/^# \(CONFIG_[A-Z0-9_]*\) is not set$/\1/p' kernel/configs/container.config \
-             kernel/configs/kspp.config kernel/configs/vm.config)
+             kernel/configs/parity.config kernel/configs/kspp.config kernel/configs/vm.config)
 
 if [ -n "$unapplied" ]; then
     echo "error: config fragments did not apply as written:" >&2
