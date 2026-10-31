@@ -536,3 +536,7 @@ userspace as the disk). Both archives `podman load` as `localhost/flfs:latest`, 
 script tags and pushes each before loading the next.
 
 `tools/fetch-image.sh` / `tools/boot-qemu.sh` are for poking at CI artifacts locally.
+**fetch installs nothing it has not verified**: the rootfs job uploads `bundle-<arch>`, a
+manifest of run, commit, arch and the SHA-256 of every file in the rootfs, kernel and
+extensions artifacts, and fetch requires an exact match before swapping the new bundle in.
+A change to what those artifacts contain is a change to that step too.

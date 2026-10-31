@@ -370,6 +370,35 @@ jobs:
             output/extensions
             output/confexts
 
+      # What tools/fetch-image.sh checks a download against before installing it: this
+      # run, its commit and arch, and the SHA-256 of every file in the three artifacts a
+      # boot needs, by artifact name and path inside it (the format is in that script).
+      # The kernel is the package artifact this job downloaded, the one fetch takes too.
+      - name: Write the boot bundle's manifest
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          entry() { echo "sha256 $(sha256sum "$1" | cut -d' ' -f1) $2"; }
+          {
+            echo "# flfs boot bundle; tools/fetch-image.sh verifies downloads against it"
+            echo "run $GITHUB_RUN_ID"
+            echo "commit $GITHUB_SHA"
+            echo "arch $ARCH"
+            entry output/rootfs.erofs "rootfs.erofs-$ARCH/rootfs.erofs"
+            entry output/rootfs.cmdline "rootfs.erofs-$ARCH/rootfs.cmdline"
+            entry "artifacts/package-kernel-$ARCH/kernel.tar" "package-kernel-$ARCH/kernel.tar"
+            find output/extensions output/confexts -type f | LC_ALL=C sort | while read -r f; do
+              entry "$f" "extensions-$ARCH/${f#output/}"
+            done
+          } > output/bundle.txt
+          cat output/bundle.txt
+
+      - name: Upload the boot bundle's manifest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle-${{ matrix.arch }}
+          path: output/bundle.txt
+
   # Assemble the images a second time and require the same bytes.
   reproducible:
     runs-on: *runner

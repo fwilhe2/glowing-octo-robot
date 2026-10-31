@@ -40,6 +40,10 @@ Fetch the latest successful CI image, start a persistent QEMU machine, and conne
 ./tools/vm.sh stop
 ```
 
+`update` runs `tools/fetch-image.sh`, which checks every downloaded file against the
+`bundle-<arch>` manifest the same CI run wrote (run, commit, SHA-256 per file) and replaces
+`output/boot-image/` only once all of it matches; a failed fetch leaves the previous image.
+
 Attach extensions when starting a machine:
 
 ```sh
