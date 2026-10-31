@@ -84,20 +84,23 @@ reproducible to the byte, and CI checks it. `./tools/clean.sh` gives the disk sp
   tree appended to it is checked against the root hash in `rootfs.cmdline` on every read.
   A changed byte is an I/O error and a tampered image does not boot. Keep the image and its
   `.cmdline` together.
-* **State is RAM by default.** `/var`, `/home`, `/root`, `/tmp` and `/run` are tmpfs, so
+* **State is RAM by default.** `/var`, `/tmp` and `/run` are tmpfs, and `/home` and
+  `/root` are symlinks into `/var` (`var/home`, `var/roothome`, as on ostree systems), so
   every boot starts from the same bytes. To update a machine, boot it from a newer image.
 * **Or a disk for `/var`.** `systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs`
   on the kernel command line makes systemd format a blank disk on the first boot and keep
   it from then on, growing the filesystem when the disk grows. `tools/vm.sh` gives every
   machine one ([Machines](#machines)); for a one-off boot,
   `VAR_DISK=output/var.img VAR_SIZE=20G ./tools/boot-qemu.sh` creates the file sparse if
-  it is missing (4G by default) and keeps the VM's machine ID beside it. `/home` and
-  `/root` stay RAM either way — which is also where rootless podman keeps its images, so
-  those are per boot; root's, in `/var/lib/containers`, are kept.
+  it is missing (4G by default) and keeps the VM's machine ID beside it. The homes are
+  on that disk too, so dotfiles, shell history and rootless podman's images are kept as
+  well as root's in `/var/lib/containers`.
 * **No passwords anywhere.** `root` and `user` have none, ssh takes keys only, and the
   host hands the guest a public key as a systemd credential at every boot, so ssh logs in
   with nothing baked into the image: a new key per boot for `tools/boot-qemu.sh`, one per
-  machine for `tools/vm.sh`. At the console a username is enough.
+  machine for `tools/vm.sh`. sshd reads that key from `/run`, never from a home, so a key
+  from an earlier boot cannot linger on a `/var` disk; `~/.ssh/authorized_keys` is yours
+  to add keys to, and kept with the home. At the console a username is enough.
 * **Credentials through fw_cfg.** On qemu and libvirt, systemd also imports credentials
   from fw_cfg (`opt/io.systemd.credentials/`), the channel for anything too big for the
   kernel command line or too secret for `/proc/cmdline`, which every user can read:
@@ -113,8 +116,8 @@ reproducible to the byte, and CI checks it. `./tools/clean.sh` gives the disk sp
 
 `./tools/vm.sh` keeps named qemu machines in `output/vms/<name>/`. Each has a `/var` disk
 of its own, a machine ID and an ssh key; the root is the image, read-only as always. So
-what is installed, pulled or configured under `/var` survives a reboot, a stop and start,
-and an image update:
+what is installed, pulled or configured under `/var`, and the homes, which live there,
+survives a reboot, a stop and start, and an image update:
 
 ```sh
 ./tools/vm.sh start dev --ext podman --mem 4096 --size 20G   # create and boot it
@@ -184,18 +187,18 @@ podman run -d -p 8080:80 docker.io/library/nginx
 ```
 
 Images and build layers live in RAM by default. Root's are in `/var/lib/containers`, and
-rootless ones in `~/.local/share/containers` on `/home`. Each of those tmpfs mounts is
+rootless ones in `~/.local/share/containers`, which is under `/var` too. That tmpfs is
 capped at half the VM's memory, and `tools/boot-qemu.sh` gives a VM 1 GiB. That is enough
 to run small images, but not to pull a distribution image and apt-install a compiler into
 it, which fails partway with *No space left on device*. To build images in the guest, give
-it memory and a `/var` disk, and build as root:
+it memory and a `/var` disk:
 
 ```sh
 MEM=4096 VAR_DISK=output/var.img VAR_SIZE=20G SYSEXTS=podman ./tools/boot-qemu.sh
-./tools/ssh.sh --root    # then podman build, pull, run as usual
+./tools/ssh.sh          # then podman build, pull, run as usual; --root for root's
 ```
 
-Root's storage is then on the disk, and it survives reboots too.
+Both storages are then on the disk, and survive reboots too.
 
 To have a container start at boot, describe it as a Quadlet `.container` file. Give it
 `UpheldBy=multi-user.target` next to `WantedBy=`: the extension is merged during early
@@ -290,7 +293,7 @@ CI runs all of them but the last:
 | `test/network.sh`, `ssh.sh` | DHCP, DNS, TLS; sshd, from the guest and from the host |
 | `test/container.sh`, `podman.sh`, `rootless.sh` | crun on the base; podman with seccomp, networking and Quadlet; rootless |
 | `test/sysext.sh` | extensions merge from both places, a wrong level and a tampered image are refused |
-| `test/persistent-var.sh`, `vmm.sh`, `k8s.sh` | state survives on a `/var` disk; Firecracker- and VZ-shaped boots; a cluster |
+| `test/persistent-var.sh`, `vmm.sh`, `k8s.sh` | state and homes survive on a `/var` disk, and a new boot key logs in; Firecracker- and VZ-shaped boots; a cluster |
 | `test/node-conformance.sh` | a node passes Kubernetes' node conformance tests |
 | `test/check-image-files.sh` | each image ships what `test/image-files/` requires, and nothing it rules out |
 | `test/oci.sh`, `rootfs-size.sh`, `vs-debian-slim.sh` | the OCI image runs; its size against the budget and against debian-slim |

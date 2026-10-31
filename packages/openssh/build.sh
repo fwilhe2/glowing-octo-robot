@@ -56,10 +56,12 @@ drop_installed usr/libexec/ssh-keysign usr/libexec/ssh-pkcs11-helper \
     usr/libexec/ssh-sk-helper ssh-agent ssh-add etc/ssh/moduli
 
 # ---------------------------------------------------------------------------------
-# The server's configuration: the few lines that are not defaults. The Match block reads
-# the key the VMM handed this boot (test/qemu-lib.sh) where PID 1 put it: tmpfiles' copy in
-# /root/.ssh is written only if missing, so on a persistent disk it would keep the first
-# key forever. Root only: sshd reads the file as the target user.
+# The server's configuration: the few lines that are not defaults. Each user's own
+# ~/.ssh/authorized_keys, and the key the VMM handed this boot (test/qemu-lib.sh), never
+# from a copy in a home: tmpfiles writes those only if missing, and /home and /root are on
+# the /var disk when there is one, so a copy would keep the first boot's key forever. sshd
+# reads the file as the target user, so root's is the credential where PID 1 put it, and
+# every other user's a copy in /run (image/files/etc/tmpfiles.d/flfs-home.conf).
 cat > $ROOTFS/etc/ssh/sshd_config <<'EOF'
 # Drop-ins first: in sshd_config the first setting of an option wins.
 Include /etc/ssh/sshd_config.d/*.conf
@@ -80,6 +82,7 @@ KbdInteractiveAuthentication no
 Subsystem sftp /usr/libexec/sftp-server
 
 # The key handed to this boot as a credential. See packages/openssh/build.sh.
+AuthorizedKeysFile .ssh/authorized_keys /run/ssh-authorized-keys/%u
 Match User root
     AuthorizedKeysFile .ssh/authorized_keys /run/credentials/@system/ssh.authorized_keys.root
 EOF

@@ -144,8 +144,8 @@ Steps, in order:
 4. **Generated files.** Run `ldconfig`. For the disk only, do the first boot's work
    in `/etc`, which is read-only from then on: *our* `systemd-sysusers`,
    `systemd-tmpfiles` and `systemctl preset-all`, run through our own loader with
-   `--root`, plus an empty `/etc/machine-id`. Then empty `/var`, `/home` and `/root`,
-   which are tmpfs mounts at boot.
+   `--root`, plus an empty `/etc/machine-id`. Then empty `/var`, a tmpfs or the VM's disk
+   at boot, and `/home` and `/root` replaced by symlinks to `var/home` and `var/roothome`.
 5. **SBOM.** Write SPDX 2.3 from the component records, then delete the records.
 6. **Size report.** Write `output/rootfs-size-<flavour>.txt`.
 7. **Write the image.** Disk: `mkfs.erofs` (zstd, 128 KiB clusters), then `veritysetup format` appends
