@@ -171,7 +171,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./tools/boot-vz.sh                # the same, in Virtualization.framework via vfkit (macOS)
 ./tools/ssh.sh [--root] [cmd...]  # passwordless ssh into the guest any of those started, as `user` or root
 ./tools/k8s-demo.sh up|ps|kubectl|ssh|down  # a 3-node kubeadm cluster on the image and its kubernetes extension, this checkout's build if there is one (docs/sysext.md)
-./tools/clean.sh [-n] [--downloads|--images|--all]  # delete build state, tarballs, stale images
+./tools/clean.sh [-n] [--downloads|--images|--all|--vms]  # delete build state, tarballs, stale images; vm.sh's machines only with --vms
 ./tools/build-extension.sh sysext|confext <name> <dir>  # a directory tree → output/extensions|confexts/<name>.raw
 ./tools/build-node-e2e.sh         # e2e_node.test + ginkgo for the pinned Kubernetes, in a golang container
 ```

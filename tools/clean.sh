@@ -5,6 +5,7 @@
 #     ./tools/clean.sh --downloads   # ...and the source tarballs in downloads/
 #     ./tools/clean.sh --images      # ...and this repo's podman images that are out of date
 #     ./tools/clean.sh --all         # all of the above, current images included
+#     ./tools/clean.sh --vms         # ...and the machines tools/vm.sh keeps, /var disks and all
 #     ./tools/clean.sh -n [...]      # say what would go, and how big it is; delete nothing
 #
 # The default is everything a rebuild recreates without the network: every package's
@@ -20,6 +21,10 @@
 # *current* builder and sources images stay unless --all says otherwise, since those are
 # what the next ./build.sh would pull.
 #
+# output/vms/ is not build state: it is tools/vm.sh's machines, whose /var disks hold
+# whatever was done on them. It goes only with --vms, which --all does not imply, and not
+# while one of them runs.
+#
 # Never touched: extra/ (your own additions, see tools/build-image.sh), anything git
 # tracks, and podman images that are not this repository's. A path is only deleted if
 # git agrees it is ignored, so a tracked file can never match a pattern by accident.
@@ -28,20 +33,36 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tools/lib.sh
 
-dry=0 downloads=0 images=0 current=0
+dry=0 downloads=0 images=0 current=0 vms=0
 while [ $# -gt 0 ]; do
     case "$1" in
         -n|--dry-run) dry=1 ;;
         --downloads)  downloads=1 ;;
         --images)     images=1 ;;
         --all)        downloads=1 images=1 current=1 ;;
+        --vms)        vms=1 ;;
         -h|--help)    sed -n '2,/^set -e/p' "$0" | sed '$d;s/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
     esac
     shift
 done
 
-paths=(staging rootfs extensions sysroot glibc-package output artifacts packages/*/*-[0-9]*/ packages/*/.extracting)
+paths=(staging rootfs extensions sysroot glibc-package artifacts packages/*/*-[0-9]*/ packages/*/.extracting)
+for p in output/* output/.[!.]*; do
+    [ -e "$p" ] && [ "$p" != output/vms ] && paths+=("$p")
+done
+if [ "$vms" = 1 ] && [ -d output/vms ]; then
+    for p in output/vms/*/qemu.pid; do
+        [ -f "$p" ] || continue
+        if ps -p "$(cat "$p")" -o args= 2>/dev/null | grep -qF "file=$PWD/${p%/qemu.pid}/var.img,"; then
+            echo "error: $(basename "$(dirname "$p")") is running; ./tools/vm.sh stop it first" >&2
+            exit 1
+        fi
+    done
+    paths+=(output/vms)
+elif [ -d output/vms ]; then
+    echo "keep   output/vms (tools/vm.sh's machines; --vms deletes them)" >&2
+fi
 [ "$downloads" = 1 ] && paths+=(downloads)
 
 # Files a build wrote are owned by the container's users, which are subuids from out
