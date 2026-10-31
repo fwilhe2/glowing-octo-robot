@@ -62,6 +62,8 @@ configuration and SBOM data, then writes the requested image format:
 - `erofs`: `output/rootfs.erofs` and `output/rootfs.cmdline`. The EROFS root and dm-verity
   tree share a file; the command line contains the root hash.
 - `oci`: `output/flfs-oci.tar`, an OCI archive of userspace without the kernel or systemd.
+  `./test/oci-trim.sh` reports what it leaves out of the disk image, by area, and runs the
+  shared-library check on its layer to show nothing left behind needs what was removed.
 
 Staged extensions are assembled into `output/extensions/` and `output/confexts/`.
 With `--extra DIR` (never in CI), files from that directory are added to both image formats

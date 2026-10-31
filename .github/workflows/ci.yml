@@ -338,6 +338,17 @@ jobs:
       - name: Check what the images contain
         run: ./test/check-image-files.sh
 
+      # What the container flavour leaves out of the disk image, by area, and the deps
+      # check on its own layer that shows nothing left needs what went: the OCI
+      # subtractions, reviewable from the run page. Text in the summary, never mermaid.
+      - name: Report what the OCI image leaves out
+        run: |
+          rc=0
+          ./test/oci-trim.sh > oci-trim.txt 2>&1 || rc=$?
+          cat oci-trim.txt
+          { echo "### OCI against the disk image (${{ matrix.arch }})"; echo '```'; cat oci-trim.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
       - name: Run the OCI image
         run: FLFS_BUILD="$GITHUB_SHA" ./test/oci.sh output/flfs-oci.tar
 

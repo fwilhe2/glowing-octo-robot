@@ -167,6 +167,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/check-sbom.sh              # the SPDX documents parse and carry their provenance
 ./test/check-doc-links.sh         # relative links in the tracked markdown resolve
 ./test/check-image-files.sh       # each assembled image against test/image-files/: what must and must not ship
+./test/oci-trim.sh [output]       # what the OCI image leaves out of the disk image, and a deps check on its layer
 ./tools/vm.sh start|ssh|stop|list|run|console|update|snapshot [name] ...  # named machines that keep /var
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ./tools/boot-firecracker.sh       # the same, in Firecracker (Linux + KVM; ssh over vsock)
@@ -323,7 +324,10 @@ kmod (no modules), sshd, libudev, conmon with glib and pcre2. `libsystemd.so.0` 
 (crun, libmount). Libraries deleted this way are guarded: a new consumer fails the build.
 **Grepping binaries for a library name needs `grep -a`** — GNU grep otherwise discards a
 match inside an ELF `.dynstr`. Anything added *below* the subtractions block runs on a tree
-without systemd, so it has to say which flavour it is for. The OCI archive is written by
+without systemd, so it has to say which flavour it is for. `test/oci-trim.sh` shows the
+whole difference from the two manifests, side effects included, and runs the deps check
+on the OCI layer; CI puts it in the rootfs job's summary, so a change to the block is
+reviewed by its result. The OCI archive is written by
 hand; do not add buildah or skopeo. `test/oci.sh` loads and runs it, on the host's kernel.
 
 **The trim** removes what nothing in the image can reach — that is the bar, not "unlikely
