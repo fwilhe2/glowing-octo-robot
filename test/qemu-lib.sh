@@ -260,7 +260,7 @@ qemu_seed_var_disk() { # disk size tree
 # SYSEXTS: each <name> is a read-only disk of $EXTENSIONS/{extensions,confexts}/<name>.raw
 # (default: beside the image), verified like the root — its <name>.dm-verity table joins
 # the root's dm-mod.create=, naming its disk by position — and mounted under
-# /run/{extensions,confexts}/<name>, where systemd-sysext finds it (docs/sysext.md).
+# /run/{extensions,confexts}/<name>, where systemd-sysext finds it (docs/guides/sysext.md).
 qemu_sysexts() {
     QEMU_SYSEXT_DRIVES=() QEMU_SYSEXT_APPEND= QEMU_DM_TABLES= QEMU_DM_WAITFOR=
     [ -n "${SYSEXTS:-}" ] || return 0

@@ -61,7 +61,7 @@ expect() {
 #
 # and app is linked against new. A tree with new is correct; a tree with old is each of
 # the failures this repository's coupling to the builder's headers can produce
-# (docs/linking.md, section 4). app also references a weak foo_maybe that no build
+# (docs/guides/linking.md, section 4). app also references a weak foo_maybe that no build
 # defines, which is legitimate and must not be reported.
 
 src=$work/src

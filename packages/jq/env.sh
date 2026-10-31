@@ -11,7 +11,7 @@ URL="https://github.com/jqlang/jq/releases/download/${PACKAGE}/${TARBALL}"
 SHA256="71b8d6e8f5fe81f6c6d0d110e3892251f6ce76ed095abd315e26e6e1193af3af"
 # jq itself, the decNumber library it carries, and the bundled Oniguruma.
 LICENSE="MIT AND ICU AND BSD-2-Clause"
-# In the debug system extension (docs/debugging.md).
+# In the debug system extension (docs/guides/debugging.md).
 EXTENSION=debug
 UPSTREAM_GITHUB="jqlang/jq"
 UPSTREAM_SED='s/^jq-//'

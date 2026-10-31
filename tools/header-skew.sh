@@ -6,7 +6,7 @@
 # Every library in packages/ is compiled against twice over, in a sense: packages that
 # link it compile against *Debian's* header for it (the -dev section of builder/deps.txt,
 # since the CI sysroot is glibc alone), and run against *ours*, found by SONAME. That
-# works while the two stay close, and docs/linking.md is the long version of why.
+# works while the two stay close, and docs/guides/linking.md is the long version of why.
 #
 # This is the report that says how close. For each -dev package in that section: sid's
 # version, ours, and which is newer. Ours newer is the safe direction — a library is
@@ -94,7 +94,7 @@ podman run --rm -i --network=none "$(./tools/image-tags.sh builder)" bash -c '
     if [ "$newer" -gt 0 ]; then
         echo "$newer header(s) newer than the library we ship. Not an error by itself:"
         echo "test/check-symbol-resolution.sh says whether any binary actually uses what is"
-        echo "missing. See docs/linking.md."
+        echo "missing. See docs/guides/linking.md."
     else
         echo "Every library we ship is at least as new as the header it is compiled against."
     fi

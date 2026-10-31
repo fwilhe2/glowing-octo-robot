@@ -60,7 +60,7 @@ echo ">> kernel ($ARCH): $REPO run $RUN (artifact: package-kernel-$ARCH)"
 gh run download "$RUN" -R "$REPO" -n "package-kernel-$ARCH" -D "$tmp/kernel"
 tar xf "$tmp/kernel/kernel.tar" -C "$tmp/kernel" rootfs/boot/bzImage
 
-# The system extensions built in the same run (docs/sysext.md), laid out next to the
+# The system extensions built in the same run (docs/guides/sysext.md), laid out next to the
 # image as tools/build-image.sh lays them out next to its own: extensions/ and confexts/.
 # Optional — a run from before they existed has none, and only tools/k8s-demo.sh wants one.
 echo ">> extensions ($ARCH): $REPO run $RUN (artifact: extensions-$ARCH)"

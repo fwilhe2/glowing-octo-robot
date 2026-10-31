@@ -4,7 +4,7 @@
 #
 # A serial console is enough to debug a boot and not enough to work in: no scp, no second
 # terminal, no port forward, and nothing a tool on the host can drive. Every VM workflow
-# that is not a console — Lima (docs/image-variants.md), Vagrant, an IDE's remote mode,
+# that is not a console — Lima (docs/proposals/image-variants.md), Vagrant, an IDE's remote mode,
 # tools/ssh.sh here — boots the guest and then does everything else over ssh, so a VM
 # somebody actually works in needs a server before it needs most of what it already has.
 #

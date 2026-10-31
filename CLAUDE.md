@@ -171,7 +171,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./tools/boot-firecracker.sh       # the same, in Firecracker (Linux + KVM; ssh over vsock)
 ./tools/boot-vz.sh                # the same, in Virtualization.framework via vfkit (macOS)
 ./tools/ssh.sh [--root] [cmd...]  # passwordless ssh into the guest any of those started, as `user` or root
-./tools/k8s-demo.sh up|ps|kubectl|ssh|down  # a 3-node kubeadm cluster on the image and its kubernetes extension, this checkout's build if there is one (docs/sysext.md)
+./tools/k8s-demo.sh up|ps|kubectl|ssh|down  # a 3-node kubeadm cluster on the image and its kubernetes extension, this checkout's build if there is one (docs/guides/sysext.md)
 ./tools/clean.sh [-n] [--downloads|--images|--all|--vms]  # delete build state, tarballs, stale images; vm.sh's machines only with --vms
 ./tools/build-extension.sh sysext|confext <name> <dir>  # a directory tree → output/extensions|confexts/<name>.raw
 ./tools/build-node-e2e.sh         # e2e_node.test + ginkgo for the pinned Kubernetes, in a golang container
@@ -291,7 +291,7 @@ The same arrangement is how every package links every library we ship: the CI sy
 glibc alone, so curl compiles against sid's `libssl-dev` and runs on our `libssl.so.3`.
 It holds while our version is at least sid's — held by `check-symbol-versions.sh` for
 versioned libraries and `check-symbol-resolution.sh` for unversioned ones (glib, json-c,
-pcre2); `tools/header-skew.sh` shows both sides. `docs/linking.md` is the long version.
+pcre2); `tools/header-skew.sh` shows both sides. `docs/guides/linking.md` is the long version.
 
 **3. No optimization.** Autotools picks `-O2` only when `CFLAGS` is unset, and
 `build-package.sh` sets it, so it exports `-O2` itself; `SYSROOT_CFLAGS` is the same without
@@ -433,7 +433,7 @@ prompt, so suspect the handshake before `shadow` when a login fails.
 ### The container engine and extensions
 
 **podman is the engine** (no daemon, crun's ecosystem, Quadlet). **Engines are system
-extensions, the runtime is the base** (`docs/sysext.md`): podman, netavark, aardvark-dns,
+extensions, the runtime is the base** (`docs/guides/sysext.md`): podman, netavark, aardvark-dns,
 passt and shadow are `EXTENSION=podman`; CRI-O and kubelet are `kubernetes`. The base keeps
 the kernel features, crun, conmon (with glib, pcre2), nftables, libseccomp and
 `/etc/containers`, so `crun run` works on the base alone. Attach with
@@ -459,7 +459,7 @@ reloads PID 1, so one that should start at boot needs `UpheldBy=` as well as `Wa
   `NF_CONNTRACK_MARK`), and a missing one is *"nft" did not return successfully* with
   nothing after it. Find the next one by feeding `nft` netavark's rules one at a time.
 
-**The debug extension** (`EXTENSION=debug`; `docs/debugging.md`, `test/debug.sh`):
+**The debug extension** (`EXTENSION=debug`; `docs/guides/debugging.md`, `test/debug.sh`):
 
 - **An extension's packages cannot link against each other.** A library with one consumer
   is that consumer's `VENDOR_TARBALL`, built static under `/tmp`, with `assert_not_linked`.

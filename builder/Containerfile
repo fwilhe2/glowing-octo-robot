@@ -1,5 +1,5 @@
 # The one builder image. Every package is compiled in this, and it is the only place
-# apt runs — see docs/build-container.md for why there used to be one image per package
+# apt runs — see docs/guides/build-container.md for why there used to be one image per package
 # and why there isn't any more.
 #
 # There is no ARG for the architecture: builder/deps.txt names no

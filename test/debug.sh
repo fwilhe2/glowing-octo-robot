@@ -10,7 +10,7 @@
 # than for `--version`, because every one of these can start and still be useless here:
 # a strace whose decoders were configured out, a perf trace with no syscall tracepoints
 # under it (FTRACE_SYSCALLS, trace.config in packages/kernel/build.sh), a bpftool that
-# cannot read what systemd loaded. docs/debugging.md is what they are for; this is the
+# cannot read what systemd loaded. docs/guides/debugging.md is what they are for; this is the
 # check that what it describes still works.
 #
 #   strace    a decoded uname(2), struct and all
