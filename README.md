@@ -44,18 +44,23 @@ boots with: podman, the Kubernetes node, or neither.
 ## Quick start
 
 ```sh
-./tools/fetch-image.sh               # the latest green CI build into output/boot-image/
-./tools/boot-qemu.sh                 # boot it; Ctrl-a x to quit
+./boot.sh                            # use local build if present, otherwise the fetched image
+./boot.sh --update                   # fetch latest successful GitHub CI image, then boot
+./boot.sh --extension podman         # boot with podman
+./boot.sh --extensions "podman debug" # attach multiple extensions
 ./tools/ssh.sh                       # in a second terminal: a shell as `user` (--root for root)
-
-SYSEXTS=podman ./tools/boot-qemu.sh  # the same machine, with podman
-SYSEXTS=debug ./tools/boot-qemu.sh   # with strace, perf, bpftool, tcpdump, gdbserver
-SYSEXTS="podman debug" ./tools/boot-qemu.sh  # several at once: a space-separated list
 ./tools/k8s-demo.sh up               # a three-node Kubernetes cluster (see below)
 ```
 
-`./tools/boot-firecracker.sh` and `./tools/boot-vz.sh` (macOS, through vfkit) boot the same
-image in the other two VMMs. The OCI image needs no VM:
+By default, `boot.sh` prefers a complete local build (`output/rootfs.erofs` and
+`rootfs/boot/bzImage`), then uses the previously fetched image. `--update` runs
+`tools/fetch-image.sh`, which downloads the latest successful GitHub CI run's matching
+rootfs and kernel. `--image DIR` selects a specific fetched image directory.
+
+`./boot.sh --vmm firecracker` and `./boot.sh --vmm vz` (macOS, through vfkit) boot the
+same image in the other two VMMs. `./boot.sh --vmm auto` chooses VZ on macOS, QEMU on
+Linux when installed, and Firecracker otherwise. Attached extensions currently require
+QEMU; `auto` selects it for extensions when available. The OCI image needs no VM:
 `podman run --rm -it ghcr.io/fwilhe2/glowing-octo-robot/flfs:latest`. It has no package
 manager; [`examples/nginx`](examples/nginx/README.md) is the template for building an
 image on top of it.
@@ -84,13 +89,21 @@ reproducible to the byte, and CI checks it. `./tools/clean.sh` gives the disk sp
   every boot starts from the same bytes. To update a machine, boot it from a newer image.
 * **Or a disk for `/var`.** `systemd.mount-extra=/dev/vdb:/var:ext4:x-systemd.makefs,x-systemd.growfs`
   on the kernel command line makes systemd format a blank disk on the first boot and keep
-  it from then on, growing the filesystem when the disk grows. For qemu,
-  `VAR_DISK=output/var.img VAR_SIZE=20G ./tools/boot-qemu.sh` does all of it: it creates
-  the file sparse if it is missing (4G by default) and keeps the VM's machine ID beside it.
-  Delete both to start over. `/home` and `/root` stay RAM either way.
+  it from then on, growing the filesystem when the disk grows. `./boot.sh` creates and
+  reuses a sparse 4G disk for its default VM; `./boot.sh create work 20G` creates another.
+  Use `./boot.sh list`,
+  `./boot.sh snapshot work before-upgrade`, `./boot.sh restore work before-upgrade`,
+  and `./boot.sh delete work` manage these disks and their snapshots. Snapshot, restore,
+  and delete require the VM to be stopped. `/var` and the machine ID are stored separately
+  from rootfs/kernel artifacts, so fetching or rebuilding a new image preserves VM state.
+  Each boot stages the rootfs, matching `rootfs.cmdline`, and kernel together; a new image
+  set does not modify a running VM's boot files, and superseded staged copies are removed
+  on the next boot. `/home` and `/root` stay RAM either way.
 * **No passwords anywhere.** `root` and `user` have none, ssh takes keys only, and
   `tools/boot-qemu.sh` hands the guest an ephemeral key as a systemd credential, so
-  `tools/ssh.sh` logs in with nothing baked into the image.
+  `tools/ssh.sh` logs in with nothing baked into the image. QEMU reuses the matching
+  credential across an in-place guest reboot; `ssh.sh` retries brief key-exchange resets.
+  Starting a new VMM session creates and injects a fresh ephemeral key.
 * **Credentials through fw_cfg.** On qemu and libvirt, systemd also imports credentials
   from fw_cfg (`opt/io.systemd.credentials/`), the channel for anything too big for the
   kernel command line or too secret for `/proc/cmdline`, which every user can read:
@@ -111,8 +124,10 @@ does not orphan them. A machine gets them in one of two ways:
 
 * **Attached by the VMM**, the way the root is: a read-only disk per image, verified by
   dm-verity from a table on the kernel command line and mounted where systemd-sysext
-  looks. One file serves any number of VMs. `SYSEXTS=podman`, `SYSEXTS=kubernetes` or
-  `SYSEXTS=debug` does this in `test/qemu-lib.sh`, and with it `tools/boot-qemu.sh`.
+  looks. One file serves any number of VMs. `boot.sh --extension podman`,
+  `--extension kubernetes` or `--extension debug` attaches one; use
+  `--extensions "podman debug"` for several. The direct QEMU wrapper also accepts
+  `SYSEXTS="podman debug"`.
 * **Installed on the `/var` disk**, in `/var/lib/extensions` and `/var/lib/confexts`.
   This way is not verified yet: it would need libcryptsetup (#191).
 

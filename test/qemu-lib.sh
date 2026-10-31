@@ -227,8 +227,9 @@ qemu_argv() {
         "${devices[@]}"
         -append "$root_args console=$CONSOLE init=$INIT systemd.set_credential=login.noauth:yes${QEMU_APPEND_EXTRA:-}${QEMU_VAR_APPEND:-}${QEMU_SYSEXT_APPEND:-}"
         "${display[@]}"
-        -no-reboot
     )
+    # Interactive boots allow the guest to reboot in place; test boots exit on reset.
+    [ "${QEMU_ALLOW_REBOOT:-0}" = 1 ] || QEMU_ARGV+=(-no-reboot)
 }
 
 # A /var disk seeded with <tree> (tools/k8s-demo.sh, test/sysext.sh). mkfs.ext4 -d records

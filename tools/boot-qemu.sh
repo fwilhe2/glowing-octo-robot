@@ -60,6 +60,7 @@ if [ "${SSH:-1}" = 1 ]; then
     qemu_ssh_setup
     echo ">> ssh: ./tools/ssh.sh  (127.0.0.1:$SSH_PORT, key in $SSH_DIR, gone when qemu exits)"
 fi
+QEMU_ALLOW_REBOOT="${QEMU_ALLOW_REBOOT:-1}"
 qemu_argv
 
 # Interactive, so the console is this terminal rather than a fifo and a log: no
