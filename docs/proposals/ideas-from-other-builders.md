@@ -1,6 +1,6 @@
 # Ideas from other image builders
 
-**Status: proposal, partly implemented.** Implemented: sections 1 and 2. This page collects features found
+**Status: proposal, partly implemented.** Implemented: sections 1–3. This page collects features found
 in other immutable or minimal Linux image builders that fit this project's constraints
 (see `CLAUDE.md`), with enough detail to implement each one. Each section names where the
 idea came from, what the gap is today, how to close it, and how to verify the change.
@@ -112,6 +112,11 @@ passes.
 check must make it fail.
 
 ## 3. Check what listens on the network
+
+*Implemented:* `test/listeners.sh`, in the `boot` job. It found LLMNR and mDNS on every
+interface, now off (`image/files/etc/systemd/resolved.conf.d/50-no-multicast.conf`). The
+rounds are the base and the kubernetes extension: podman's starts nothing at boot, and
+kubelet only listens once kubeadm has configured it.
 
 **Inspiration:** Flatcar mantle, `kola/tests/misc/network.go` (`cl.network.listeners`,
 around line 36), which compares the listening sockets of a booted machine to an expected

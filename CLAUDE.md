@@ -154,6 +154,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/boot.sh output/rootfs.erofs rootfs/boot/bzImage   # headless boot smoke test (reads rootfs.cmdline beside the image)
 ./test/systemd.sh output/rootfs.erofs rootfs/boot/bzImage  # no failed units
 ./test/network.sh output/rootfs.erofs rootfs/boot/bzImage  # DHCP + DNS + outbound TCP
+./test/listeners.sh output/rootfs.erofs rootfs/boot/bzImage  # listening sockets vs the expected list, base and +kubernetes
 ./test/ssh.sh output/rootfs.erofs rootfs/boot/bzImage        # sshd, in-guest and from the host (PREBUILT=dir: and those binaries)
 ./test/container.sh output/rootfs.erofs rootfs/boot/bzImage  # crun starts a container
 ./test/podman.sh output/rootfs.erofs rootfs/boot/bzImage     # podman: seccomp, networking, Quadlet
