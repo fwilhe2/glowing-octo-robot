@@ -330,7 +330,7 @@ qemu_boot() {
     qemu_pid=$!
 
     cleanup() {
-        exec 3>&- 2>/dev/null || true
+        { exec 3>&-; } 2>/dev/null || true
         kill "$qemu_pid" 2>/dev/null || true
         wait "$qemu_pid" 2>/dev/null || true
         rm -rf "$work"
