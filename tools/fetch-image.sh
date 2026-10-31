@@ -7,7 +7,8 @@
 # to run containers at all. Pulling a kernel from anywhere else gives you a guest that
 # boots and then quietly has no `memory` cgroup controller, no overlayfs and no veth.
 #
-# By default it grabs the latest *successful* CI run, for the host's own architecture.
+# By default it grabs the latest successful CI run on main that built an image (skipping
+# runs in progress, docs-only runs and [skip ci] commits), for the host's own architecture.
 # Override any of:
 #   ARCH         amd64 or arm64 (default the host's own architecture)
 #   ROOTFS_RUN   pin a specific glowing-octo-robot run id
@@ -86,9 +87,22 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-RUN="${ROOTFS_RUN:-$(gh run list -R "$REPO" --workflow ci.yml --status success -L 1 \
-                       --json databaseId -q '.[0].databaseId')}"
-[ -n "$RUN" ] || die "no successful run found"
+# The newest successful run on main that built an image. Not simply the newest run:
+# one still in progress has no artifacts yet, a docs-only push succeeds without building
+# (ci.yml's `changes` job skips it), and a [skip ci] commit has no run at all. So walk
+# back through main's finished, successful runs to the first with a bundle-$ARCH
+# manifest that has not expired.
+latest_bundle_run() {
+    local id n
+    for id in $(gh run list -R "$REPO" --workflow ci.yml --branch main --status success \
+                    -L 50 --json databaseId -q '.[].databaseId'); do
+        n=$(gh api "repos/$REPO/actions/runs/$id/artifacts?name=bundle-$ARCH" \
+                -q '[.artifacts[] | select(.expired | not)] | length') || continue
+        if [ "$n" -gt 0 ]; then echo "$id"; return; fi
+    done
+}
+RUN="${ROOTFS_RUN:-$(latest_bundle_run)}"
+[ -n "$RUN" ] || die "no successful run on main with a bundle-$ARCH artifact among the last 50"
 case "$RUN" in *[!0-9]*) die "ROOTFS_RUN '$RUN' is not a run id" ;; esac
 COMMIT=$(gh run view "$RUN" -R "$REPO" --json headSha -q .headSha)
 [ -n "$COMMIT" ] || die "could not read the commit of run $RUN"
