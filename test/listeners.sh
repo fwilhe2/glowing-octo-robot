@@ -36,7 +36,7 @@ BASE_LOG="${LOG:-output/listeners-test.log}"
 # lists only what it adds to the base. sshd, on both families, is all the base has; CRI-O's
 # streaming server is on loopback.
 expected_base='tcp 0.0.0.0:22 sshd
-tcp *:22 sshd'
+tcp [::]:22 sshd'
 expected_kubernetes=''
 
 # -H no header, -l listening (for udp: bound and unconnected), -n numeric, -p the process.
@@ -50,6 +50,9 @@ reduce() {
         case "$local" in
             127.*|'[::1]'*|'[::ffff:127.'*) continue ;;
         esac
+        # IPv6's any address is [::] through sock_diag and * when ss falls back to
+        # /proc/net (amd64's kernel has no INET_DIAG, arm64's defconfig turns it on).
+        local=${local/#\*:/[::]:}
         name=$(sed -n 's/^users:(("\([^"]*\)".*/\1/p' <<<"$users")
         echo "$proto $local ${name:-?}"
     done | sort -u
