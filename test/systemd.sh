@@ -179,4 +179,11 @@ tail -c "+$((mark + 1))" "$LOG" | tr -d '\r' | sed -e "/$FETCH/,\$d" -e 's/^/   
 if ! tail -c "+$((mark + 1))" "$LOG" | grep -qa 'OS: '; then
     fail "flfsfetch ran but printed no OS field — /etc/os-release unreadable?"
 fi
+# This boot has no /var disk and a verity root, so the setup fields have one right
+# answer each. They are read from the mount table and the command line, and are the
+# summary a user goes by when deciding whether what they install will survive a reboot.
+for want in 'Root: erofs, read-only, dm-verity' 'State: in memory' 'Image: '; do
+    tail -c "+$((mark + 1))" "$LOG" | grep -qaF "$want" ||
+        fail "flfsfetch did not print '$want'"
+done
 echo ">> flfsfetch OK"
