@@ -169,6 +169,7 @@ scratch directory for downloaded artifacts — it deliberately does not collide 
 ./test/check-image-files.sh       # each assembled image against test/image-files/: what must and must not ship
 ./test/oci-trim.sh [output]       # what the OCI image leaves out of the disk image, and a deps check on its layer
 ./tools/vm.sh start|ssh|stop|list|run|console|update|snapshot [name] ...  # named machines that keep /var
+./tools/demo.sh [reset]           # a fresh `demo` vm.sh machine: verity root, identity, sysext attach, a container
 ./tools/boot-qemu.sh              # interactive boot (Ctrl-a x to exit)
 ./tools/boot-firecracker.sh       # the same, in Firecracker (Linux + KVM; ssh over vsock)
 ./tools/boot-vz.sh                # the same, in Virtualization.framework via vfkit (macOS)

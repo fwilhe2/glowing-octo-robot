@@ -66,6 +66,23 @@ an example image built on top of it.
 See [Machines](#machines) for persistent VM commands and [System extensions](#system-extensions)
 for attaching or building extensions.
 
+## Demo
+
+A short tour on a throwaway machine, about a minute with KVM: the read-only, dm-verity
+root; the image's identity; the podman extension attached to the running machine with
+`systemd-sysext`; and a container run from the guest's own `bash`, offline.
+
+```sh
+./tools/build-image.sh     # or ./tools/fetch-image.sh, for CI's image and extensions
+./tools/demo.sh            # boot a fresh `demo` machine and walk through it
+./tools/vm.sh ssh demo     # look around afterwards
+./tools/demo.sh reset      # delete the machine and its /var
+```
+
+It needs what `tools/vm.sh` needs (QEMU, an ssh client, KVM to be quick) and an image with
+`extensions/podman.raw`. Every run starts by resetting, so it always shows the same thing.
+Nothing is added to the image: the demo is a `tools/vm.sh` machine named `demo`.
+
 ## Host requirements
 
 The project builds and publishes `amd64` and `arm64` images. Building from source requires
